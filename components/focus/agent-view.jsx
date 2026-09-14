@@ -254,6 +254,12 @@ export default function AgentView({
                     <p className="decision-rationale">
                       {proposal.payload.rationale}
                     </p>
+                    {proposal.payload.citations.length > 1 && (
+                      <Citations
+                        citations={proposal.payload.citations}
+                        openSource={openSource}
+                      />
+                    )}
                     {proposal.payload.uncertainty && (
                       <div className="verify-note">
                         <CircleHelp size={14} />
@@ -265,7 +271,10 @@ export default function AgentView({
                         variant="ghost"
                         size="sm"
                         onClick={() =>
-                          openSource(proposal.payload.citations[0].source_id)
+                          openSource(
+                            proposal.payload.citations[0].source_id,
+                            proposal.payload.citations[0].quote,
+                          )
                         }
                       >
                         <FileText />

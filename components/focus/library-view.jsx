@@ -25,6 +25,7 @@ import {
   Choice,
   Empty,
   Heading,
+  Highlight,
   ProviderIcon,
   StatusBadge,
   formatDate,
@@ -134,8 +135,11 @@ export default function LibraryView({
                         {source.title}
                       </Button>
                       <p>
-                        {source.excerpt ||
-                          providerNames[source.provider] + ' · Metadata only'}
+                        {source.excerpt ? (
+                          <Highlight text={source.excerpt} />
+                        ) : (
+                          providerNames[source.provider] + ' · Metadata only'
+                        )}
                       </p>
                       <span className="source-provider">
                         {providerNames[source.provider]}
