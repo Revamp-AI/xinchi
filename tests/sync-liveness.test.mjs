@@ -57,3 +57,11 @@ test('a worker finish stores changed separately from imported and a plain finish
   assert.equal(r.pid,process.pid);assert.ok(Date.parse(r.updated_at)>=Date.parse(started.updated_at));
  }finally{global.fetch=oldFetch;}
 });
+test('recoverSyncRuns fails a running row whose worker is gone and leaves a live one alone',()=>{
+ const live=insertRun('granola','running',at(0));m.run('UPDATE sync_runs SET pid=?,updated_at=? WHERE id=?',process.pid,at(0),live);
+ const dead=insertRun('gmail','running',at(2));m.run('UPDATE sync_runs SET pid=?,updated_at=? WHERE id=?',2**22,at(1),dead);
+ conn.recoverSyncRuns();
+ assert.equal(m.one('SELECT state FROM sync_runs WHERE id=?',live).state,'running');
+ const r=m.one('SELECT * FROM sync_runs WHERE id=?',dead);assert.equal(r.state,'failed');assert.equal(r.message,'Interrupted; retry the import');assert.ok(r.finished_at);
+ m.run("UPDATE sync_runs SET state='failed',finished_at=?,message='Test cleanup' WHERE id=?",m.stamp(),live);
+});
