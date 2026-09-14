@@ -75,9 +75,11 @@ export function CommitmentDialog({
       {...extra}
     />
   );
-  const checkpoint = field('checkpoint', checkpointLabels[status], {
-    type: 'date',
-  });
+  const checkpoint = field(
+    'checkpoint',
+    checkpointLabels[status] || 'Delivery or review checkpoint',
+    { type: 'date' },
+  );
   const hardDeadline = field('hard_deadline', 'Hard external deadline', {
     type: 'date',
     description: 'Only add a date that is confirmed.',
@@ -124,30 +126,25 @@ export function CommitmentDialog({
             />
           </FormField>
         </div>
-        {status === 'now' && (
-          <>
-            {field('done_when', 'Done means', {
-              multiline: true,
-              rows: 2,
-              placeholder: 'What will exist when this is finished?',
-            })}
-            {field('next_action', 'Next concrete action', {
-              placeholder: 'The next step you can actually take',
-            })}
-            <div className="form-pair">
-              {field('owner', 'Owner')}
-              {checkpoint}
-            </div>
-            {hardDeadline}
-          </>
-        )}
+        {field('done_when', 'Done means', {
+          multiline: true,
+          rows: 2,
+          placeholder: 'What will exist when this is finished?',
+        })}
+        {field('next_action', 'Next concrete action', {
+          placeholder: 'The next step you can actually take',
+        })}
+        <div className="form-pair">
+          {field('owner', 'Owner')}
+          {checkpoint}
+        </div>
         {status === 'waiting' && (
           <>
             <div className="form-pair">
+              {hardDeadline}
               {field('dependency', 'Waiting for / dependency', {
                 placeholder: 'Who or what needs to move first?',
               })}
-              {checkpoint}
             </div>
             <div className="form-pair">
               {field('last_action', 'Last thing you did', {
@@ -157,16 +154,9 @@ export function CommitmentDialog({
                 placeholder: 'What you will do instead',
               })}
             </div>
-            {hardDeadline}
           </>
         )}
-        {status === 'later' && (
-          <div className="form-pair">
-            {checkpoint}
-            {hardDeadline}
-          </div>
-        )}
-        {status === 'candidate' && hardDeadline}
+        {['candidate', 'now', 'later'].includes(status) && hardDeadline}
         {['now', 'done'].includes(status) &&
           field(
             'evidence',
