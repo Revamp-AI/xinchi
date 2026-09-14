@@ -19,3 +19,6 @@ client_secret*.json
 *credentials*.json
 
 *.tsbuildinfo
+
+# Claude Code workflow worktrees
+.claude/worktrees/
