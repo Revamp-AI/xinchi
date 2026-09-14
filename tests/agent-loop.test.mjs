@@ -37,6 +37,7 @@ test('cancelJob stops the running worker, records the cancellation, and refuses 
  assert.equal(alive(child.pid),false);
  assert.throws(()=>agent.cancelJob(id),/not running/);
  assert.throws(()=>agent.cancelJob('missing-job'),/not running/);
+ assert.throws(()=>agent.cancelJob(m.one("SELECT id FROM jobs WHERE status='complete'").id),/not running/);
 });
 test('cancelling a review drains a pending import review into a new job',async()=>{
  const id=agent.createJob('Review while imports arrive');
