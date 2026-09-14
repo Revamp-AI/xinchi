@@ -1,6 +1,6 @@
 # Focus
 
-A local, full-stack Next.js app for turning meeting and email context into evidence-backed priorities and explicit commitments.
+A local Next.js app backed by PostgreSQL for turning meeting and email context into evidence-backed priorities and explicit commitments.
 
 The public repository contains application code, fictional test fixtures, and setup documentation. It starts with an empty workspace. Personal recordings, transcripts, analysis, databases, agent outputs, screenshots, credentials, and session archives are not included.
 
@@ -8,9 +8,9 @@ The public repository contains application code, fictional test fixtures, and se
 
 The workspace and Google sign-in use [Coss UI](https://coss.com/ui), built on Base UI and Tailwind CSS. Official registry components live in `components/ui/`; Focus views compose them in `components/focus/`. The registry alias is configured in `components.json`. Coss's neutral design tokens and locally bundled Inter font are in `app/coss.css`, with responsive product layouts in `app/globals.css`. The upstream MIT notice is retained alongside the components.
 
-Overview puts the agent prompt and reviewable proposals first. Commitments keeps the three-outcome limit and decision history. Context library provides source search, provider filters, pagination, and original-text previews. Connections shows stored counts, coverage, import progress, retry messages, and storage details. Mobile navigation uses the Coss sidebar sheet; dialogs, selectors, tabs, tables, fields, and buttons use the same component system.
+Overview puts the agent prompt and reviewable proposals first. Commitments keeps the three-outcome limit and decision history. Contacts adds a personal CRM, relationship heat map, source-backed timelines, identity review, and private message drafts. Context library provides source search, provider filters, pagination, and original-text previews. Connections shows stored counts, coverage, import progress, retry messages, and storage details. Mobile navigation uses the Coss sidebar sheet; dialogs, selectors, tabs, tables, fields, and buttons use the same component system.
 
-For a quick interface check, navigate all four views, switch commitment tabs, open and cancel an editor, filter/search the library including an empty result, open a source, and open/cancel Gmail settings. Check the same flows at a narrow phone width. Use an isolated test workspace for any test writes; do not create demo decisions in a live personal archive.
+For a quick interface check, navigate all five views, switch commitment tabs, open and cancel an editor, filter/search the library including an empty result, open a source, and open/cancel Gmail settings. Check the same flows at a narrow phone width. Use an isolated test workspace for any test writes; do not create demo decisions in a live personal archive.
 
 The appearance button in the top-right corner of the workspace and sign-in screen offers **Light**, **Dark**, and **System**. System follows the device preference by default. An explicit choice is remembered per browser in local storage (`focus-theme`) and applied before the page paints. Theme handling uses [next-themes](https://github.com/pacocoursey/next-themes); Coss tokens style shared controls, and `app/focus-theme.css` supplies matching product colors. This preference does not change workspace data or authentication.
 
@@ -19,6 +19,7 @@ To verify appearance changes, choose Dark, reload, and confirm Dark remains sele
 ## Requirements
 
 - Node.js 24 or later.
+- PostgreSQL 16+ or a Neon database. Local PostgreSQL tools are also used for isolated tests.
 - Codex CLI installed and signed in on the same Mac for agent reviews.
 - A Google Cloud project for Google login and read-only Gmail access.
 - Optional Fireflies and Granola API keys for live meeting imports.
@@ -32,7 +33,10 @@ cp .env.example .env.local
 
 Edit `.env.local` and replace `owner@example.com` in `XIN_ALLOWED_EMAIL` with the Google account that should own this workspace. This is required: the app refuses sign-in when no owner is configured. It never grants ownership to an arbitrary first visitor.
 
+Set `DATABASE_URL` to your private Postgres/Neon connection string (and `DATABASE_URL_UNPOOLED` for a direct migration connection if needed). Existing SQLite workspaces must follow the [cutover guide](docs/postgres-cutover.md) before starting the new app.
+
 ```sh
+npm run db:migrate
 npm run build
 npm start
 ```
@@ -100,14 +104,11 @@ UI/provider imports trigger an agent review or queue a follow-up behind the curr
 
 ## Storage and sync status
 
-Everything runs locally. By default, the ignored `data/` directory contains:
+The app and detached workers run locally. Sources, source snapshots, commitments, relationship records, state history, drafts and worker coordination live in your configured PostgreSQL database. Neon can host that database remotely. Authentication uses the restricted `focus_auth` schema, excluded from workspace exports.
 
-- `xin.sqlite3`: source text, raw snapshots, full-text search, commitments, history, agent runs, proposals, and sync records.
-- `connections.secret.json`: API credentials and Google tokens, created during setup.
-- `auth.secret.sqlite3`: the pinned identity, hashed sessions, temporary OAuth attempts, and the latest 200 sanitized authentication events.
-- `runs/`: structured outputs from agent reviews.
+The ignored private `data/` directory holds `connections.secret.json` (provider credentials and Google tokens) and `runs/` (agent output). `XIN_DATA_DIR` selects another private directory. **Do not commit runtime data or connection strings.** Exports omit credentials and authentication but include private source and relationship material.
 
-The optional `XIN_DATA_DIR` override selects another private directory. **Do not commit any runtime data.** Workspace exports omit credentials and auth sessions but contain private source material and decisions. Use the in-app JSON export or SQLite's backup API for backups; copying a live database without its journal can miss writes.
+See [Postgres setup, migration, backup and recovery](docs/postgres-cutover.md) and [Contacts behavior and limits](docs/contacts.md). Existing SQLite archives are retained read-only after cutover. Use PostgreSQL backups and verified restore procedures for the active database.
 
 Connections shows stored coverage and the latest available run state: running, complete, partial, or failed. Progress counts processed records, including unchanged records. Gmail backfill is resumable in batches of up to 1,000 messages per refresh, followed by incremental history sync for the default scope. Custom Gmail query scopes rescan. Google rate limits (403/429) trigger bounded exponential backoff, honor Retry-After/RetryInfo delays, and report the wait in Connections. Retrying a message preserves pagination and avoids duplicate records; an exhausted retry budget leaves a distinct rate-limit warning. Granola stores an update boundary; Fireflies rescans its participant scope with stable IDs.
 
@@ -131,8 +132,10 @@ npm run build
 npm run test:e2e
 ```
 
-Tests use isolated temporary databases and cover Google token verification, owner restrictions, session/callback security, protected endpoints, imports, source history, quote validation, commitment rules, and sync recovery.
+`npm test` starts a disposable local Postgres cluster, creates one database per test file, and removes it afterward. Install local PostgreSQL 16+ tools (`initdb`, `pg_ctl`, `pg_dump`, `pg_restore`) or set `FOCUS_TEST_DATABASE_URL` to a dedicated loopback test server. Tests refuse remote database targets.
 
-`npm run lint` runs ESLint with the Next.js core-web-vitals rules. `npm run format:check` verifies Prettier formatting for `app/`, `components/focus/`, `hooks/`, and the TypeScript helpers in `lib/`; `npm run format` rewrites them. `npm run test:e2e` builds the app, starts it on `127.0.0.1:3210` with a temporary data directory seeded with fictional sources and a signed-in owner session, and drives all four views in desktop and phone-width Chromium. It refuses to run while anything else listens on port 3210, so stop a running Focus first. Run `npx playwright install chromium` once before the first run.
+Tests use isolated temporary databases and cover Google token verification, owner restrictions, session/callback security, protected endpoints, imports, source history, quote validation, commitment rules, and sync recovery, migration fidelity, snapshot citations, contact identity/merge undo, cadence classification, and concurrent capacity.
+
+`npm run lint` runs ESLint with the Next.js core-web-vitals rules. `npm run format:check` verifies Prettier formatting for `app/`, `components/focus/`, `hooks/`, and the TypeScript helpers in `lib/`; `npm run format` rewrites them. `npm run test:e2e` builds the app, starts it on `127.0.0.1:3210` with a temporary data directory seeded with fictional sources and a signed-in owner session, and drives all five views in desktop and phone-width Chromium. It refuses to run while anything else listens on port 3210, so stop a running Focus first. Run `npx playwright install chromium` once before the first run.
 
 Technical references: [Next.js](https://nextjs.org/docs/app/getting-started/installation), [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Fireflies transcript queries](https://docs.fireflies.ai/graphql-api/query/transcripts), [Granola API](https://docs.granola.ai/introduction), and [jose verification](https://github.com/panva/jose).
