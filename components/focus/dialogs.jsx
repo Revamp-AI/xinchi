@@ -26,6 +26,31 @@ import {
   statusNames,
 } from './shared';
 
+const statusNeeds = {
+  candidate: [],
+  now: ['done_when', 'next_action', 'owner', 'checkpoint'],
+  waiting: ['dependency', 'checkpoint'],
+  later: ['reason', 'checkpoint'],
+  dropped: ['reason'],
+  done: ['evidence'],
+};
+const statusHints = {
+  candidate: 'Only a title is needed while you decide.',
+  now: 'Needs what done means, a next action, an owner, and a checkpoint.',
+  waiting: 'Needs who or what you are waiting on and a check-back date.',
+  later: 'Needs a reason and a review date.',
+  dropped: 'Needs a reason for closing it.',
+  done: 'Needs the finished output or decision as evidence.',
+};
+const checkpointLabels = {
+  now: 'Delivery or review checkpoint',
+  waiting: 'Check back on',
+  later: 'Review on',
+};
+const reasonLabels = {
+  later: 'Why defer, and what brings it back?',
+  dropped: 'Why close this?',
+};
 export function CommitmentDialog({
   item,
   setItem,
@@ -39,6 +64,24 @@ export function CommitmentDialog({
 }) {
   const update = (key, value) =>
     setItem((current) => ({ ...current, [key]: value }));
+  const status = item.status || 'candidate';
+  const needs = (key) => statusNeeds[status].includes(key);
+  const field = (key, label, extra = {}) => (
+    <FormField
+      label={label}
+      required={needs(key)}
+      value={item[key] || ''}
+      onChange={(event) => update(key, event.target.value)}
+      {...extra}
+    />
+  );
+  const checkpoint = field('checkpoint', checkpointLabels[status], {
+    type: 'date',
+  });
+  const hardDeadline = field('hard_deadline', 'Hard external deadline', {
+    type: 'date',
+    description: 'Only add a date that is confirmed.',
+  });
   const requiresTradeoff =
     item.status === 'now' &&
     now.filter((other) => other.id !== item.id).length >= 3;
@@ -72,76 +115,75 @@ export function CommitmentDialog({
               label="Type"
             />
           </FormField>
-          <FormField label="Your decision">
+          <FormField label="Your decision" description={statusHints[status]}>
             <Choice
-              value={item.status || 'candidate'}
+              value={status}
               onChange={(value) => update('status', value)}
               options={statusNames}
               label="Your decision"
             />
           </FormField>
         </div>
-        <FormField
-          label="Done means"
-          multiline
-          rows={2}
-          value={item.done_when || ''}
-          onChange={(event) => update('done_when', event.target.value)}
-          placeholder="What will exist when this is finished?"
-        />
-        <FormField
-          label="Next concrete action"
-          value={item.next_action || ''}
-          onChange={(event) => update('next_action', event.target.value)}
-          placeholder="The next step you can actually take"
-        />
-        <div className="form-pair">
-          <FormField
-            label="Owner"
-            value={item.owner || ''}
-            onChange={(event) => update('owner', event.target.value)}
-          />
-          <FormField
-            label="Delivery or review checkpoint"
-            type="date"
-            value={item.checkpoint || ''}
-            onChange={(event) => update('checkpoint', event.target.value)}
-          />
-        </div>
-        <div className="form-pair">
-          <FormField
-            label="Hard external deadline"
-            description="Only add a date that is confirmed."
-            type="date"
-            value={item.hard_deadline || ''}
-            onChange={(event) => update('hard_deadline', event.target.value)}
-          />
-          <FormField
-            label="Waiting for / dependency"
-            value={item.dependency || ''}
-            onChange={(event) => update('dependency', event.target.value)}
-            placeholder="Who or what needs to move first?"
-          />
-        </div>
-        <FormField
-          label={
-            item.status === 'done'
+        {status === 'now' && (
+          <>
+            {field('done_when', 'Done means', {
+              multiline: true,
+              rows: 2,
+              placeholder: 'What will exist when this is finished?',
+            })}
+            {field('next_action', 'Next concrete action', {
+              placeholder: 'The next step you can actually take',
+            })}
+            <div className="form-pair">
+              {field('owner', 'Owner')}
+              {checkpoint}
+            </div>
+            {hardDeadline}
+          </>
+        )}
+        {status === 'waiting' && (
+          <>
+            <div className="form-pair">
+              {field('dependency', 'Waiting for / dependency', {
+                placeholder: 'Who or what needs to move first?',
+              })}
+              {checkpoint}
+            </div>
+            <div className="form-pair">
+              {field('last_action', 'Last thing you did', {
+                placeholder: 'The nudge or hand-off you already made',
+              })}
+              {field('fallback', 'If still blocked on the check-back date', {
+                placeholder: 'What you will do instead',
+              })}
+            </div>
+            {hardDeadline}
+          </>
+        )}
+        {status === 'later' && (
+          <div className="form-pair">
+            {checkpoint}
+            {hardDeadline}
+          </div>
+        )}
+        {status === 'candidate' && hardDeadline}
+        {['now', 'done'].includes(status) &&
+          field(
+            'evidence',
+            status === 'done'
               ? 'Completion evidence'
-              : 'Finished output or evidence'
-          }
-          multiline
-          rows={2}
-          value={item.evidence || ''}
-          onChange={(event) => update('evidence', event.target.value)}
-          placeholder="A link or description of the completed output"
-        />
-        <FormField
-          label="Why this decision or change?"
-          multiline
-          rows={2}
-          value={item.reason || ''}
-          onChange={(event) => update('reason', event.target.value)}
-        />
+              : 'Finished output or evidence',
+            {
+              multiline: true,
+              rows: 2,
+              placeholder: 'A link or description of the completed output',
+            },
+          )}
+        {field(
+          'reason',
+          reasonLabels[status] || 'Why this decision or change?',
+          { multiline: true, rows: 2 },
+        )}
         {requiresTradeoff && (
           <Card className="tradeoff-panel">
             <StatusBadge tone="warning">
