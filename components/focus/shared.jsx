@@ -208,21 +208,52 @@ export function Notice({ children, onClose, error = false }) {
     </Card>
   );
 }
+export function Highlight({ text }) {
+  return (
+    <>
+      {String(text ?? '')
+        .split(/(«[^«»]*»)/)
+        .map((part, index) =>
+          part.startsWith('«') && part.endsWith('»') ? (
+            <mark
+              key={index}
+              className="bg-warning/20 text-foreground rounded-sm px-0.5"
+            >
+              {part.slice(1, -1)}
+            </mark>
+          ) : (
+            part
+          ),
+        )}
+    </>
+  );
+}
 export function Citations({ citations = [], openSource }) {
   return (
     <div className="citation-list">
-      {citations.map((citation, index) => (
-        <Button
-          key={`${citation.source_id}-${index}`}
-          variant="outline"
-          size="xs"
-          onClick={() => openSource(citation.source_id)}
-        >
-          <ProviderIcon small provider={citation.source_id.split(':')[0]} />
-          {providerNames[citation.source_id.split(':')[0]] || 'Source'}
-          <ArrowUpRight size={12} />
-        </Button>
-      ))}
+      {citations.map((citation, index) => {
+        const provider = citation.provider || citation.source_id.split(':')[0];
+        return (
+          <Button
+            key={`${citation.source_id}-${index}`}
+            variant="outline"
+            size="xs"
+            className="max-w-full"
+            onClick={() => openSource(citation.source_id, citation.quote)}
+          >
+            <ProviderIcon small provider={provider} />
+            <span className="min-w-0 truncate">
+              {citation.title || providerNames[provider] || 'Source'}
+            </span>
+            {citation.occurred_at && (
+              <span className="text-muted-foreground">
+                {formatDate(citation.occurred_at)}
+              </span>
+            )}
+            <ArrowUpRight size={12} />
+          </Button>
+        );
+      })}
     </div>
   );
 }
