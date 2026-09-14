@@ -37,6 +37,9 @@
   ],
   "exclude": [
     "node_modules",
-    "data"
+    "data",
+    ".claude",
+    "playwright-report",
+    "test-results"
   ]
 }

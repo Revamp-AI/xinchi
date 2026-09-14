@@ -13,6 +13,8 @@ export default defineConfig([
     'node_modules/**',
     '.next/**',
     'data/**',
+    // Tool worktrees (Claude Code workflows) are checked out under .claude/.
+    '.claude/**',
     // Vendored Coss UI registry files: re-add from the registry, do not lint.
     'components/ui/**',
     'playwright-report/**',
