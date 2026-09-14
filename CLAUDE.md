@@ -8,7 +8,7 @@ Focus is a single-owner, local-only Next.js 16 app. It ingests meeting and email
 
 ## Commands
 
-Node 24+ is required (`node:sqlite`). ESLint (`eslint.config.mjs`, the Next core-web-vitals flat config) and Prettier (`.prettierrc`) are configured; Prettier skips the dense `lib/*.mjs`, `scripts/`, `tests/*.test.mjs`, `app/api/`, and vendored `components/ui/` files (`.prettierignore`). Type checking runs inside `next build` (`tsconfig.json` has `strict: false` and `allowJs`). The `typescript` dependency is an alias of `@typescript/typescript6`, the TypeScript 6 API package, because typescript-eslint cannot load the native TypeScript 7 package; `@typescript/native` keeps the TypeScript 7 `tsc` binary available.
+Node 24+ is required (`node:sqlite`). ESLint (`eslint.config.mjs`, a JavaScript-only flat config built from the `@next/eslint-plugin-next` core-web-vitals rules plus the React, React Hooks, and jsx-a11y plugins) and Prettier (`.prettierrc`) are configured; Prettier skips the dense `lib/*.mjs`, `scripts/`, `tests/*.test.mjs`, `app/api/`, and vendored `components/ui/` files (`.prettierignore`). Type checking runs inside `next build` (`tsconfig.json` has `strict: false` and `allowJs`) using the native TypeScript 7 compiler. TypeScript files are not linted because typescript-eslint does not support TypeScript 7 yet; `next build` is what catches type errors in them.
 
 | Task | Command |
 |---|---|
