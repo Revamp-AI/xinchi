@@ -97,7 +97,7 @@ Everything runs locally. By default, the ignored `data/` directory contains:
 
 The optional `XIN_DATA_DIR` override selects another private directory. **Do not commit any runtime data.** Workspace exports omit credentials and auth sessions but contain private source material and decisions. Use the in-app JSON export or SQLite's backup API for backups; copying a live database without its journal can miss writes.
 
-Connections shows stored coverage and the latest available run state: running, complete, partial, or failed. Progress counts processed records, including unchanged records. Gmail backfill is resumable in batches of up to 1,000 messages per refresh, followed by incremental history sync for the default scope. Custom Gmail query scopes rescan. Granola stores an update boundary; Fireflies rescans its participant scope with stable IDs.
+Connections shows stored coverage and the latest available run state: running, complete, partial, or failed. Progress counts processed records, including unchanged records. Gmail backfill is resumable in batches of up to 1,000 messages per refresh, followed by incremental history sync for the default scope. Custom Gmail query scopes rescan. Google rate limits (403/429) trigger bounded exponential backoff, honor Retry-After/RetryInfo delays, and report the wait in Connections. Retrying a message preserves pagination and avoids duplicate records; an exhausted retry budget leaves a distinct rate-limit warning. Granola stores an update boundary; Fireflies rescans its participant scope with stable IDs.
 
 ## Current limits
 
