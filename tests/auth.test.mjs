@@ -27,7 +27,7 @@ async function complete(flow,{scope=grant,claims={},profileEmail="owner@example.
 let session;
 test('all private reads and writes reject anonymous callers; setup is same-origin and one-time',async()=>{
  for(const p of ['state','sources','sources/manual:private','export','events/private','jobs/private'])assert.equal((await route.GET(req(p))).status,401,p);
- for(const p of ['items','settings','jobs','proposals/dismiss','connections','sync','import','auth/logout'])assert.equal((await route.POST(req(p,{method:'POST'}))).status,401,p);
+ for(const p of ['items','settings','jobs','jobs/cancel','proposals/dismiss','connections','sync','import','auth/logout'])assert.equal((await route.POST(req(p,{method:'POST'}))).status,401,p);
  assert.deepEqual(await (await route.GET(req('auth/status'))).json(),{configured:false,user:null});
  assert.equal((await route.POST(req('auth/setup',{method:'POST',originHeader:'https://untrusted.example',body:client}))).status,403);
  assert.equal((await route.POST(req('auth/setup',{method:'POST',body:{installed:client.web}}))).status,400);
