@@ -137,10 +137,11 @@ export default function Workspace() {
       setBusy(false);
     }
   };
-  const openSource = async (id) => {
+  const openSource = async (id, quote = '') => {
     setError('');
     try {
-      setSource(await api('sources/' + encodeURIComponent(id)));
+      const record = await api('sources/' + encodeURIComponent(id));
+      setSource({ ...record, quote });
     } catch (error) {
       setError(error.message);
     }

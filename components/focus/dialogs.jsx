@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   ArrowUpRight,
   Check,
@@ -230,7 +230,7 @@ export function CommitmentDialog({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => openSource(item.source_id)}
+              onClick={() => openSource(item.source_id, item.source_quote)}
             >
               <FileText />
               View source material
@@ -270,6 +270,12 @@ export function CommitmentDialog({
   );
 }
 export function SourceDialog({ source, close }) {
+  const quote = source.quote || '';
+  const body = source.body || '';
+  const start = quote ? body.indexOf(quote) : -1;
+  const scrollToMark = useCallback((node) => {
+    node?.scrollIntoView({ block: 'center' });
+  }, []);
   return (
     <Modal
       title={source.title}
@@ -296,9 +302,30 @@ export function SourceDialog({ source, close }) {
             </Button>
           )}
         </div>
+        {quote && (
+          <blockquote
+            className="mt-5 border-l-2 border-border pl-3 text-sm leading-relaxed text-muted-foreground"
+          >
+            <span className="muted-caption block">Cited excerpt</span>
+            {quote}
+          </blockquote>
+        )}
         <pre className="source-text">
-          {source.body ||
-            'Only metadata is available. Connect this source to retrieve the available text.'}
+          {start >= 0 ? (
+            <>
+              {body.slice(0, start)}
+              <mark
+                ref={scrollToMark}
+                className="bg-warning/20 text-foreground rounded-sm px-0.5"
+              >
+                {quote}
+              </mark>
+              {body.slice(start + quote.length)}
+            </>
+          ) : (
+            body ||
+            'Only metadata is available. Connect this source to retrieve the available text.'
+          )}
         </pre>
       </div>
     </Modal>
