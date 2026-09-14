@@ -4,6 +4,8 @@ import { ArrowRight, CheckCheck, Clock3, Plus, Target } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
+import { localToday } from '../../lib/urgency.mjs';
+import { AttentionBadge, CarryoverBadge } from './attention';
 import {
   Empty,
   FormField,
@@ -26,6 +28,10 @@ export default function BoardView({
   create,
   edit,
 }) {
+  const today = localToday(new Date());
+  const carried = Object.fromEntries(
+    (state.carryovers || []).map((row) => [row.item_id, row.n]),
+  );
   return (
     <>
       <Heading
@@ -130,6 +136,10 @@ export default function BoardView({
                       {item.hard_deadline && (
                         <small>Due {formatDate(item.hard_deadline)}</small>
                       )}
+                      <div className="mt-1.5 flex flex-wrap justify-end gap-1.5 empty:hidden">
+                        <AttentionBadge item={item} today={today} />
+                        <CarryoverBadge count={carried[item.id]} />
+                      </div>
                     </div>
                     <Button
                       variant="ghost"

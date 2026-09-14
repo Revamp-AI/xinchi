@@ -25,6 +25,8 @@ import {
   AccordionPanel,
 } from '@/components/ui/accordion';
 import { Spinner } from '@/components/ui/spinner';
+import { localToday } from '../../lib/urgency.mjs';
+import { AttentionStrip } from './attention';
 import {
   Citations,
   Empty,
@@ -80,6 +82,7 @@ export default function AgentView({
       ['queued', 'running'].includes(job.status),
     );
   const review = latest?.status === 'complete' ? latest.result : null;
+  const today = localToday(new Date());
   return (
     <>
       <Heading
@@ -91,6 +94,12 @@ export default function AgentView({
           {active ? 'Agent working' : 'Ready when you are'}
         </StatusBadge>
       </Heading>
+      <AttentionStrip
+        items={state.items}
+        carryovers={state.carryovers}
+        edit={edit}
+        today={today}
+      />
       <div className="overview-stats">
         <span>
           <BookOpen size={15} />
