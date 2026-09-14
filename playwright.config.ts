@@ -76,6 +76,6 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: false,
     timeout: 300_000,
-    env: { XIN_DATA_DIR: dataDir, XIN_ALLOWED_EMAIL: ownerEmail },
+    env: { XIN_DATA_DIR: dataDir, XIN_ALLOWED_EMAIL: ownerEmail, DATABASE_URL: process.env.DATABASE_URL! },
   },
 });

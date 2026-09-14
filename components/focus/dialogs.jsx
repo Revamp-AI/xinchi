@@ -230,7 +230,13 @@ export function CommitmentDialog({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => openSource(item.source_id, item.source_quote)}
+              onClick={() =>
+                openSource(
+                  item.source_id,
+                  item.source_quote,
+                  item.source_version_id,
+                )
+              }
             >
               <FileText />
               View source material

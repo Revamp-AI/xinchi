@@ -386,6 +386,23 @@ export default function AgentView({
                     onSend={(answers) => answer(selected.id, answers)}
                   />
                 )}
+                {review.drafts?.length > 0 && (
+                  <div className="contact-inline-actions">
+                    <p>
+                      {review.drafts.length} private message draft
+                      {review.drafts.length === 1 ? '' : 's'} saved to contact
+                      profiles.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigate('contacts')}
+                    >
+                      Review drafts in Contacts
+                      <ArrowRight />
+                    </Button>
+                  </div>
+                )}
                 <p className="review-coverage">{review.coverage_note}</p>
                 <Button
                   variant="ghost"

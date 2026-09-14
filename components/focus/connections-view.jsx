@@ -300,10 +300,11 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
             <HardDrive size={19} />
           </span>
           <div>
-            <h3>Your context stays on this Mac</h3>
+            <h3>Your context, stored in Postgres</h3>
             <p>
               Source text, previous versions, decisions, and agent activity are
-              saved in one local archive.
+              saved in your configured Postgres database. Provider credentials
+              remain on this computer.
             </p>
             <Accordion>
               <AccordionItem value="storage">

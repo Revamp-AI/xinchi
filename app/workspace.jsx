@@ -7,6 +7,7 @@ import AppShell from '@/components/focus/app-shell';
 import AgentView from '@/components/focus/agent-view';
 import BoardView from '@/components/focus/board-view';
 import LibraryView from '@/components/focus/library-view';
+import ContactsView from '@/components/focus/contacts-view';
 import ConnectionsView from '@/components/focus/connections-view';
 import {
   ActivityDialog,
@@ -43,7 +44,8 @@ export default function Workspace() {
     [state, setState] = useState(null),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [connectionLost, setConnectionLost] = useState(false);
   const [prompt, setPrompt] = useState(''),
     [editing, setEditing] = useState(null),
     [source, setSource] = useState(null),
@@ -63,6 +65,7 @@ export default function Workspace() {
   const refresh = async () => {
     const next = await api('state');
     setState(next);
+    setConnectionLost(false);
     return next;
   };
   useEffect(() => {
@@ -81,9 +84,14 @@ export default function Workspace() {
     const timer = setInterval(() => {
       api('state')
         .then((next) => {
-          if (mounted) setState(next);
+          if (mounted) {
+            setState(next);
+            setConnectionLost(false);
+          }
         })
-        .catch(() => {});
+        .catch(() => {
+          if (mounted) setConnectionLost(true);
+        });
     }, 2500);
     const query = new URLSearchParams(location.search),
       gmail = query.get('gmail');
@@ -142,10 +150,14 @@ export default function Workspace() {
       setBusy(false);
     }
   };
-  const openSource = async (id, quote = '') => {
+  const openSource = async (id, quote = '', version = '') => {
     setError('');
     try {
-      const record = await api('sources/' + encodeURIComponent(id));
+      const record = await api(
+        'sources/' +
+          encodeURIComponent(id) +
+          (version ? '?version=' + encodeURIComponent(version) : ''),
+      );
       setSource({ ...record, quote });
     } catch (error) {
       setError(error.message);
@@ -189,6 +201,7 @@ export default function Workspace() {
       ...proposal.payload,
       source_id: proposal.payload.citations[0].source_id,
       source_quote: proposal.payload.citations[0].quote,
+      source_version_id: proposal.payload.citations[0].source_version_id,
       proposal_id: proposal.id,
       status: original?.status || 'candidate',
       reason: proposal.payload.rationale,
@@ -252,7 +265,16 @@ export default function Workspace() {
     );
   const now = state.items.filter((item) => item.status === 'now');
   return (
-    <AppShell {...{ view, state, busy, onLogout }} onViewChange={navigate}>
+    <AppShell
+      {...{ view, state, busy, onLogout, connectionLost }}
+      onViewChange={navigate}
+    >
+      {connectionLost && (
+        <Notice error>
+          Connection interrupted. Showing the last loaded data; saving changes
+          needs a connection.
+        </Notice>
+      )}
       {error && !editing && !setup && (
         <Notice error onClose={() => setError('')}>
           {error}
@@ -319,6 +341,15 @@ export default function Workspace() {
             busy,
           }}
           loading={libraryLoading}
+        />
+      )}
+      {view === 'contacts' && (
+        <ContactsView
+          api={api}
+          openSource={openSource}
+          onReview={start}
+          onCommitment={edit}
+          items={state.items}
         />
       )}
       {view === 'connections' && (

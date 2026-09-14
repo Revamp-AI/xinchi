@@ -7,6 +7,7 @@ const views = {
   Commitments: 'Your commitments',
   'Context library': 'Context library',
   Connections: 'Your connections',
+  Contacts: 'Your contacts',
 };
 const [fireflies] = sources;
 
@@ -46,7 +47,7 @@ test('the overview loads signed in', async ({ page, isMobile }) => {
   }
 });
 
-test('navigation reaches all four views', async ({ page }) => {
+test('navigation reaches all five views', async ({ page }) => {
   for (const view of Object.keys(views) as (keyof typeof views)[]) {
     await open(page, view);
     await expect(page.locator('.breadcrumb strong')).toHaveText(view);
@@ -135,4 +136,46 @@ test('on mobile the sidebar trigger opens navigation', async ({
   await sheet.getByRole('button', { name: 'Connections', exact: true }).click();
   await expect(sheet).toBeHidden();
   await expect(heading(page, views.Connections)).toBeVisible();
+});
+
+
+test('contact profile, timeline, map and list work together', async ({ page }, testInfo) => {
+  await open(page, 'Contacts');
+  await page.getByRole('button', { name: 'New contact', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: 'New contact' });
+  const name = 'Morgan ' + testInfo.project.name;
+  await dialog.getByLabel('Name', { exact: true }).fill(name);
+  await dialog.getByLabel('Email', { exact: true }).fill(testInfo.project.name + '@example.com');
+  await dialog.getByRole('button', { name: 'Save contact' }).click();
+  dialog = page.getByRole('dialog', { name, exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Log interaction' }).click();
+  const log = page.getByRole('dialog', { name: 'Log an interaction' });
+  await log.getByLabel('What happened?').fill('Reviewed the fictional product roadmap together.');
+  await log.getByRole('button', { name: 'Save interaction' }).click();
+  await expect(dialog).toContainText('A meaningful exchange is within');
+  await expect(dialog).toContainText('Reviewed the fictional product roadmap together.');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  const table = page.getByRole('table', { name: 'Contacts', exact: true });
+  await expect(table.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+  await expect(table.getByRole('row').filter({ hasText: name })).toContainText('Active');
+});
+
+
+test('relationship map supports light, dark and narrow layouts', async ({page}, testInfo) => {
+  await open(page,'Contacts');
+  await expect(page.getByRole('button',{name:'Avery Chen, Active',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Change appearance'}).click();
+  await page.getByRole('menuitemradio',{name:'Light',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toBeHidden();
+  await page.screenshot({path:testInfo.outputPath('contacts-light.png'),fullPage:true});
+  await page.getByRole('button',{name:'Change appearance'}).click();
+  await page.getByRole('menuitemradio',{name:'Dark',exact:true}).click();
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toBeHidden();
+  await page.screenshot({path:testInfo.outputPath('contacts-dark.png'),fullPage:true});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
 });

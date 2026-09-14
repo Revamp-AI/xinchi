@@ -243,7 +243,13 @@ export function Citations({ citations = [], openSource }) {
             variant="outline"
             size="xs"
             className="max-w-full"
-            onClick={() => openSource(citation.source_id, citation.quote)}
+            onClick={() =>
+              openSource(
+                citation.source_id,
+                citation.quote,
+                citation.source_version_id,
+              )
+            }
           >
             <ProviderIcon small provider={provider} />
             <span className="min-w-0 truncate">
