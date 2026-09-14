@@ -45,7 +45,11 @@ export function AttentionStrip({ items = [], carryovers = [], edit, today }) {
   const day = today || localToday(new Date());
   const carried = countsByItem(carryovers);
   const rows = sortByAttention(
-    items.filter((item) => attention(item, day) || carried[item.id] >= 2),
+    items.filter(
+      (item) =>
+        attention(item, day) ||
+        (carried[item.id] >= 2 && !['done', 'dropped'].includes(item.status)),
+    ),
     day,
   );
   if (rows.length === 0) return null;
