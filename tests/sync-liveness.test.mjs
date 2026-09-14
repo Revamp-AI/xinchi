@@ -6,10 +6,12 @@ import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'xin-sync-liveness-test-'));process.env.XIN_DATA_DIR=temp;process.env.XIN_ALLOWED_EMAIL='owner@example.com';
+const realSpawn=cp.spawn;
 const spawned=mock.method(cp,'spawn',()=>({pid:4242,unref(){},on(){}}));syncBuiltinESMExports();
 const m=await import('../lib/db.mjs');
 const conn=await import('../lib/connectors.mjs');
 const at=minutesAgo=>new Date(Date.now()-minutesAgo*60*1000).toISOString();
+const until=async check=>{for(let i=0;i<100&&!check();i++)await new Promise(r=>setTimeout(r,50));return check();};
 const insertRun=(provider,state,started,extra={})=>{const id=m.uid();m.run('INSERT INTO sync_runs(id,provider,started_at,finished_at,state,imported,message) VALUES(?,?,?,?,?,?,?)',id,provider,started,extra.finished_at??null,state,extra.imported??0,extra.message??'');return id;};
 test('dashboard reports one latest run per provider and a newest-first history',()=>{
  insertRun('fireflies','complete',at(60),{finished_at:at(59),imported:4});insertRun('granola','complete',at(30),{finished_at:at(29),imported:2});insertRun('granola','failed',at(10),{finished_at:at(9),message:'Provider request failed (500).'});
@@ -64,4 +66,15 @@ test('recoverSyncRuns fails a running row whose worker is gone and leaves a live
  assert.equal(m.one('SELECT state FROM sync_runs WHERE id=?',live).state,'running');
  const r=m.one('SELECT * FROM sync_runs WHERE id=?',dead);assert.equal(r.state,'failed');assert.equal(r.message,'Interrupted; retry the import');assert.ok(r.finished_at);
  m.run("UPDATE sync_runs SET state='failed',finished_at=?,message='Test cleanup' WHERE id=?",m.stamp(),live);
+});
+test('recoverSyncRuns stops a silent worker that is still alive and reaps a silent dead one',async()=>{
+ const child=realSpawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+ try{
+  const silent=insertRun('granola','running',at(20));m.run('UPDATE sync_runs SET pid=?,updated_at=? WHERE id=?',child.pid,at(20),silent);
+  const dead=insertRun('gmail','running',at(20));m.run('UPDATE sync_runs SET pid=?,updated_at=? WHERE id=?',2**22,at(20),dead);
+  assert.equal(conn.isProcessAlive(child.pid),true);
+  conn.recoverSyncRuns();
+  assert.equal(await until(()=>!conn.isProcessAlive(child.pid)),true,'worker still alive after reaping');
+  for(const id of [silent,dead]){const r=m.one('SELECT * FROM sync_runs WHERE id=?',id);assert.equal(r.state,'failed');assert.equal(r.message,'Interrupted; retry the import');assert.ok(r.finished_at);}
+ }finally{child.kill('SIGKILL');}
 });
