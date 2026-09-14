@@ -35,6 +35,7 @@ import {
   formatDate,
   providerNames,
 } from './shared';
+import { ReviewHistory, isFollowUp, promptSnippet } from './review-history';
 
 const prompts = [
   {
@@ -72,6 +73,8 @@ export default function AgentView({
   edit,
   navigate,
   showTrace,
+  selectedJobId,
+  setSelectedJobId,
 }) {
   const now = state.items.filter((item) => item.status === 'now');
   const candidates = state.items.filter((item) => item.status === 'candidate');
@@ -79,7 +82,12 @@ export default function AgentView({
     active = state.jobs.find((job) =>
       ['queued', 'running'].includes(job.status),
     );
-  const review = latest?.status === 'complete' ? latest.result : null;
+  const latestComplete = state.jobs.find((job) => job.status === 'complete'),
+    selected =
+      state.jobs.find(
+        (job) => job.id === selectedJobId && job.status === 'complete',
+      ) || latestComplete;
+  const review = selected?.result || null;
   return (
     <>
       <Heading
@@ -300,10 +308,18 @@ export default function AgentView({
               <div className="section-title">
                 <h2>
                   <Sparkles size={16} />
-                  Latest review
+                  {selected.id === latestComplete.id
+                    ? 'Latest review'
+                    : 'Earlier review'}
                 </h2>
                 <span className="muted-caption">
-                  {formatDate(latest.created_at)}
+                  {isFollowUp(selected.prompt) && (
+                    <StatusBadge tone="info">Follow-up</StatusBadge>
+                  )}
+                  <span>
+                    {formatDate(selected.created_at)} ·{' '}
+                    {promptSnippet(selected.prompt)}
+                  </span>
                 </span>
               </div>
               <Card className="review-card">
@@ -348,13 +364,20 @@ export default function AgentView({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => showTrace(latest.id)}
+                  onClick={() => showTrace(selected.id)}
                 >
                   View agent activity
                   <ArrowRight />
                 </Button>
               </Card>
             </section>
+          )}
+          {latest && (
+            <ReviewHistory
+              jobs={state.jobs}
+              selectedJobId={selectedJobId}
+              onSelect={setSelectedJobId}
+            />
           )}
           {!latest && (
             <Card className="first-review">

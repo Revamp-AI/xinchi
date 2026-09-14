@@ -49,6 +49,7 @@ export default function Workspace() {
     [setup, setSetup] = useState(null),
     [trace, setTrace] = useState(null),
     [events, setEvents] = useState(null);
+  const [selectedJobId, setSelectedJobId] = useState(null);
   const [q, setQ] = useState(''),
     [provider, setProvider] = useState(''),
     [offset, setOffset] = useState(0),
@@ -153,6 +154,7 @@ export default function Workspace() {
     act(async () => {
       await api('jobs', { prompt: text || prompt });
       setPrompt('');
+      setSelectedJobId(null);
       setView('agent');
     });
   const edit = (item) => {
@@ -257,6 +259,8 @@ export default function Workspace() {
             create,
             edit,
             navigate,
+            selectedJobId,
+            setSelectedJobId,
           }}
           dismiss={(id) => act(() => api('proposals/dismiss', { id }))}
           showTrace={(id) => inspect('jobs/' + id, setTrace)}
