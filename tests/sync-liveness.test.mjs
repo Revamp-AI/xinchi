@@ -19,3 +19,27 @@ test('dashboard reports one latest run per provider and a newest-first history',
  assert.deepEqual(d.sync_history.map(r=>[r.provider,r.state]),[['granola','failed'],['granola','complete'],['fireflies','complete']]);
  for(let i=1;i<d.sync_history.length;i++)assert.ok(d.sync_history[i-1].started_at>=d.sync_history[i].started_at);
 });
+test('isProcessAlive distinguishes a live pid from one that cannot exist',()=>{
+ assert.equal(conn.isProcessAlive(process.pid),true);assert.equal(conn.isProcessAlive(1),true);
+ assert.equal(conn.isProcessAlive(2**22),false);assert.equal(conn.isProcessAlive(0),false);assert.equal(conn.isProcessAlive(null),false);
+});
+test('staleRun treats a run as live only while its process exists and its heartbeat is fresh',()=>{
+ const now=Date.now();
+ assert.equal(conn.staleRun({pid:process.pid,started_at:at(1),updated_at:at(0)},now),false);
+ assert.equal(conn.staleRun({pid:process.pid,started_at:at(20),updated_at:at(0)},now),false);
+ assert.equal(conn.staleRun({pid:process.pid,started_at:at(1),updated_at:null},now),false);
+ assert.equal(conn.staleRun({pid:2**22,started_at:at(1),updated_at:at(0)},now),true);
+ assert.equal(conn.staleRun({pid:process.pid,started_at:at(20),updated_at:at(16)},now),true);
+ assert.equal(conn.staleRun({pid:null,started_at:at(0),updated_at:at(0)},now),true);
+});
+test('startSync refuses to start beside a live import and replaces a dead one',()=>{
+ conn.configure({fireflies_key:'fictional-fireflies-key'});
+ const live=insertRun('fireflies','running',at(1));m.run('UPDATE sync_runs SET pid=?,updated_at=? WHERE id=?',process.pid,at(0),live);
+ const before=spawned.mock.callCount();
+ assert.throws(()=>conn.startSync('fireflies'),/already running/);assert.equal(spawned.mock.callCount(),before);
+ m.run('UPDATE sync_runs SET pid=? WHERE id=?',2**22,live);
+ const {id}=conn.startSync('fireflies');assert.equal(spawned.mock.callCount(),before+1);
+ const dead=m.one('SELECT * FROM sync_runs WHERE id=?',live);assert.equal(dead.state,'failed');assert.equal(dead.message,'Interrupted; retry the import');
+ const fresh=m.one('SELECT * FROM sync_runs WHERE id=?',id);assert.equal(fresh.state,'running');assert.equal(fresh.pid,4242);assert.ok(fresh.updated_at);
+ m.run("UPDATE sync_runs SET state='failed',finished_at=?,message='Test cleanup' WHERE id=?",m.stamp(),id);
+});
