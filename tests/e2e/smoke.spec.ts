@@ -34,10 +34,16 @@ test.beforeEach(async ({ page }) => {
   await expect(heading(page, views.Overview)).toBeVisible();
 });
 
-test('the overview loads signed in', async ({ page }) => {
+test('the overview loads signed in', async ({ page, isMobile }) => {
   await expect(page).not.toHaveURL(/\/login/);
   await expect(page.locator('.breadcrumb strong')).toHaveText('Overview');
-  await expect(page.getByText('Ready when you are')).toBeVisible();
+  // Phones hide the heading status badge (app/globals.css, max-width 480px),
+  // so check the overview stats line there instead.
+  if (isMobile) {
+    await expect(page.getByText('sources in context')).toBeVisible();
+  } else {
+    await expect(page.getByText('Ready when you are')).toBeVisible();
+  }
 });
 
 test('navigation reaches all four views', async ({ page }) => {
