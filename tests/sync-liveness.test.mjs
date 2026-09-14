@@ -78,3 +78,26 @@ test('recoverSyncRuns stops a silent worker that is still alive and reaps a sile
   for(const id of [silent,dead]){const r=m.one('SELECT * FROM sync_runs WHERE id=?',id);assert.equal(r.state,'failed');assert.equal(r.message,'Interrupted; retry the import');assert.ok(r.finished_at);}
  }finally{child.kill('SIGKILL');}
 });
+test('a worker finish and its progress updates leave a reaped run failed and unchanged',async()=>{
+ conn.configure({fireflies_key:'fictional-fireflies-key'});
+ const oldFetch=global.fetch;global.fetch=async()=>Response.json({data:{transcripts:[{id:'ff-1',title:'Roadmap sync ff-1',dateString:'2026-09-10T10:00:00Z',transcript_url:'https://example.com/t/ff-1',sentences:[{speaker_name:'Alex',text:'Ship the checklist',start_time:0,end_time:1}],summary:{short_summary:'Checklist agreed'}}]}});
+ try{
+  const {id}=conn.startSync('fireflies');m.run("UPDATE sync_runs SET state='failed',finished_at=?,message='Interrupted; retry the import' WHERE id=?",at(1),id);
+  const reaped=m.one('SELECT * FROM sync_runs WHERE id=?',id);
+  process.argv[2]=id;await import('../scripts/sync-worker.mjs?reaped');
+  const r=m.one('SELECT * FROM sync_runs WHERE id=?',id);
+  for(const k of ['state','message','finished_at','imported','changed'])assert.equal(r[k],reaped[k],k);
+ }finally{global.fetch=oldFetch;}
+});
+test('a worker told to stop fails its own run and its later finish cannot revive it',async()=>{
+ conn.configure({fireflies_key:'fictional-fireflies-key'});
+ let release;const gate=new Promise(r=>{release=r;});const oldFetch=global.fetch;global.fetch=()=>gate;const exit=mock.method(process,'exit',()=>{});
+ try{
+  const {id}=conn.startSync('fireflies');process.argv[2]=id;const worker=import('../scripts/sync-worker.mjs?stop');
+  assert.equal(await until(()=>m.one('SELECT pid FROM sync_runs WHERE id=?',id).pid===process.pid),true,'worker never started');
+  process.emit('SIGTERM');
+  const stopped=m.one('SELECT * FROM sync_runs WHERE id=?',id);assert.equal(stopped.state,'failed');assert.equal(stopped.message,'Stopped after going silent');assert.ok(stopped.finished_at);assert.ok(exit.mock.callCount()>0);
+  release(Response.json({data:{transcripts:[]}}));await worker;
+  const r=m.one('SELECT * FROM sync_runs WHERE id=?',id);assert.equal(r.state,'failed');assert.equal(r.message,'Stopped after going silent');assert.equal(r.finished_at,stopped.finished_at);
+ }finally{release(Response.json({data:{transcripts:[]}}));global.fetch=oldFetch;exit.mock.restore();}
+});
