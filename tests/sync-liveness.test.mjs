@@ -6,7 +6,7 @@ import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'xin-sync-liveness-test-'));process.env.XIN_DATA_DIR=temp;process.env.XIN_ALLOWED_EMAIL='owner@example.com';
-const spawned=mock.method(cp,'spawn',()=>({pid:4242,unref(){}}));syncBuiltinESMExports();
+const spawned=mock.method(cp,'spawn',()=>({pid:4242,unref(){},on(){}}));syncBuiltinESMExports();
 const m=await import('../lib/db.mjs');
 const conn=await import('../lib/connectors.mjs');
 const at=minutesAgo=>new Date(Date.now()-minutesAgo*60*1000).toISOString();
@@ -42,4 +42,18 @@ test('startSync refuses to start beside a live import and replaces a dead one',(
  const dead=m.one('SELECT * FROM sync_runs WHERE id=?',live);assert.equal(dead.state,'failed');assert.equal(dead.message,'Interrupted; retry the import');
  const fresh=m.one('SELECT * FROM sync_runs WHERE id=?',id);assert.equal(fresh.state,'running');assert.equal(fresh.pid,4242);assert.ok(fresh.updated_at);
  m.run("UPDATE sync_runs SET state='failed',finished_at=?,message='Test cleanup' WHERE id=?",m.stamp(),id);
+});
+test('a worker finish stores changed separately from imported and a plain finish message',async()=>{
+ conn.configure({fireflies_key:'fictional-fireflies-key'});
+ const transcript=(id,text)=>({id,title:'Roadmap sync '+id,dateString:'2026-09-10T10:00:00Z',transcript_url:'https://example.com/t/'+id,sentences:[{speaker_name:'Alex',text,start_time:0,end_time:1}],summary:{short_summary:'Checklist agreed'}});
+ const rows=[transcript('ff-1','Ship the checklist')];const oldFetch=global.fetch;global.fetch=async()=>Response.json({data:{transcripts:rows}});
+ try{
+  assert.equal((await conn.syncProvider('fireflies')).changed,1);
+  rows.push(transcript('ff-2','Review the launch email'));
+  const {id}=conn.startSync('fireflies');const started=m.one('SELECT * FROM sync_runs WHERE id=?',id);assert.equal(started.pid,4242);
+  process.argv[2]=id;await import('../scripts/sync-worker.mjs');
+  const r=m.one('SELECT * FROM sync_runs WHERE id=?',id);
+  assert.equal(r.state,'complete',r.message);assert.equal(r.imported,2);assert.equal(r.changed,1);assert.equal(r.message,'Import finished');assert.ok(r.finished_at);
+  assert.equal(r.pid,process.pid);assert.ok(Date.parse(r.updated_at)>=Date.parse(started.updated_at));
+ }finally{global.fetch=oldFetch;}
 });
