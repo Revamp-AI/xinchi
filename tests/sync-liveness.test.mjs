@@ -1,0 +1,21 @@
+import test,{mock} from 'node:test';
+import assert from 'node:assert/strict';
+import cp from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+const temp=mkdtempSync(join(tmpdir(),'xin-sync-liveness-test-'));process.env.XIN_DATA_DIR=temp;process.env.XIN_ALLOWED_EMAIL='owner@example.com';
+const spawned=mock.method(cp,'spawn',()=>({pid:4242,unref(){}}));syncBuiltinESMExports();
+const m=await import('../lib/db.mjs');
+const conn=await import('../lib/connectors.mjs');
+const at=minutesAgo=>new Date(Date.now()-minutesAgo*60*1000).toISOString();
+const insertRun=(provider,state,started,extra={})=>{const id=m.uid();m.run('INSERT INTO sync_runs(id,provider,started_at,finished_at,state,imported,message) VALUES(?,?,?,?,?,?,?)',id,provider,started,extra.finished_at??null,state,extra.imported??0,extra.message??'');return id;};
+test('dashboard reports one latest run per provider and a newest-first history',()=>{
+ insertRun('fireflies','complete',at(60),{finished_at:at(59),imported:4});insertRun('granola','complete',at(30),{finished_at:at(29),imported:2});insertRun('granola','failed',at(10),{finished_at:at(9),message:'Provider request failed (500).'});
+ const d=m.dashboard();
+ assert.deepEqual(d.sync.map(r=>[r.provider,r.state]),[['granola','failed'],['fireflies','complete']]);
+ assert.equal(d.sync[1].changed,0);
+ assert.deepEqual(d.sync_history.map(r=>[r.provider,r.state]),[['granola','failed'],['granola','complete'],['fireflies','complete']]);
+ for(let i=1;i<d.sync_history.length;i++)assert.ok(d.sync_history[i-1].started_at>=d.sync_history[i].started_at);
+});
