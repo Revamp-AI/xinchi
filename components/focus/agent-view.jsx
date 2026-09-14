@@ -1,37 +1,476 @@
 'use client';
 
-import { ArrowRight, ArrowUp, BookOpen, CheckCheck, ChevronRight, CircleHelp, Clock3, CornerDownLeft, FileText, ListChecks, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import {
+  ArrowRight,
+  ArrowUp,
+  BookOpen,
+  CheckCheck,
+  ChevronRight,
+  CircleHelp,
+  Clock3,
+  CornerDownLeft,
+  FileText,
+  ListChecks,
+  Plus,
+  RefreshCw,
+  Sparkles,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
-import { Accordion, AccordionItem, AccordionTrigger, AccordionPanel } from '@/components/ui/accordion';
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionPanel,
+} from '@/components/ui/accordion';
 import { Spinner } from '@/components/ui/spinner';
-import { Citations, Empty, Heading, ProviderIcon, StatusBadge, countSources, formatDate, providerNames } from './shared';
+import {
+  Citations,
+  Empty,
+  Heading,
+  ProviderIcon,
+  StatusBadge,
+  countSources,
+  formatDate,
+  providerNames,
+} from './shared';
 
 const prompts = [
-  { icon: ListChecks, title: 'Plan my week', detail: 'Choose what deserves your time', prompt: 'Prepare a weekly reset from my available context and commitments. Identify the most important unresolved decisions and recommend at most three outcomes. Verify the sources and current status before proposing anything.' },
-  { icon: RefreshCw, title: 'Catch me up', detail: 'Find what changed in the context', prompt: 'What changed since my last review? Read the new sources, compare with my commitments, and identify decisions or follow-ups I may have missed.' },
-  { icon: CircleHelp, title: 'Find open loops', detail: 'Surface decisions waiting on you', prompt: 'Where do I owe someone a decision? Search my context, show the supporting evidence, and distinguish confirmed commitments from possible follow-ups.' },
+  {
+    icon: ListChecks,
+    title: 'Plan my week',
+    detail: 'Choose what deserves your time',
+    prompt:
+      'Prepare a weekly reset from my available context and commitments. Identify the most important unresolved decisions and recommend at most three outcomes. Verify the sources and current status before proposing anything.',
+  },
+  {
+    icon: RefreshCw,
+    title: 'Catch me up',
+    detail: 'Find what changed in the context',
+    prompt:
+      'What changed since my last review? Read the new sources, compare with my commitments, and identify decisions or follow-ups I may have missed.',
+  },
+  {
+    icon: CircleHelp,
+    title: 'Find open loops',
+    detail: 'Surface decisions waiting on you',
+    prompt:
+      'Where do I owe someone a decision? Search my context, show the supporting evidence, and distinguish confirmed commitments from possible follow-ups.',
+  },
 ];
-export default function AgentView({ state, prompt, setPrompt, busy, start, openSource, selectProposal, dismiss, create, edit, navigate, showTrace }) {
-  const now = state.items.filter(item => item.status === 'now');
-  const candidates = state.items.filter(item => item.status === 'candidate');
-  const latest = state.jobs[0], active = state.jobs.find(job => ['queued', 'running'].includes(job.status));
+export default function AgentView({
+  state,
+  prompt,
+  setPrompt,
+  busy,
+  start,
+  openSource,
+  selectProposal,
+  dismiss,
+  create,
+  edit,
+  navigate,
+  showTrace,
+}) {
+  const now = state.items.filter((item) => item.status === 'now');
+  const candidates = state.items.filter((item) => item.status === 'candidate');
+  const latest = state.jobs[0],
+    active = state.jobs.find((job) =>
+      ['queued', 'running'].includes(job.status),
+    );
   const review = latest?.status === 'complete' ? latest.result : null;
-  return <>
-    <Heading eyebrow="YOUR OPERATING PARTNER" title="Your next move, clearer." description="Bring the context together. Decide what deserves your attention."><StatusBadge tone={active ? 'info' : 'neutral'} dot>{active ? 'Agent working' : 'Ready when you are'}</StatusBadge></Heading>
-    <div className="overview-stats"><span><BookOpen size={15} /><strong>{countSources(state).toLocaleString()}</strong>sources in context</span><span><Sparkles size={15} /><strong>{state.proposals.length}</strong>proposals to review</span><span><CheckCheck size={15} /><strong>{now.length} of 3</strong>active outcomes</span></div>
-    <div className="overview-grid"><section className="agent-column" aria-label="Your agent">
-      <Card className="agent-composer"><form onSubmit={event => { event.preventDefault(); if (prompt.trim() && !active && !busy) start(); }}><div className="composer-heading"><span className="agent-glyph"><Sparkles size={17} /></span><span>Think it through with Focus</span></div><Textarea aria-label="Ask your agent" className="prompt-input" placeholder="What’s on your mind? Ask a question, untangle a decision, or find your next priority…" rows={3} value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && prompt.trim() && !active && !busy) { event.preventDefault(); start(); } }} /><div className="composer-actions"><Button variant="ghost" size="sm" onClick={() => navigate('library')}><BookOpen />Your context<ChevronRight /></Button><div><span className="keyboard-hint"><CornerDownLeft size={13} />⌘ / Ctrl + Enter</span><Button type="submit" className="ask-agent-button" disabled={busy || !!active || !prompt.trim()} aria-label="Run agent"><ArrowUp />Ask Focus</Button></div></div></form></Card>
-      <div className="prompt-options">{prompts.map(item => <Button key={item.title} variant="outline" className="prompt-option" disabled={busy || !!active} onClick={() => start(item.prompt)}><item.icon /><span><strong>{item.title}</strong><small>{item.detail}</small></span><ArrowRight /></Button>)}</div>
-      {active && <Card className="agent-progress" role="status"><div className="section-title"><span><Spinner />Working through your context</span><Button variant="ghost" size="sm" onClick={() => showTrace(active.id)}>View activity<ArrowRight /></Button></div><h3>{active.progress || 'Preparing your review…'}</h3><p>{active.prompt}</p><div className="indeterminate-progress"><span /></div></Card>}
-      {latest?.status === 'failed' && <Card className="agent-progress"><StatusBadge tone="warning">Review interrupted</StatusBadge><p>{latest.error}</p><Button variant="outline" disabled={busy || !!active} onClick={() => start(latest.prompt)}><RefreshCw />Try again</Button></Card>}
-      {state.proposals.length > 0 && <section className="decision-section"><div className="section-title"><h2>Ready for your decision <span>{state.proposals.length}</span></h2><span className="muted-caption">You make the call</span></div><div className="decision-list">{state.proposals.map((proposal, index) => <Card className="decision-card" key={proposal.id}><div className="decision-heading"><span className="decision-index">{String(index + 1).padStart(2, '0')}</span><div><div className="decision-meta"><span>{proposal.payload.kind === 'decision' ? 'DECISION' : 'PROPOSED OUTCOME'}</span><span>·</span><span>{proposal.payload.confidence} confidence</span></div><h3>{proposal.payload.title}</h3></div></div><p className="decision-rationale">{proposal.payload.rationale}</p>{proposal.payload.uncertainty && <div className="verify-note"><CircleHelp size={14} /><span>{proposal.payload.uncertainty}</span></div>}<div className="decision-actions"><Button variant="ghost" size="sm" onClick={() => openSource(proposal.payload.citations[0].source_id)}><FileText />Evidence</Button><div><Button variant="ghost" size="sm" disabled={busy} onClick={() => dismiss(proposal.id)}>Dismiss</Button><Button variant="outline" size="sm" onClick={() => selectProposal(proposal)}>Review<ArrowRight /></Button></div></div></Card>)}</div></section>}
-      {review && <section className="latest-review"><div className="section-title"><h2><Sparkles size={16} />Latest review</h2><span className="muted-caption">{formatDate(latest.created_at)}</span></div><Card className="review-card"><p className="review-brief">{review.brief}</p><Accordion className="review-findings"><AccordionItem value="evidence"><AccordionTrigger>What the context says <span className="finding-count">{review.findings.length} findings</span></AccordionTrigger><AccordionPanel><div className="finding-list">{review.findings.map((finding, index) => <div key={index}><p>{finding.text}</p><Citations citations={finding.citations} openSource={openSource} /></div>)}</div></AccordionPanel></AccordionItem></Accordion>{review.questions.length > 0 && <div className="review-questions"><h3><CircleHelp size={15} />A little clarity from you</h3>{review.questions.map((question, index) => <p key={index}><span>{index + 1}.</span>{question}</p>)}</div>}<p className="review-coverage">{review.coverage_note}</p><Button variant="ghost" size="sm" onClick={() => showTrace(latest.id)}>View agent activity<ArrowRight /></Button></Card></section>}
-      {!latest && <Card className="first-review"><Empty icon={Sparkles} title="A fresh perspective starts here" description="Your agent reads the material behind the work and helps you make a deliberate choice."><Button onClick={() => start(prompts[0].prompt)} disabled={busy}><Sparkles />Prepare my first review</Button></Empty></Card>}
-    </section><aside className="focus-rail" aria-label="Current priorities"><Card className="current-focus"><div className="section-title"><h2>In focus</h2><StatusBadge>{now.length} / 3</StatusBadge></div><p className="rail-description">A small set of outcomes you’ve chosen.</p><div className="focus-slots">{Array.from({ length: 3 }, (_, index) => { const item = now[index]; return item ? <Button key={item.id} variant="ghost" className="focus-slot chosen" onClick={() => edit(item)}><span className="slot-number">{index + 1}</span><span><strong>{item.title}</strong><small><Clock3 size={12} />{formatDate(item.checkpoint)}</small></span><ChevronRight /></Button> : <div className="focus-slot available" key={index}><span className="slot-number">{index + 1}</span><span>{index === 0 ? 'Choose one meaningful outcome' : 'Room to be deliberate'}</span></div>; })}</div><Button variant="outline" className="full-width" onClick={create}><Plus />Choose an outcome</Button><Button variant="ghost" size="sm" className="rail-link" onClick={() => navigate('board')}>View commitments<ArrowRight /></Button></Card>
-      <div className="context-summary"><div className="section-title"><h2>Connected context</h2><BookOpen size={16} /></div>{Object.entries(providerNames).map(([provider, name]) => <div className="context-row" key={provider}><ProviderIcon provider={provider} small /><span>{name}</span><strong>{countSources(state, provider).toLocaleString()}</strong></div>)}<Button variant="ghost" size="sm" onClick={() => navigate('connections')}>Manage sources<ArrowRight /></Button></div>
-      {candidates.length > 0 && <div className="candidate-callout"><span>{candidates.length}</span><div><h3>Waiting for a decision</h3><p>Review these before adding more.</p><Button variant="link" size="sm" onClick={() => navigate('board', 'candidate')}>Open the queue<ArrowRight /></Button></div></div>}
-    </aside></div>
-  </>;
+  return (
+    <>
+      <Heading
+        eyebrow="YOUR OPERATING PARTNER"
+        title="Your next move, clearer."
+        description="Bring the context together. Decide what deserves your attention."
+      >
+        <StatusBadge tone={active ? 'info' : 'neutral'} dot>
+          {active ? 'Agent working' : 'Ready when you are'}
+        </StatusBadge>
+      </Heading>
+      <div className="overview-stats">
+        <span>
+          <BookOpen size={15} />
+          <strong>{countSources(state).toLocaleString()}</strong>sources in
+          context
+        </span>
+        <span>
+          <Sparkles size={15} />
+          <strong>{state.proposals.length}</strong>proposals to review
+        </span>
+        <span>
+          <CheckCheck size={15} />
+          <strong>{now.length} of 3</strong>active outcomes
+        </span>
+      </div>
+      <div className="overview-grid">
+        <section className="agent-column" aria-label="Your agent">
+          <Card className="agent-composer">
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (prompt.trim() && !active && !busy) start();
+              }}
+            >
+              <div className="composer-heading">
+                <span className="agent-glyph">
+                  <Sparkles size={17} />
+                </span>
+                <span>Think it through with Focus</span>
+              </div>
+              <Textarea
+                aria-label="Ask your agent"
+                className="prompt-input"
+                placeholder="What’s on your mind? Ask a question, untangle a decision, or find your next priority…"
+                rows={3}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === 'Enter' &&
+                    (event.metaKey || event.ctrlKey) &&
+                    prompt.trim() &&
+                    !active &&
+                    !busy
+                  ) {
+                    event.preventDefault();
+                    start();
+                  }
+                }}
+              />
+              <div className="composer-actions">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate('library')}
+                >
+                  <BookOpen />
+                  Your context
+                  <ChevronRight />
+                </Button>
+                <div>
+                  <span className="keyboard-hint">
+                    <CornerDownLeft size={13} />⌘ / Ctrl + Enter
+                  </span>
+                  <Button
+                    type="submit"
+                    className="ask-agent-button"
+                    disabled={busy || !!active || !prompt.trim()}
+                    aria-label="Run agent"
+                  >
+                    <ArrowUp />
+                    Ask Focus
+                  </Button>
+                </div>
+              </div>
+            </form>
+          </Card>
+          <div className="prompt-options">
+            {prompts.map((item) => (
+              <Button
+                key={item.title}
+                variant="outline"
+                className="prompt-option"
+                disabled={busy || !!active}
+                onClick={() => start(item.prompt)}
+              >
+                <item.icon />
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.detail}</small>
+                </span>
+                <ArrowRight />
+              </Button>
+            ))}
+          </div>
+          {active && (
+            <Card className="agent-progress" role="status">
+              <div className="section-title">
+                <span>
+                  <Spinner />
+                  Working through your context
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => showTrace(active.id)}
+                >
+                  View activity
+                  <ArrowRight />
+                </Button>
+              </div>
+              <h3>{active.progress || 'Preparing your review…'}</h3>
+              <p>{active.prompt}</p>
+              <div className="indeterminate-progress">
+                <span />
+              </div>
+            </Card>
+          )}
+          {latest?.status === 'failed' && (
+            <Card className="agent-progress">
+              <StatusBadge tone="warning">Review interrupted</StatusBadge>
+              <p>{latest.error}</p>
+              <Button
+                variant="outline"
+                disabled={busy || !!active}
+                onClick={() => start(latest.prompt)}
+              >
+                <RefreshCw />
+                Try again
+              </Button>
+            </Card>
+          )}
+          {state.proposals.length > 0 && (
+            <section className="decision-section">
+              <div className="section-title">
+                <h2>
+                  Ready for your decision <span>{state.proposals.length}</span>
+                </h2>
+                <span className="muted-caption">You make the call</span>
+              </div>
+              <div className="decision-list">
+                {state.proposals.map((proposal, index) => (
+                  <Card className="decision-card" key={proposal.id}>
+                    <div className="decision-heading">
+                      <span className="decision-index">
+                        {String(index + 1).padStart(2, '0')}
+                      </span>
+                      <div>
+                        <div className="decision-meta">
+                          <span>
+                            {proposal.payload.kind === 'decision'
+                              ? 'DECISION'
+                              : 'PROPOSED OUTCOME'}
+                          </span>
+                          <span>·</span>
+                          <span>{proposal.payload.confidence} confidence</span>
+                        </div>
+                        <h3>{proposal.payload.title}</h3>
+                      </div>
+                    </div>
+                    <p className="decision-rationale">
+                      {proposal.payload.rationale}
+                    </p>
+                    {proposal.payload.uncertainty && (
+                      <div className="verify-note">
+                        <CircleHelp size={14} />
+                        <span>{proposal.payload.uncertainty}</span>
+                      </div>
+                    )}
+                    <div className="decision-actions">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          openSource(proposal.payload.citations[0].source_id)
+                        }
+                      >
+                        <FileText />
+                        Evidence
+                      </Button>
+                      <div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busy}
+                          onClick={() => dismiss(proposal.id)}
+                        >
+                          Dismiss
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => selectProposal(proposal)}
+                        >
+                          Review
+                          <ArrowRight />
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </section>
+          )}
+          {review && (
+            <section className="latest-review">
+              <div className="section-title">
+                <h2>
+                  <Sparkles size={16} />
+                  Latest review
+                </h2>
+                <span className="muted-caption">
+                  {formatDate(latest.created_at)}
+                </span>
+              </div>
+              <Card className="review-card">
+                <p className="review-brief">{review.brief}</p>
+                <Accordion className="review-findings">
+                  <AccordionItem value="evidence">
+                    <AccordionTrigger>
+                      What the context says{' '}
+                      <span className="finding-count">
+                        {review.findings.length} findings
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionPanel>
+                      <div className="finding-list">
+                        {review.findings.map((finding, index) => (
+                          <div key={index}>
+                            <p>{finding.text}</p>
+                            <Citations
+                              citations={finding.citations}
+                              openSource={openSource}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </AccordionPanel>
+                  </AccordionItem>
+                </Accordion>
+                {review.questions.length > 0 && (
+                  <div className="review-questions">
+                    <h3>
+                      <CircleHelp size={15} />A little clarity from you
+                    </h3>
+                    {review.questions.map((question, index) => (
+                      <p key={index}>
+                        <span>{index + 1}.</span>
+                        {question}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <p className="review-coverage">{review.coverage_note}</p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => showTrace(latest.id)}
+                >
+                  View agent activity
+                  <ArrowRight />
+                </Button>
+              </Card>
+            </section>
+          )}
+          {!latest && (
+            <Card className="first-review">
+              <Empty
+                icon={Sparkles}
+                title="A fresh perspective starts here"
+                description="Your agent reads the material behind the work and helps you make a deliberate choice."
+              >
+                <Button
+                  onClick={() => start(prompts[0].prompt)}
+                  disabled={busy}
+                >
+                  <Sparkles />
+                  Prepare my first review
+                </Button>
+              </Empty>
+            </Card>
+          )}
+        </section>
+        <aside className="focus-rail" aria-label="Current priorities">
+          <Card className="current-focus">
+            <div className="section-title">
+              <h2>In focus</h2>
+              <StatusBadge>{now.length} / 3</StatusBadge>
+            </div>
+            <p className="rail-description">
+              A small set of outcomes you’ve chosen.
+            </p>
+            <div className="focus-slots">
+              {Array.from({ length: 3 }, (_, index) => {
+                const item = now[index];
+                return item ? (
+                  <Button
+                    key={item.id}
+                    variant="ghost"
+                    className="focus-slot chosen"
+                    onClick={() => edit(item)}
+                  >
+                    <span className="slot-number">{index + 1}</span>
+                    <span>
+                      <strong>{item.title}</strong>
+                      <small>
+                        <Clock3 size={12} />
+                        {formatDate(item.checkpoint)}
+                      </small>
+                    </span>
+                    <ChevronRight />
+                  </Button>
+                ) : (
+                  <div className="focus-slot available" key={index}>
+                    <span className="slot-number">{index + 1}</span>
+                    <span>
+                      {index === 0
+                        ? 'Choose one meaningful outcome'
+                        : 'Room to be deliberate'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <Button variant="outline" className="full-width" onClick={create}>
+              <Plus />
+              Choose an outcome
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="rail-link"
+              onClick={() => navigate('board')}
+            >
+              View commitments
+              <ArrowRight />
+            </Button>
+          </Card>
+          <div className="context-summary">
+            <div className="section-title">
+              <h2>Connected context</h2>
+              <BookOpen size={16} />
+            </div>
+            {Object.entries(providerNames).map(([provider, name]) => (
+              <div className="context-row" key={provider}>
+                <ProviderIcon provider={provider} small />
+                <span>{name}</span>
+                <strong>
+                  {countSources(state, provider).toLocaleString()}
+                </strong>
+              </div>
+            ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate('connections')}
+            >
+              Manage sources
+              <ArrowRight />
+            </Button>
+          </div>
+          {candidates.length > 0 && (
+            <div className="candidate-callout">
+              <span>{candidates.length}</span>
+              <div>
+                <h3>Waiting for a decision</h3>
+                <p>Review these before adding more.</p>
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => navigate('board', 'candidate')}
+                >
+                  Open the queue
+                  <ArrowRight />
+                </Button>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
+    </>
+  );
 }
