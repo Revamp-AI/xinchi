@@ -1,0 +1,51 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawn} from 'node:child_process';
+const temp=mkdtempSync(join(tmpdir(),'xin-agent-loop-test-'));process.env.XIN_DATA_DIR=temp;process.env.XIN_CODEX_BIN=join(temp,'codex-is-not-installed');
+const m=await import('../lib/db.mjs');
+const agent=await import('../lib/agent.mjs');
+const spawned=[];
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const alive=pid=>{try{process.kill(pid,0);return true;}catch(e){return e.code!=='ESRCH';}};
+const settle=async id=>{for(let i=0;i<100&&['queued','running'].includes(m.one('SELECT status FROM jobs WHERE id=?',id).status);i++)await sleep(100);return m.one('SELECT * FROM jobs WHERE id=?',id);};
+test('a missing Codex binary fails the job with the install message',async()=>{
+ const id=agent.createJob('Review with no Codex');spawned.push(id);agent.launchJob(id);
+ const job=await settle(id);assert.equal(job.status,'failed');assert.match(job.error,/Codex is not installed/);
+});
+test('answers compose a follow-up prompt from the parent review and skip blank answers',()=>{
+ const parent=agent.createJob('Review the launch plan');m.run("UPDATE jobs SET status='complete' WHERE id=?",parent);
+ assert.throws(()=>agent.createJob('Follow-up','review',{answers:[{question:'Is the date fixed?',answer:'  '},{question:'Who owns the checklist?',answer:''}],parent_id:parent}),/Answer at least one question/);
+ assert.equal(m.one("SELECT count(*) AS n FROM jobs WHERE status='queued'").n,0);
+ const id=agent.createJob('Follow-up','review',{answers:[{question:'Is the date fixed?',answer:'Yes, 12 October.'},{question:'Who owns the checklist?',answer:''}],parent_id:parent});
+ const job=m.one('SELECT * FROM jobs WHERE id=?',id);
+ assert.equal(job.prompt,`Follow-up to review ${parent}.\n\nMy answers to your questions:\n- Q: Is the date fixed?\n  A: Yes, 12 October.\n\nOriginal request: Review the launch plan\n\nContinue that review using these answers as verified facts from me. Re-check the sources, update the findings and proposals, and ask only new questions.`);
+ assert.ok(!job.prompt.includes('Who owns the checklist?'));
+ assert.equal(m.one('SELECT body FROM sources WHERE id=?','manual:agent-request-'+id).body,job.prompt);
+ m.run("UPDATE jobs SET status='complete' WHERE id=?",id);
+});
+test('cancelJob stops the running worker, records the cancellation, and refuses finished reviews',async()=>{
+ const id=agent.createJob('Long review');
+ const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+ m.run("UPDATE jobs SET status='running',pid=? WHERE id=?",child.pid,id);
+ assert.deepEqual(agent.cancelJob(id),{cancelled:true});
+ const job=m.one('SELECT * FROM jobs WHERE id=?',id);
+ assert.equal(job.status,'failed');assert.equal(job.error,'Review cancelled.');assert.equal(job.progress,'Cancelled');
+ for(let i=0;i<50&&alive(child.pid);i++)await sleep(100);
+ assert.equal(alive(child.pid),false);
+ assert.throws(()=>agent.cancelJob(id),/not running/);
+ assert.throws(()=>agent.cancelJob('missing-job'),/not running/);
+ assert.throws(()=>agent.cancelJob(m.one("SELECT id FROM jobs WHERE status='complete'").id),/not running/);
+});
+test('cancelling a review drains a pending import review into a new job',async()=>{
+ const id=agent.createJob('Review while imports arrive');
+ agent.queueImportReview();assert.ok(m.getSetting('pending_import_review'));
+ agent.cancelJob(id);
+ const next=m.one("SELECT * FROM jobs WHERE kind='import_review' ORDER BY created_at DESC LIMIT 1");
+ assert.ok(next);spawned.push(next.id);assert.equal(m.getSetting('pending_import_review'),null);
+ assert.equal(m.one('SELECT status FROM jobs WHERE id=?',id).status,'failed');
+ assert.equal((await settle(next.id)).status,'failed');
+});
+test.after(()=>{for(const id of spawned){m.run('DELETE FROM job_events WHERE job_id=?',id);m.run('DELETE FROM jobs WHERE id=?',id);}m.db.close();rmSync(temp,{recursive:true,force:true});});

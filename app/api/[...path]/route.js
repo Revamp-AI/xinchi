@@ -1,5 +1,5 @@
 import {dashboard,searchSources,readSource,saveItem,all,one,run,setSetting,exportData} from '../../../lib/db.mjs';
-import {createJob,launchJob,recoverJobs,queueImportReview} from '../../../lib/agent.mjs';
+import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.mjs';
 import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.mjs';
 import {importDocuments,importResearchArchive} from '../../../lib/imports.mjs';
 import {authMessages,gmailMessages} from '../../../lib/auth-messages.mjs';
@@ -40,7 +40,8 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
 
  if(path==='items')return json(saveItem(data));
  if(path==='settings'){if(typeof data.focus==='string')setSetting('focus',data.focus.slice(0,2000));if(data.available_hours!==undefined)setSetting('available_hours',Math.max(0,Math.min(168,Number(data.available_hours)||0)));return json({saved:true});}
- if(path==='jobs'){const id=createJob(data.prompt);launchJob(id);return json({id},202);}
+ if(path==='jobs'){const id=createJob(data.prompt,'review',{answers:data.answers,parent_id:data.parent_id});launchJob(id);return json({id},202);}
+ if(path==='jobs/cancel')return json(cancelJob(data.id));
  if(path==='proposals/dismiss'){run("UPDATE proposals SET status='dismissed' WHERE id=?",data.id);return json({saved:true});}
  if(path==='connections')return json(configure(data));
  if(path==='sync')return json(startSync(data.provider),202);

@@ -37,6 +37,8 @@ import {
   formatDate,
   providerNames,
 } from './shared';
+import { ReviewHistory, isFollowUp, promptSnippet } from './review-history';
+import { ReviewAnswers } from './review-answers';
 
 const prompts = [
   {
@@ -74,6 +76,10 @@ export default function AgentView({
   edit,
   navigate,
   showTrace,
+  selectedJobId,
+  setSelectedJobId,
+  cancel,
+  answer,
 }) {
   const now = state.items.filter((item) => item.status === 'now');
   const candidates = state.items.filter((item) => item.status === 'candidate');
@@ -81,7 +87,12 @@ export default function AgentView({
     active = state.jobs.find((job) =>
       ['queued', 'running'].includes(job.status),
     );
-  const review = latest?.status === 'complete' ? latest.result : null;
+  const latestComplete = state.jobs.find((job) => job.status === 'complete'),
+    selected =
+      state.jobs.find(
+        (job) => job.id === selectedJobId && job.status === 'complete',
+      ) || latestComplete;
+  const review = selected?.result || null;
   const today = localToday(new Date());
   return (
     <>
@@ -202,14 +213,24 @@ export default function AgentView({
                   <Spinner />
                   Working through your context
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => showTrace(active.id)}
-                >
-                  View activity
-                  <ArrowRight />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => showTrace(active.id)}
+                  >
+                    View activity
+                    <ArrowRight />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => cancel(active.id)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
               </div>
               <h3>{active.progress || 'Preparing your review…'}</h3>
               <p>{active.prompt}</p>
@@ -318,10 +339,18 @@ export default function AgentView({
               <div className="section-title">
                 <h2>
                   <Sparkles size={16} />
-                  Latest review
+                  {selected.id === latestComplete.id
+                    ? 'Latest review'
+                    : 'Earlier review'}
                 </h2>
                 <span className="muted-caption">
-                  {formatDate(latest.created_at)}
+                  {isFollowUp(selected.prompt) && (
+                    <StatusBadge tone="info">Follow-up</StatusBadge>
+                  )}
+                  <span>
+                    {formatDate(selected.created_at)} ·{' '}
+                    {promptSnippet(selected.prompt)}
+                  </span>
                 </span>
               </div>
               <Card className="review-card">
@@ -350,29 +379,31 @@ export default function AgentView({
                   </AccordionItem>
                 </Accordion>
                 {review.questions.length > 0 && (
-                  <div className="review-questions">
-                    <h3>
-                      <CircleHelp size={15} />A little clarity from you
-                    </h3>
-                    {review.questions.map((question, index) => (
-                      <p key={index}>
-                        <span>{index + 1}.</span>
-                        {question}
-                      </p>
-                    ))}
-                  </div>
+                  <ReviewAnswers
+                    key={selected.id}
+                    questions={review.questions}
+                    disabled={busy || !!active}
+                    onSend={(answers) => answer(selected.id, answers)}
+                  />
                 )}
                 <p className="review-coverage">{review.coverage_note}</p>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => showTrace(latest.id)}
+                  onClick={() => showTrace(selected.id)}
                 >
                   View agent activity
                   <ArrowRight />
                 </Button>
               </Card>
             </section>
+          )}
+          {latest && (
+            <ReviewHistory
+              jobs={state.jobs}
+              selectedJobId={selectedJobId}
+              onSelect={setSelectedJobId}
+            />
           )}
           {!latest && (
             <Card className="first-review">
