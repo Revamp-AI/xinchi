@@ -16,7 +16,7 @@ for await(const line of readline.createInterface({input:process.stdin})){
  else if(m.method==='ping')reply(m.id,{});
  else if(m.method==='tools/call'){
   const {name,arguments:a={}}=m.params;let result;
-  if(name==='search_context')result=searchSources(String(a.query||''),a.provider||'',a.offset||0);
+  if(name==='search_context'){result=searchSources(String(a.query||''),a.provider||'',a.offset||0);result.records=result.records.map(r=>({...r,excerpt:r.excerpt.replace(/[«»]/g,'').replace(/^…|…$/g,'')}));}
   else if(name==='read_source')result=readSource(a.id,Math.max(0,Number(a.offset)||0),18000);
   else if(name==='read_commitments')result={system_state:'A working full-stack Next.js prototype is already running: source archive, agent reviews, proposals, and commitment board work. Live Gmail/Fireflies/Granola API connections are not configured unless the Connections screen confirms them. Do not propose building this system again.',recent_agent_requests:all('SELECT id,prompt,status,result_json,created_at FROM jobs ORDER BY created_at DESC LIMIT 5'),available_hours:getSetting('available_hours',0),recent_imports:all('SELECT provider,state,message,started_at FROM sync_runs ORDER BY started_at DESC LIMIT 8'),focus:getSetting('focus','Not yet chosen'),items:all('SELECT * FROM items'),recent_changes:all('SELECT * FROM events ORDER BY created_at DESC LIMIT 25'),coverage:all('SELECT provider,coverage,count(*) AS count FROM sources GROUP BY provider,coverage')};
   else throw Error('Unknown tool');

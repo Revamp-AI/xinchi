@@ -13,6 +13,7 @@ test('search excerpts mark the matched term and rank the denser match first',()=
  const {total,records}=m.searchSources('checklist');
  assert.equal(total,2);assert.equal(records[0].id,dense);assert.equal(records[1].id,sparse);
  for(const r of records)assert.match(r.excerpt,/«checklist»/);
+ for(const r of records)assert.ok(m.one('SELECT body FROM sources WHERE id=?',r.id).body.includes(r.excerpt.replace(/[«»]/g,'').replace(/^…|…$/g,'')));
  assert.ok(!records[1].excerpt.startsWith('Alex opened'));assert.ok(records[1].excerpt.length<sparseBody.length);
  assert.deepEqual(Object.keys(records[0]),['id','provider','title','occurred_at','coverage','excerpt']);
  assert.doesNotThrow(()=>m.searchSources('checklist" OR * ?'));assert.equal(m.searchSources('checklist','fireflies').total,1);
