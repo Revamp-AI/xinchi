@@ -32,6 +32,7 @@ import {
   DialogDescription,
   DialogPanel,
 } from '@/components/ui/dialog';
+import { MARK_START, MARK_END } from '../../lib/marks.mjs';
 
 export const statusNames = {
   candidate: 'To decide',
@@ -208,13 +209,16 @@ export function Notice({ children, onClose, error = false }) {
     </Card>
   );
 }
+const markPattern = new RegExp(
+  `(${MARK_START}[^${MARK_START}${MARK_END}]*${MARK_END})`,
+);
 export function Highlight({ text }) {
   return (
     <>
       {String(text ?? '')
-        .split(/(«[^«»]*»)/)
+        .split(markPattern)
         .map((part, index) =>
-          part.startsWith('«') && part.endsWith('»') ? (
+          part.startsWith(MARK_START) && part.endsWith(MARK_END) ? (
             <mark
               key={index}
               className="bg-warning/20 text-foreground rounded-sm px-0.5"
