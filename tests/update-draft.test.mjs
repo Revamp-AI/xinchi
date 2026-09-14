@@ -1,10 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {createHash} from 'node:crypto';
 const temp=mkdtempSync(join(tmpdir(),'xin-update-draft-test-'));process.env.XIN_DATA_DIR=temp;process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 const {buildUpdateDraft,renderUpdateDraft}=await import('../lib/update-draft.mjs');
+const db=await import('../lib/db.mjs');
+const auth=await import('../lib/auth.mjs');
+const route=await import('../app/api/[...path]/route.js');
 const since='2026-09-07',today='2026-09-14';
 const item=o=>({kind:'action',status:'candidate',done_when:'',next_action:'',owner:'You',checkpoint:'',hard_deadline:'',dependency:'',evidence:'',reason:'',shared:1,updated_at:'2026-09-10T09:00:00.000Z',...o});
 const items=[
@@ -74,4 +78,29 @@ test('empty sections say so and keep the structure',()=>{
  assert.equal(text.match(/Nothing to report\./g).length,4);
  assert.match(text,/## Need from you\nNothing to report\.\n?$/);
 });
-test.after(()=>rmSync(temp,{recursive:true,force:true}));
+const token='u'.repeat(43);
+const get=(path,cookie='')=>route.GET(new Request(auth.APP_ORIGIN+'/api/'+path,{headers:{host:'127.0.0.1:3210',...(cookie?{cookie:auth.SESSION_COOKIE+'='+cookie}:{})}}));
+test('the update-draft path is in the protected GET list and rejects anonymous callers',async()=>{
+ const line=readFileSync(new URL('./auth.test.mjs',import.meta.url),'utf8').split('\n').find(l=>l.includes('route.GET(req(p))'));
+ assert.ok(line&&line.includes("'update-draft'"));
+ assert.equal((await get('update-draft')).status,401);
+});
+test('GET update-draft builds the window from the database for the signed-in owner',async()=>{
+ auth.authDb.prepare('INSERT INTO owner VALUES(1,?,?,?)').run('google-owner-1','owner@example.com','Owner');
+ auth.authDb.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'google-owner-1',Date.now(),Date.now()+3600000);
+ const a=db.saveItem({title:'Ship the onboarding checklist',status:'now',done_when:'Checklist live',next_action:'Publish it',owner:'You',checkpoint:'2026-09-18',shared:true});
+ db.saveItem({...a,status:'done',evidence:'Checklist published.'});
+ const w=db.saveItem({title:'Vendor contract',status:'waiting',dependency:'Legal review',checkpoint:'2026-09-16',shared:true});
+ db.saveItem({...w,checkpoint:'2026-09-23',reason:'Legal asked for a week'});
+ db.saveItem({title:'Private task',status:'now',done_when:'x',next_action:'y',owner:'You',checkpoint:'2026-09-18'});
+ const r=await get('update-draft',token);assert.equal(r.status,200);const body=await r.json();
+ assert.equal(body.since,new Date(Date.now()-7*864e5).toISOString().slice(0,10));
+ assert.deepEqual(body.draft.completed.map(x=>x.title),['Ship the onboarding checklist']);
+ assert.deepEqual(body.draft.changed.map(x=>x.title+':'+x.what+':'+x.reason),['Vendor contract:checkpoint:Legal asked for a week']);
+ assert.deepEqual(body.draft.next,[]);assert.deepEqual(body.draft.needs.map(x=>x.title),['Vendor contract']);
+ assert.deepEqual(body.text.match(/^#+ .*$/gm),['## Completed','## Changed','## Next','## Need from you']);
+ assert.equal((await (await get('update-draft?since=2026-01-01',token)).json()).since,'2026-01-01');
+ assert.equal((await get('update-draft?since=yesterday',token)).status,400);
+ const future=(await (await get('update-draft?since=2999-01-01',token)).json()).draft;assert.deepEqual([future.completed,future.changed],[[],[]]);
+});
+test.after(()=>{auth.authDb.close();db.db.close();rmSync(temp,{recursive:true,force:true});});
