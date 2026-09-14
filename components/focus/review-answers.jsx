@@ -4,18 +4,14 @@ import { useState } from 'react';
 import { CircleHelp, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { nonBlankAnswers, shouldClear } from '../../lib/review-answers.mjs';
 
 export function ReviewAnswers({ questions, disabled, onSend }) {
   const [values, setValues] = useState(() => questions.map(() => ''));
   const blank = values.every((value) => !value.trim());
   const send = async () => {
-    await onSend(
-      questions.map((question, index) => ({
-        question,
-        answer: values[index] || '',
-      })),
-    );
-    setValues(questions.map(() => ''));
+    const started = await onSend(nonBlankAnswers(questions, values));
+    if (shouldClear(started)) setValues(questions.map(() => ''));
   };
   return (
     <div className="review-questions">
