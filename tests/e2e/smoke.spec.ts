@@ -16,11 +16,17 @@ function heading(page: Page, name: string) {
 async function open(page: Page, view: keyof typeof views) {
   const item = page.getByRole('button', { name: view, exact: true });
   // On a phone the navigation lives in the sidebar sheet behind the trigger.
+  // The sheet closes itself after a navigation and its items stay visible
+  // while it slides out, so let a closing sheet finish before looking.
+  const sheet = page.getByRole('dialog', { name: 'Sidebar' });
+  await expect(sheet).toBeHidden();
   if (!(await item.isVisible())) {
     await page.getByRole('button', { name: 'Toggle Sidebar' }).click();
+    await expect(item).toBeVisible();
   }
   await item.click();
   await expect(heading(page, views[view])).toBeVisible();
+  await expect(sheet).toBeHidden();
 }
 
 test.beforeEach(async ({ page }) => {
