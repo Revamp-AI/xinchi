@@ -16,11 +16,17 @@ function heading(page: Page, name: string) {
 async function open(page: Page, view: keyof typeof views) {
   const item = page.getByRole('button', { name: view, exact: true });
   // On a phone the navigation lives in the sidebar sheet behind the trigger.
+  // The sheet closes itself after a navigation and its items stay visible
+  // while it slides out, so let a closing sheet finish before looking.
+  const sheet = page.getByRole('dialog', { name: 'Sidebar' });
+  await expect(sheet).toBeHidden();
   if (!(await item.isVisible())) {
     await page.getByRole('button', { name: 'Toggle Sidebar' }).click();
+    await expect(item).toBeVisible();
   }
   await item.click();
   await expect(heading(page, views[view])).toBeVisible();
+  await expect(sheet).toBeHidden();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -28,10 +34,16 @@ test.beforeEach(async ({ page }) => {
   await expect(heading(page, views.Overview)).toBeVisible();
 });
 
-test('the overview loads signed in', async ({ page }) => {
+test('the overview loads signed in', async ({ page, isMobile }) => {
   await expect(page).not.toHaveURL(/\/login/);
   await expect(page.locator('.breadcrumb strong')).toHaveText('Overview');
-  await expect(page.getByText('Ready when you are')).toBeVisible();
+  // Phones hide the heading status badge (app/globals.css, max-width 480px),
+  // so check the overview stats line there instead.
+  if (isMobile) {
+    await expect(page.getByText('sources in context')).toBeVisible();
+  } else {
+    await expect(page.getByText('Ready when you are')).toBeVisible();
+  }
 });
 
 test('navigation reaches all four views', async ({ page }) => {
@@ -48,13 +60,14 @@ test('commitment tabs switch', async ({ page }) => {
     'aria-selected',
     'true',
   );
-  await expect(page.getByRole('tabpanel')).toContainText(
-    'Make one deliberate choice',
-  );
+  // Base UI keeps the leaving panel in the DOM (inert) during its exit
+  // transition, so address each panel by the name its tab gives it.
+  const panel = (name: RegExp) => page.getByRole('tabpanel', { name });
+  await expect(panel(/^Now/)).toContainText('Make one deliberate choice');
   await tabs.getByRole('tab', { name: /^To decide/ }).click();
-  await expect(page.getByRole('tabpanel')).toContainText(candidate.title);
+  await expect(panel(/^To decide/)).toContainText(candidate.title);
   await tabs.getByRole('tab', { name: /^Later/ }).click();
-  await expect(page.getByRole('tabpanel')).toContainText('Nothing later yet');
+  await expect(panel(/^Later/)).toContainText('Nothing later yet');
 });
 
 test('New outcome opens the dialog and Cancel closes it', async ({ page }) => {
