@@ -4,6 +4,14 @@ A local, full-stack Next.js app for turning meeting and email context into evide
 
 The public repository contains application code, fictional test fixtures, and setup documentation. It starts with an empty workspace. Personal recordings, transcripts, analysis, databases, agent outputs, screenshots, credentials, and session archives are not included.
 
+## Interface
+
+The workspace and Google sign-in use [Coss UI](https://coss.com/ui), built on Base UI and Tailwind CSS. Official registry components live in `components/ui/`; Focus views compose them in `components/focus/`. The registry alias is configured in `components.json`. Coss's neutral design tokens and locally bundled Inter font are in `app/coss.css`, with responsive product layouts in `app/globals.css`. The upstream MIT notice is retained alongside the components.
+
+Overview puts the agent prompt and reviewable proposals first. Commitments keeps the three-outcome limit and decision history. Context library provides source search, provider filters, pagination, and original-text previews. Connections shows stored counts, coverage, import progress, retry messages, and storage details. Mobile navigation uses the Coss sidebar sheet; dialogs, selectors, tabs, tables, fields, and buttons use the same component system.
+
+For a quick interface check, navigate all four views, switch commitment tabs, open and cancel an editor, filter/search the library including an empty result, open a source, and open/cancel Gmail settings. Check the same flows at a narrow phone width. Use an isolated test workspace for any test writes; do not create demo decisions in a live personal archive.
+
 ## Requirements
 
 - Node.js 24 or later.
