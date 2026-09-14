@@ -1,6 +1,13 @@
 'use client';
 
-import { ArrowRight, CheckCheck, Clock3, Plus, Target } from 'lucide-react';
+import {
+  ArrowRight,
+  CheckCheck,
+  ClipboardPen,
+  Clock3,
+  Plus,
+  Target,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
@@ -27,6 +34,7 @@ export default function BoardView({
   busy,
   create,
   edit,
+  openDraft,
 }) {
   const today = localToday(new Date());
   const carried = Object.fromEntries(
@@ -39,6 +47,10 @@ export default function BoardView({
         title="Your commitments"
         description="Three active outcomes. A clear finish. Room to follow through."
       >
+        <Button variant="outline" className="me-2" onClick={() => openDraft()}>
+          <ClipboardPen />
+          Draft update
+        </Button>
         <Button onClick={create}>
           <Plus />
           New outcome
