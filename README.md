@@ -125,9 +125,14 @@ Connections shows stored coverage and the latest available run state: running, c
 
 ```sh
 npm test
+npm run lint
+npm run format:check
 npm run build
+npm run test:e2e
 ```
 
 Tests use isolated temporary databases and cover Google token verification, owner restrictions, session/callback security, protected endpoints, imports, source history, quote validation, commitment rules, and sync recovery.
+
+`npm run lint` runs ESLint with the Next.js core-web-vitals rules. `npm run format:check` verifies Prettier formatting for `app/`, `components/focus/`, `hooks/`, and the TypeScript helpers in `lib/`; `npm run format` rewrites them. `npm run test:e2e` builds the app, starts it on `127.0.0.1:3210` with a temporary data directory seeded with fictional sources and a signed-in owner session, and drives all four views in desktop and phone-width Chromium. It refuses to run while anything else listens on port 3210, so stop a running Focus first. Run `npx playwright install chromium` once before the first run.
 
 Technical references: [Next.js](https://nextjs.org/docs/app/getting-started/installation), [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Fireflies transcript queries](https://docs.fireflies.ai/graphql-api/query/transcripts), [Granola API](https://docs.granola.ai/introduction), and [jose verification](https://github.com/panva/jose).

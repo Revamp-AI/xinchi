@@ -8,7 +8,7 @@ Focus is a single-owner, local-only Next.js 16 app. It ingests meeting and email
 
 ## Commands
 
-Node 24+ is required (`node:sqlite`). No linter or formatter is configured. Type checking runs inside `next build` (`tsconfig.json` has `strict: false` and `allowJs`).
+Node 24+ is required (`node:sqlite`). ESLint (`eslint.config.mjs`, the Next core-web-vitals flat config) and Prettier (`.prettierrc`) are configured; Prettier skips the dense `lib/*.mjs`, `scripts/`, `tests/*.test.mjs`, `app/api/`, and vendored `components/ui/` files (`.prettierignore`). Type checking runs inside `next build` (`tsconfig.json` has `strict: false` and `allowJs`). The `typescript` dependency is an alias of `@typescript/typescript6`, the TypeScript 6 API package, because typescript-eslint cannot load the native TypeScript 7 package; `@typescript/native` keeps the TypeScript 7 `tsc` binary available.
 
 | Task | Command |
 |---|---|
@@ -18,6 +18,9 @@ Node 24+ is required (`node:sqlite`). No linter or formatter is configured. Type
 | All tests | `npm test` |
 | One test file | `node --test tests/system.test.mjs` |
 | One test by name | `node --test --test-name-pattern="displacement" tests/system.test.mjs` |
+| Lint | `npm run lint` |
+| Format | `npm run format` (check only: `npm run format:check`) |
+| Browser smoke test | `npm run test:e2e` (Playwright; builds and starts the app on port 3210 with a temporary `XIN_DATA_DIR`, so the port must be free; run `npx playwright install chromium` once) |
 | Import JSON sources | `npm run import -- /path/to/sources.json` |
 | Replace Google client | `node --env-file-if-exists=.env.local scripts/configure-google.mjs client.json` |
 | Add a Coss UI component | `npx shadcn@latest add @coss/<name>` (registry alias in `components.json`) |

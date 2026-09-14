@@ -1,0 +1,7 @@
+lib/*.mjs
+scripts/
+tests/*.test.mjs
+app/api/
+components/ui/
+app/*.css
+*.md
