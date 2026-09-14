@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'xin-evidence-test-'));process.env.XIN_DATA_DIR=temp;
 const m=await import('../lib/db.mjs');
+const marks=await import('../lib/marks.mjs');
 const agent=await import('../lib/agent.mjs');
 const sparseBody='Alex opened with the roadmap and the hiring plan. Later Morgan mentioned the pricing checklist once, then the conversation moved on to onboarding, the support rotation, and the office move.';
 const sparse=m.upsertSource({provider:'manual',external_id:'sparse',title:'Weekly sync',occurred_at:'2026-09-12',coverage:'transcript',body:sparseBody}).id;
@@ -12,8 +13,8 @@ const dense=m.upsertSource({provider:'fireflies',external_id:'dense',title:'Pric
 test('search excerpts mark the matched term and rank the denser match first',()=>{
  const {total,records}=m.searchSources('checklist');
  assert.equal(total,2);assert.equal(records[0].id,dense);assert.equal(records[1].id,sparse);
- for(const r of records)assert.match(r.excerpt,/«checklist»/);
- for(const r of records)assert.ok(m.one('SELECT body FROM sources WHERE id=?',r.id).body.includes(r.excerpt.replace(/[«»]/g,'').replace(/^…|…$/g,'')));
+ for(const r of records)assert.ok(r.excerpt.includes(marks.MARK_START+'checklist'+marks.MARK_END));
+ for(const r of records)assert.ok(m.one('SELECT body FROM sources WHERE id=?',r.id).body.includes(marks.stripMarks(r.excerpt)));
  assert.ok(!records[1].excerpt.startsWith('Alex opened'));assert.ok(records[1].excerpt.length<sparseBody.length);
  assert.deepEqual(Object.keys(records[0]),['id','provider','title','occurred_at','coverage','excerpt']);
  assert.doesNotThrow(()=>m.searchSources('checklist" OR * ?'));assert.equal(m.searchSources('checklist','fireflies').total,1);
@@ -21,8 +22,16 @@ test('search excerpts mark the matched term and rank the denser match first',()=
 test('search without a query keeps the leading excerpt and newest-first order',()=>{
  const {total,records}=m.searchSources('');
  assert.equal(total,2);assert.equal(records[0].id,sparse);assert.equal(records[0].excerpt,sparseBody.slice(0,250));
- assert.ok(records.every(r=>!r.excerpt.includes('«')));
+ assert.ok(records.every(r=>!r.excerpt.includes(marks.MARK_START)));
  assert.deepEqual(Object.keys(records[0]),['id','provider','title','occurred_at','coverage','excerpt']);
+});
+test('search excerpts keep real guillemets and the strip helper removes only the private-use markers',()=>{
+ const body='Bonjour Alex, Morgan a dit « la checklist des prix est prête » avant la réunion.';
+ m.upsertSource({provider:'gmail',external_id:'french',title:'Relance sur les prix',occurred_at:'2026-09-11',coverage:'email body',body});
+ const [r]=m.searchSources('prix','gmail').records;
+ assert.ok(r.excerpt.includes('« la checklist des '+marks.MARK_START+'prix'+marks.MARK_END+' est prête »'));
+ assert.equal(marks.stripMarks(r.excerpt),body);
+ assert.equal(marks.stripMarks('…'+marks.MARK_START+'a'+marks.MARK_END+' « b » c…'),'a « b » c');
 });
 const quote='Morgan: The checklist is not done.';
 const review={brief:'The pricing launch is waiting on the checklist.',findings:[{text:'The checklist is unfinished.',citations:[{source_id:dense,quote}]}],proposals:[{title:'Finish the pricing checklist',kind:'action',rationale:'The launch depends on it.',done_when:'Every row is checked',next_action:'List the open rows',existing_item_id:'',uncertainty:'',confidence:'high',citations:[{source_id:dense,quote},{source_id:sparse,quote:'Morgan mentioned the pricing checklist once'}]}],questions:[],coverage_note:'Two fixture meetings.'};
