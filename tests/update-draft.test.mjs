@@ -9,6 +9,7 @@ const {buildUpdateDraft,renderUpdateDraft}=await import('../lib/update-draft.mjs
 const db=await import('../lib/db.mjs');
 const auth=await import('../lib/auth.mjs');
 const route=await import('../app/api/[...path]/route.js');
+const {localToday}=await import('../lib/urgency.mjs');
 const since='2026-09-07',today='2026-09-14';
 const item=o=>({kind:'action',status:'candidate',done_when:'',next_action:'',owner:'You',checkpoint:'',hard_deadline:'',dependency:'',evidence:'',reason:'',shared:1,updated_at:'2026-09-10T09:00:00.000Z',...o});
 const items=[
@@ -94,7 +95,7 @@ test('GET update-draft builds the window from the database for the signed-in own
  db.saveItem({...w,checkpoint:'2026-09-23',reason:'Legal asked for a week'});
  db.saveItem({title:'Private task',status:'now',done_when:'x',next_action:'y',owner:'You',checkpoint:'2026-09-18'});
  const r=await get('update-draft',token);assert.equal(r.status,200);const body=await r.json();
- assert.equal(body.since,new Date(Date.now()-7*864e5).toISOString().slice(0,10));
+ const n=new Date();assert.equal(body.since,localToday(new Date(n.getFullYear(),n.getMonth(),n.getDate()-7)));assert.equal(body.draft.today,localToday());
  assert.deepEqual(body.draft.completed.map(x=>x.title),['Ship the onboarding checklist']);
  assert.deepEqual(body.draft.changed.map(x=>x.title+':'+x.what+':'+x.reason),['Vendor contract:checkpoint:Legal asked for a week']);
  assert.deepEqual(body.draft.next,[]);assert.deepEqual(body.draft.needs.map(x=>x.title),['Vendor contract']);
@@ -102,5 +103,8 @@ test('GET update-draft builds the window from the database for the signed-in own
  assert.equal((await (await get('update-draft?since=2026-01-01',token)).json()).since,'2026-01-01');
  assert.equal((await get('update-draft?since=yesterday',token)).status,400);
  const future=(await (await get('update-draft?since=2999-01-01',token)).json()).draft;assert.deepEqual([future.completed,future.changed],[[],[]]);
+});
+test('GET update-draft rejects overflow and out-of-range dates',async()=>{
+ for(const bad of ['2026-02-30','2026-13-01']){const r=await get('update-draft?since='+bad,token);assert.equal(r.status,400,bad);assert.deepEqual(await r.json(),{error:'Choose a valid date.'},bad);}
 });
 test.after(()=>{auth.authDb.close();db.db.close();rmSync(temp,{recursive:true,force:true});});

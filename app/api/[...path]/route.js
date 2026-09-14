@@ -1,10 +1,11 @@
-import {dashboard,searchSources,readSource,saveItem,all,one,run,setSetting,exportData} from '../../../lib/db.mjs';
+import {dashboard,searchSources,readSource,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.mjs';
 import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.mjs';
 import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.mjs';
 import {importDocuments,importResearchArchive} from '../../../lib/imports.mjs';
 import {authMessages,gmailMessages} from '../../../lib/auth-messages.mjs';
 import {APP_ORIGIN,SESSION_COOKIE,FLOW_COOKIE,SESSION_SECONDS,checkLocalRequest,sessionFor,requireSession,readCookie,cookie,beginGoogle,finishGoogle,endSession,recordAuthEvent} from '../../../lib/auth.mjs';
 import {buildUpdateDraft,renderUpdateDraft} from '../../../lib/update-draft.mjs';
+import {localToday} from '../../../lib/urgency.mjs';
 export const runtime='nodejs';export const dynamic='force-dynamic';
 function json(v,status=200){return Response.json(v,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}});}
 export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.url),path=decodeURIComponent(u.pathname.slice(5));
@@ -24,7 +25,7 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
  if(path.startsWith('sources/'))return json(readSource(path.slice(8),0,2000000));
  if(path.startsWith('events/'))return json(all('SELECT * FROM events WHERE item_id=? ORDER BY created_at DESC',path.slice(7)));
  if(path.startsWith('jobs/'))return json({job:one('SELECT * FROM jobs WHERE id=?',path.slice(5)),events:all('SELECT * FROM job_events WHERE job_id=? ORDER BY id',path.slice(5))});
- if(path==='update-draft'){const requested=u.searchParams.get('since')||'';if(requested&&!(/^\d{4}-\d{2}-\d{2}$/.test(requested)&&!isNaN(Date.parse(requested))))throw Error('Choose a valid date.');const today=new Date().toISOString().slice(0,10),since=requested||new Date(Date.now()-7*864e5).toISOString().slice(0,10);const draft=buildUpdateDraft({items:all('SELECT * FROM items'),events:all('SELECT e.*,i.shared FROM events e JOIN items i ON i.id=e.item_id WHERE e.created_at>=? ORDER BY e.created_at',since),since,today});return json({since,draft,text:renderUpdateDraft(draft)});}
+ if(path==='update-draft'){const requested=u.searchParams.get('since')||'';if(requested&&!dateOK(requested))throw Error('Choose a valid date.');const now=new Date(),today=localToday(now),since=requested||localToday(new Date(now.getFullYear(),now.getMonth(),now.getDate()-7));const draft=buildUpdateDraft({items:all('SELECT * FROM items'),events:all('SELECT e.*,i.shared FROM events e JOIN items i ON i.id=e.item_id WHERE e.created_at>=? ORDER BY e.created_at',since),since,today});return json({since,draft,text:renderUpdateDraft(draft)});}
  if(path==='export')return new Response(JSON.stringify(exportData(),null,2),{headers:{'Content-Type':'application/json','Content-Disposition':'attachment; filename="xin-system-export.json"','Cache-Control':'no-store'}});
 
  return json({error:'Not found'},404);
