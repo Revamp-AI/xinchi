@@ -48,13 +48,14 @@ test('commitment tabs switch', async ({ page }) => {
     'aria-selected',
     'true',
   );
-  await expect(page.getByRole('tabpanel')).toContainText(
-    'Make one deliberate choice',
-  );
+  // Base UI keeps the leaving panel in the DOM (inert) during its exit
+  // transition, so address each panel by the name its tab gives it.
+  const panel = (name: RegExp) => page.getByRole('tabpanel', { name });
+  await expect(panel(/^Now/)).toContainText('Make one deliberate choice');
   await tabs.getByRole('tab', { name: /^To decide/ }).click();
-  await expect(page.getByRole('tabpanel')).toContainText(candidate.title);
+  await expect(panel(/^To decide/)).toContainText(candidate.title);
   await tabs.getByRole('tab', { name: /^Later/ }).click();
-  await expect(page.getByRole('tabpanel')).toContainText('Nothing later yet');
+  await expect(panel(/^Later/)).toContainText('Nothing later yet');
 });
 
 test('New outcome opens the dialog and Cancel closes it', async ({ page }) => {
