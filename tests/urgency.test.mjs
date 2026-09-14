@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'xin-urgency-test-'));process.env.XIN_DATA_DIR=temp;
 const u=await import('../lib/urgency.mjs');
+const m=await import('../lib/db.mjs');
 const today='2026-09-14';
 const item=(status,checkpoint='',hard_deadline='',extra={})=>({id:status+checkpoint+hard_deadline,title:'Fixture',status,checkpoint,hard_deadline,...extra});
 test('a hard deadline outranks every checkpoint rule and reports signed days',()=>{
@@ -66,4 +67,23 @@ test('localToday uses the local calendar date without a UTC shift',()=>{
  assert.equal(u.localToday(new Date(2026,11,31,0,0,1)),'2026-12-31');
  assert.match(u.localToday(new Date()),/^\d{4}-\d{2}-\d{2}$/);
 });
-test.after(()=>{rmSync(temp,{recursive:true,force:true});});
+test('saveItem persists the last action and fallback for waiting work',()=>{
+ const w=m.saveItem({title:'Wait for legal',status:'waiting',dependency:'Legal review',checkpoint:'2026-09-20',last_action:'Sent the draft on Friday',fallback:'Escalate to Sam'});
+ assert.deepEqual({...m.one('SELECT last_action,fallback FROM items WHERE id=?',w.id)},{last_action:'Sent the draft on Friday',fallback:'Escalate to Sam'});
+ const plain=m.saveItem({title:'No notes',status:'candidate'});assert.equal(plain.last_action,'');assert.equal(plain.fallback,'');
+ assert.throws(()=>m.saveItem({title:'Wait',status:'waiting',last_action:'Pinged',fallback:'Escalate'}),/check-back/);
+ assert.ok(m.all('PRAGMA table_info(items)').some(c=>c.name==='fallback'));
+});
+test('dashboard carryovers count checkpoint moves on active work only',()=>{
+ const input={status:'now',done_when:'A signed brief',next_action:'Draft it',owner:'Alex',checkpoint:'2026-09-20'};
+ const a=m.saveItem({...input,title:'Brief'});
+ assert.deepEqual(m.dashboard().carryovers.map(r=>({...r})),[]);
+ const a2=m.saveItem({...a,checkpoint:'2026-09-27',reason:'Waiting on numbers'});
+ assert.deepEqual(m.dashboard().carryovers.map(r=>({...r})),[{item_id:a.id,n:1}]);
+ m.saveItem({...a2,checkpoint:'2026-10-04',reason:'Slipped again'});
+ assert.deepEqual(m.dashboard().carryovers.map(r=>({...r})),[{item_id:a.id,n:2}]);
+ const l=m.saveItem({title:'Defer',status:'later',reason:'No capacity',checkpoint:'2026-10-01'});
+ m.saveItem({...l,checkpoint:'2026-10-08',reason:'Still no capacity'});
+ assert.deepEqual(m.dashboard().carryovers.map(r=>({...r})),[{item_id:a.id,n:2}]);
+});
+test.after(()=>{m.db.close();rmSync(temp,{recursive:true,force:true});});
