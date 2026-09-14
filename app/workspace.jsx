@@ -134,8 +134,10 @@ export default function Workspace() {
     try {
       await action();
       await refresh();
+      return true;
     } catch (error) {
       setError(error.message);
+      return false;
     } finally {
       setBusy(false);
     }
