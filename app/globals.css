@@ -378,7 +378,7 @@
   padding: 16px 22px 10px;
   color: var(--focus-heading);
 }
-.prompt-input::placeholder {
+.prompt-input [data-slot='textarea']::placeholder {
   color: var(--focus-muted);
 }
 .composer-actions {
@@ -2340,4 +2340,10 @@
   .topbar-status .local-status {
     display: none;
   }
+}
+
+.dark [data-slot='input']::placeholder,
+.dark [data-slot='textarea']::placeholder {
+  color: var(--focus-muted);
+  opacity: 1;
 }

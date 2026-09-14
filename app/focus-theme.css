@@ -40,6 +40,7 @@
 }
 
 .dark {
+  --muted-foreground: var(--focus-muted);
   --focus-heading: #edf1e9;
   --focus-copy: #c2cbbd;
   --focus-muted: #a5af9f;

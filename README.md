@@ -12,6 +12,10 @@ Overview puts the agent prompt and reviewable proposals first. Commitments keeps
 
 For a quick interface check, navigate all four views, switch commitment tabs, open and cancel an editor, filter/search the library including an empty result, open a source, and open/cancel Gmail settings. Check the same flows at a narrow phone width. Use an isolated test workspace for any test writes; do not create demo decisions in a live personal archive.
 
+The appearance button in the top-right corner of the workspace and sign-in screen offers **Light**, **Dark**, and **System**. System follows the device preference by default. An explicit choice is remembered per browser in local storage (`focus-theme`) and applied before the page paints. Theme handling uses [next-themes](https://github.com/pacocoursey/next-themes); Coss tokens style shared controls, and `app/focus-theme.css` supplies matching product colors. This preference does not change workspace data or authentication.
+
+To verify appearance changes, choose Dark, reload, and confirm Dark remains selected. Check Light and System, a source preview, a commitment dialog, and mobile navigation. Theme validation does not require creating or saving any commitments.
+
 ## Requirements
 
 - Node.js 24 or later.

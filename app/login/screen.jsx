@@ -22,6 +22,7 @@ import {
   AccordionPanel,
 } from '@/components/ui/accordion';
 import { Brand, Notice } from '@/components/focus/shared';
+import { ThemeToggle } from '@/components/focus/theme';
 import { authMessages } from '../../lib/auth-messages.mjs';
 
 const callback = 'http://127.0.0.1:3210/api/auth/google/callback';
@@ -87,10 +88,13 @@ export default function Login({ configured, ownerConfigured = true }) {
       <section className="sign-in-main">
         <div className="sign-in-brand">
           <Brand />
-          <span>
-            <LockKeyhole size={13} />
-            Private workspace
-          </span>
+          <div className="sign-in-tools">
+            <span className="sign-in-privacy">
+              <LockKeyhole size={13} />
+              Private workspace
+            </span>
+            <ThemeToggle />
+          </div>
         </div>
         <div className="sign-in-content">
           <span className="welcome-symbol">

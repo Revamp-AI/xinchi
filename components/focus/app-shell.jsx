@@ -39,6 +39,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Brand, StatusBadge, countSources } from './shared';
+import { ThemeToggle } from './theme';
 
 const views = [
   ['agent', Sparkles, 'Overview'],
@@ -178,6 +179,7 @@ export default function AppShell({
                   Saved on this Mac
                 </span>
               )}
+              <ThemeToggle />
             </div>
           </header>
           <div id="main-content" className="workspace-content">
