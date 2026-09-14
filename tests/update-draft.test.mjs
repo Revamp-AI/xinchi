@@ -1,3 +1,5 @@
+import {setupTestDatabase} from './helpers/postgres.mjs';
+await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
@@ -39,33 +41,33 @@ const events=[
  ev({id:'e8',item_id:'e',before:{...base,done_when:'A memo'},after:base,at:'2026-09-07T00:00:00.000Z'}),
 ];
 const draft=buildUpdateDraft({items,events,since,today});
-test('only shared commitments reach the draft',()=>{
+test('only shared commitments reach the draft',async()=>{
  const ids=[...draft.completed,...draft.next,...draft.needs].map(r=>r.id);
  for(const hidden of ['b','i','k','l'])assert.ok(!ids.includes(hidden),hidden);
  assert.ok(!draft.changed.some(c=>c.id==='e4'));
  assert.equal(draft.since,since);assert.equal(draft.today,today);
 });
-test('completed lists shared done items from the since boundary onward',()=>{
+test('completed lists shared done items from the since boundary onward',async()=>{
  assert.deepEqual(draft.completed.map(r=>r.id),['a','d']);
  assert.deepEqual(draft.completed[0],{id:'a',title:'Ship the onboarding checklist',evidence:'Checklist published to the shared drive.',at:'2026-09-10T09:00:00.000Z'});
 });
-test('changed reports status, checkpoint, and scope moves but not completions',()=>{
+test('changed reports status, checkpoint, and scope moves but not completions',async()=>{
  assert.deepEqual(draft.changed.map(c=>c.id+':'+c.what),['e1:status','e1:checkpoint','e1:scope','e3:checkpoint','e8:scope']);
  assert.deepEqual(draft.changed[3],{id:'e3',title:'Vendor contract',what:'checkpoint',from:'2026-09-12',to:'2026-09-16',reason:'Legal asked for a week',at:'2026-09-11T10:00:00.000Z'});
  assert.deepEqual(draft.changed[0],{id:'e1',title:'Draft the pricing memo',what:'status',from:'candidate',to:'now',reason:'',at:'2026-09-08T10:00:00.000Z'});
  assert.ok(!draft.changed.some(c=>['e2','e5','e6','e7'].includes(c.id)));
 });
-test('next lists active shared outcomes',()=>{
+test('next lists active shared outcomes',async()=>{
  assert.deepEqual(draft.next.map(r=>r.id),['e','h']);
  assert.deepEqual(draft.next[0],{id:'e',title:'Draft the pricing memo',done_when:'A one-page memo',next_action:'Collect the three quotes',checkpoint:'2026-09-18',hard_deadline:'2026-09-30'});
 });
-test('needs lists waiting items and open decisions',()=>{
+test('needs lists waiting items and open decisions',async()=>{
  assert.deepEqual(draft.needs.map(r=>r.id),['f','j','g','h']);
  assert.deepEqual(draft.needs[0],{id:'f',title:'Vendor contract',dependency:'Legal review',checkpoint:'2026-09-16',last_action:'Sent the redline'});
  assert.deepEqual(draft.needs[1],{id:'j',title:'Venue booking',dependency:'Venue confirmation',checkpoint:'2026-09-22',last_action:''});
  assert.deepEqual(draft.needs[2],{id:'g',title:'Choose the launch week',next_action:'Compare the two weeks'});
 });
-test('markdown has the four headings in order, day-only dates, and no names',()=>{
+test('markdown has the four headings in order, day-only dates, and no names',async()=>{
  const text=renderUpdateDraft(draft);
  assert.deepEqual(text.match(/^#+ .*$/gm),['## Completed','## Changed','## Next','## Need from you']);
  assert.match(text,/Ship the onboarding checklist/);assert.match(text,/2026-09-10/);assert.ok(!text.includes('2026-09-10T'));
@@ -73,7 +75,7 @@ test('markdown has the four headings in order, day-only dates, and no names',()=
  assert.ok(!text.includes('Nothing to report.'));assert.ok(!text.includes('Someone else'));
  assert.match(text,/2026-09-14/);assert.match(text,/2026-09-07/);
 });
-test('empty sections say so and keep the structure',()=>{
+test('empty sections say so and keep the structure',async()=>{
  const text=renderUpdateDraft(buildUpdateDraft({items:[],events:[],since,today}));
  assert.deepEqual(text.match(/^#+ .*$/gm),['## Completed','## Changed','## Next','## Need from you']);
  assert.equal(text.match(/Nothing to report\./g).length,4);
@@ -87,13 +89,13 @@ test('the update-draft path is in the protected GET list and rejects anonymous c
  assert.equal((await get('update-draft')).status,401);
 });
 test('GET update-draft builds the window from the database for the signed-in owner',async()=>{
- auth.authDb.prepare('INSERT INTO owner VALUES(1,?,?,?)').run('google-owner-1','owner@example.com','Owner');
- auth.authDb.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'google-owner-1',Date.now(),Date.now()+3600000);
- const a=db.saveItem({title:'Ship the onboarding checklist',status:'now',done_when:'Checklist live',next_action:'Publish it',owner:'You',checkpoint:'2026-09-18',shared:true});
- db.saveItem({...a,status:'done',evidence:'Checklist published.'});
- const w=db.saveItem({title:'Vendor contract',status:'waiting',dependency:'Legal review',checkpoint:'2026-09-16',shared:true});
- db.saveItem({...w,checkpoint:'2026-09-23',reason:'Legal asked for a week'});
- db.saveItem({title:'Private task',status:'now',done_when:'x',next_action:'y',owner:'You',checkpoint:'2026-09-18'});
+ (await auth.authDb.prepare('INSERT INTO owner VALUES(1,?,?,?)').run('google-owner-1','owner@example.com','Owner'));
+ (await auth.authDb.prepare('INSERT INTO sessions VALUES(?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'google-owner-1',Date.now(),Date.now()+3600000));
+ const a=(await db.saveItem({title:'Ship the onboarding checklist',status:'now',done_when:'Checklist live',next_action:'Publish it',owner:'You',checkpoint:'2026-09-18',shared:true}));
+ (await db.saveItem({...a,status:'done',evidence:'Checklist published.'}));
+ const w=(await db.saveItem({title:'Vendor contract',status:'waiting',dependency:'Legal review',checkpoint:'2026-09-16',shared:true}));
+ (await db.saveItem({...w,checkpoint:'2026-09-23',reason:'Legal asked for a week'}));
+ (await db.saveItem({title:'Private task',status:'now',done_when:'x',next_action:'y',owner:'You',checkpoint:'2026-09-18'}));
  const r=await get('update-draft',token);assert.equal(r.status,200);const body=await r.json();
  const n=new Date();assert.equal(body.since,localToday(new Date(n.getFullYear(),n.getMonth(),n.getDate()-7)));assert.equal(body.draft.today,localToday());
  assert.deepEqual(body.draft.completed.map(x=>x.title),['Ship the onboarding checklist']);
@@ -107,4 +109,4 @@ test('GET update-draft builds the window from the database for the signed-in own
 test('GET update-draft rejects overflow and out-of-range dates',async()=>{
  for(const bad of ['2026-02-30','2026-13-01']){const r=await get('update-draft?since='+bad,token);assert.equal(r.status,400,bad);assert.deepEqual(await r.json(),{error:'Choose a valid date.'},bad);}
 });
-test.after(()=>{auth.authDb.close();db.db.close();rmSync(temp,{recursive:true,force:true});});
+test.after(async ()=>{(await auth.authDb.close());(await db.db.close());rmSync(temp,{recursive:true,force:true});});

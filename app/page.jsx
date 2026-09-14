@@ -5,6 +5,6 @@ import Workspace from './workspace';
 export const dynamic = 'force-dynamic';
 export default async function Home() {
   const jar = await cookies();
-  if (!sessionFor(jar.get(SESSION_COOKIE)?.value)) redirect('/login');
+  if (!(await sessionFor(jar.get(SESSION_COOKIE)?.value))) redirect('/login');
   return <Workspace />;
 }

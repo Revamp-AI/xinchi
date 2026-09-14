@@ -6,7 +6,7 @@ import Login from './screen';
 export const dynamic = 'force-dynamic';
 export default async function LoginPage() {
   const jar = await cookies();
-  if (sessionFor(jar.get(SESSION_COOKIE)?.value)) redirect('/');
+  if (await sessionFor(jar.get(SESSION_COOKIE)?.value)) redirect('/');
   return (
     <Login configured={!!googleClient()} ownerConfigured={!!allowedEmail()} />
   );
