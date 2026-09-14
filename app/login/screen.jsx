@@ -198,7 +198,7 @@ export default function Login({ configured, ownerConfigured = true }) {
         </div>
         <p className="sign-in-footer">
           <LockKeyhole size={13} />
-          Your archive stays on this Mac.
+          Your archive is stored in your private database.
         </p>
       </section>
       <aside className="sign-in-story">

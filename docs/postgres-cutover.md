@@ -41,7 +41,7 @@ The command uses SQLite's online backup API with read-only source connections. S
 
 ## Backup and restore
 
-Use `pg_dump` with a private PostgreSQL service/credential file to make a custom-format database backup; keep provider secrets in a separate private backup. Do not paste connection URLs into shell history or public logs. The in-app JSON export is useful for inspection and portability, but is not a full disaster-recovery backup and intentionally omits authentication.
+Use `pg_dump` with a private PostgreSQL service/credential file to make a custom-format database backup; keep provider secrets in a separate private backup. The dump client must support the server's major version (for example, use PostgreSQL 18 tools for a Neon PostgreSQL 18 project). Do not paste connection URLs into shell history or public logs. The in-app JSON export is useful for inspection and portability, but is not a full disaster-recovery backup and intentionally omits authentication.
 
 Restore a database backup into a **new empty database or isolated Neon branch** with `pg_restore`. Point a separate local verification process at that restored database and compare table counts, source hashes, source-version bodies, item/event references and representative searches. Verify the pinned owner; revoke restored sessions and OAuth attempts before a live recovery. The automated migration tests exercise a local dump/restore round trip; live Neon backup retention and restore behavior still need verification against the chosen project.
 
