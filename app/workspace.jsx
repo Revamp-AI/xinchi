@@ -157,6 +157,12 @@ export default function Workspace() {
       setSelectedJobId(null);
       setView('agent');
     });
+  const cancel = (id) => act(() => api('jobs/cancel', { id }));
+  const answer = (parentId, answers) =>
+    act(async () => {
+      await api('jobs', { prompt: 'Follow-up', answers, parent_id: parentId });
+      setSelectedJobId(null);
+    });
   const edit = (item) => {
     setError('');
     setEditing(item);
@@ -261,6 +267,8 @@ export default function Workspace() {
             navigate,
             selectedJobId,
             setSelectedJobId,
+            cancel,
+            answer,
           }}
           dismiss={(id) => act(() => api('proposals/dismiss', { id }))}
           showTrace={(id) => inspect('jobs/' + id, setTrace)}
