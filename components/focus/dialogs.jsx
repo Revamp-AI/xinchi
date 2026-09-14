@@ -303,9 +303,7 @@ export function SourceDialog({ source, close }) {
           )}
         </div>
         {quote && (
-          <blockquote
-            className="mt-5 border-l-2 border-border pl-3 text-sm leading-relaxed text-muted-foreground"
-          >
+          <blockquote className="mt-5 border-l-2 border-border pl-3 text-sm leading-relaxed text-muted-foreground">
             <span className="muted-caption block">Cited excerpt</span>
             {quote}
           </blockquote>

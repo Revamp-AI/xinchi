@@ -10,11 +10,12 @@ export function promptSnippet(prompt, limit = 64) {
   const text = String(prompt || '');
   const original = [...text.matchAll(/^Original request: (.*)$/gm)].pop();
   const line = (original ? original[1] : text.split('\n')[0]).trim();
-  return line.length > limit
-    ? line.slice(0, limit - 1).trimEnd() + '…'
-    : line;
+  return line.length > limit ? line.slice(0, limit - 1).trimEnd() + '…' : line;
 }
-const firstLine = (text) => String(text || '').split('\n')[0].trim();
+const firstLine = (text) =>
+  String(text || '')
+    .split('\n')[0]
+    .trim();
 export function ReviewHistory({ jobs, selectedJobId, onSelect }) {
   const complete = jobs
     .filter((job) => job.status === 'complete')
@@ -54,7 +55,9 @@ export function ReviewHistory({ jobs, selectedJobId, onSelect }) {
                     <StatusBadge
                       tone={job.kind === 'import_review' ? 'info' : 'neutral'}
                     >
-                      {job.kind === 'import_review' ? 'Import review' : 'Review'}
+                      {job.kind === 'import_review'
+                        ? 'Import review'
+                        : 'Review'}
                     </StatusBadge>
                     {isFollowUp(job.prompt) && (
                       <StatusBadge tone="info">Follow-up</StatusBadge>
