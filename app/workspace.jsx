@@ -15,6 +15,7 @@ import {
   HistoryDialog,
   SourceDialog,
 } from '@/components/focus/dialogs';
+import { UpdateDraftDialog } from '@/components/focus/update-draft';
 import { Brand, Notice } from '@/components/focus/shared';
 import { gmailMessages } from '../lib/auth-messages.mjs';
 
@@ -57,6 +58,7 @@ export default function Workspace() {
   const [tab, setTab] = useState('now'),
     [focus, setFocus] = useState(''),
     [hours, setHours] = useState(0);
+  const [draft, setDraft] = useState(null);
   const refresh = async () => {
     const next = await api('state');
     setState(next);
@@ -188,6 +190,8 @@ export default function Workspace() {
       setError(error.message);
     }
   };
+  const openDraft = (since = '') =>
+    inspect('update-draft?since=' + encodeURIComponent(since), setDraft);
   const importFile = (file) =>
     act(async () => {
       const text = await file.text();
@@ -275,6 +279,7 @@ export default function Workspace() {
             busy,
             create,
             edit,
+            openDraft,
           }}
           saveFocus={() =>
             act(async () => {
@@ -336,6 +341,15 @@ export default function Workspace() {
       {trace && <ActivityDialog trace={trace} close={() => setTrace(null)} />}
       {events && (
         <HistoryDialog events={events} close={() => setEvents(null)} />
+      )}
+      {draft && (
+        <UpdateDraftDialog
+          draft={draft}
+          since={draft.since}
+          setSince={(value) => setDraft({ ...draft, since: value })}
+          reload={openDraft}
+          close={() => setDraft(null)}
+        />
       )}
       {setup && (
         <ConnectionDialog
