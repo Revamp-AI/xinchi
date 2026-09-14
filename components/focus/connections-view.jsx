@@ -21,6 +21,14 @@ import {
 } from '@/components/ui/accordion';
 import { Spinner } from '@/components/ui/spinner';
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
   Heading,
   Notice,
   ProviderIcon,
@@ -35,6 +43,43 @@ const descriptions = {
   granola: 'Meeting notes and the thinking around your conversations.',
   gmail: 'Email threads, follow-ups, and decisions waiting in your inbox.',
 };
+const runTones = {
+  running: 'info',
+  complete: 'success',
+  partial: 'info',
+  failed: 'warning',
+};
+const runLabels = {
+  running: 'Running',
+  complete: 'Complete',
+  partial: 'Partial',
+  failed: 'Failed',
+};
+const finished = (run) => ['complete', 'partial'].includes(run?.state);
+function formatStarted(value) {
+  const date = new Date(value);
+  return Number.isNaN(+date)
+    ? value
+    : date.toLocaleString('en', {
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+}
+function formatDuration(run) {
+  const seconds = Math.round(
+    (Date.parse(run.finished_at) - Date.parse(run.started_at)) / 1000,
+  );
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+const secondsAgo = (value) =>
+  Math.max(0, Math.round((Date.now() - Date.parse(value)) / 1000));
+const successLine = (run) =>
+  `Last successful import ${formatDate(run.finished_at || run.started_at)} · ${(run.changed || 0).toLocaleString()} added or updated · ${(run.imported || 0).toLocaleString()} processed`;
 export default function ConnectionsView({ state, busy, configure, sync }) {
   const active = state.sync.find((run) => run.state === 'running');
   return (
@@ -54,23 +99,26 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
             rows = state.coverage.filter((row) => row.provider === provider),
             count = countSources(state, provider),
             run = state.sync.find((item) => item.provider === provider),
+            history = state.sync_history
+              .filter((item) => item.provider === provider)
+              .slice(0, 10),
+            lastSuccess = finished(run)
+              ? run
+              : state.sync_history.find(
+                  (item) => item.provider === provider && finished(item),
+                ),
             importing = run?.state === 'running';
-          const tone = importing
-            ? 'info'
+          const [label, tone] = importing
+            ? ['Importing', 'info']
             : connection.issue || run?.state === 'failed'
-              ? 'warning'
+              ? ['Needs attention', 'warning']
               : connection.configured
-                ? 'success'
-                : 'neutral';
-          const label = importing
-            ? 'Importing'
-            : connection.issue || run?.state === 'failed'
-              ? 'Needs attention'
-              : connection.configured
-                ? 'Connected'
+                ? finished(run)
+                  ? ['Connected', 'success']
+                  : ['Credentials saved', 'neutral']
                 : count
-                  ? 'Archive imported'
-                  : 'Not connected';
+                  ? ['Archive imported', 'neutral']
+                  : ['Not connected', 'neutral'];
           return (
             <Card className="connection-row" key={provider}>
               <div className="connection-primary">
@@ -167,8 +215,16 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
                     )}
                     <span>
                       {importing
-                        ? run.message || 'Reading source material…'
-                        : `${run.state === 'partial' ? 'More history available' : run.state === 'complete' ? 'Import complete' : 'Import interrupted'} · ${formatDate(run.finished_at || run.started_at)}`}
+                        ? `${run.message || 'Reading source material…'} · updated ${secondsAgo(run.updated_at || run.started_at)}s ago`
+                        : run.state === 'failed'
+                          ? `Import interrupted · ${formatDate(run.finished_at || run.started_at)}`
+                          : `${successLine(run)}${run.state === 'partial' ? ' · More history available' : ''}`}
+                      {run.state === 'failed' && lastSuccess && (
+                        <>
+                          <br />
+                          {successLine(lastSuccess)}
+                        </>
+                      )}
                     </span>
                   </span>
                 ) : (
@@ -181,19 +237,54 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
                   </span>
                 )}
               </div>
-              {run && !importing && (
+              {history.length > 0 && (
                 <Accordion className="sync-details-accordion">
-                  <AccordionItem value="import-details">
-                    <AccordionTrigger>Last import details</AccordionTrigger>
+                  <AccordionItem value="import-history">
+                    <AccordionTrigger>Import history</AccordionTrigger>
                     <AccordionPanel>
-                      <div className="sync-detail-content">
-                        <StatusBadge
-                          tone={run.state === 'failed' ? 'warning' : 'neutral'}
-                        >
-                          {run.state}
-                        </StatusBadge>
-                        <span>{run.imported || 0} records processed</span>
-                        <p>{run.message}</p>
+                      <div className="pb-3.5">
+                        <Table className="text-xs">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Started</TableHead>
+                              <TableHead>Duration</TableHead>
+                              <TableHead>State</TableHead>
+                              <TableHead className="text-right">
+                                Processed
+                              </TableHead>
+                              <TableHead className="text-right">
+                                Added or updated
+                              </TableHead>
+                              <TableHead>Message</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {history.map((item) => (
+                              <TableRow key={item.id}>
+                                <TableCell>
+                                  {formatStarted(item.started_at)}
+                                </TableCell>
+                                <TableCell>{formatDuration(item)}</TableCell>
+                                <TableCell>
+                                  <StatusBadge
+                                    tone={runTones[item.state] || 'neutral'}
+                                  >
+                                    {runLabels[item.state] || item.state}
+                                  </StatusBadge>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {(item.imported || 0).toLocaleString()}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {(item.changed || 0).toLocaleString()}
+                                </TableCell>
+                                <TableCell className="whitespace-normal leading-snug text-muted-foreground">
+                                  {item.message}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
                       </div>
                     </AccordionPanel>
                   </AccordionItem>

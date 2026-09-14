@@ -84,7 +84,7 @@ test('the callback route verifies Google keys, creates the cookie, redirects, an
   return Response.json({emailAddress:'owner@example.com'});
  };
  // Keep the callback from spawning a real provider worker in this isolated fixture.
- db.run('INSERT INTO sync_runs(id,provider,started_at,state) VALUES(?,?,?,?)','busy-fixture','gmail',new Date().toISOString(),'running');
+ db.run('INSERT INTO sync_runs(id,provider,started_at,state,pid,updated_at) VALUES(?,?,?,?,?,?)','busy-fixture','gmail',new Date().toISOString(),'running',process.pid,new Date().toISOString());
  try{
   const request=new Request(auth.CALLBACK+'?code=fixture&state='+f.state,{headers:{host:'127.0.0.1:3210',cookie:auth.FLOW_COOKIE+'='+f.browser}});
   const r=await route.GET(request);assert.equal(r.status,303);assert.equal(r.headers.get('location'),origin+'/?gmail=connected&import=manual');
