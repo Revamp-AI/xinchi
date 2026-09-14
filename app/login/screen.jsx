@@ -2,7 +2,7 @@
 import {useState,useEffect} from 'react';
 import {LockKeyhole,Mail,ArrowRight,AlertCircle} from 'lucide-react';
 const callback='http://127.0.0.1:3210/api/auth/google/callback';
-const messages={cancelled:'Google sign-in was cancelled. You can try again.',account:'That Google account cannot open this workspace. Choose your workspace account.',signin:'Google sign-in could not be completed. Check your Google setup and try again.',expired:'Your session ended. Sign in again to continue.'};
+import {authMessages as messages} from '../../lib/auth-messages.mjs';
 async function post(path,data){const r=await fetch('/api/auth/'+path,{method:'POST',headers:{'Content-Type':'application/json','X-Xin-Request':'1'},body:JSON.stringify(data)});const body=await r.json();if(!r.ok)throw Error(body.error||'Could not continue. Try again.');return body;}
 export default function Login({configured,ownerConfigured}){
  const [ready,setReady]=useState(configured),[client,setClient]=useState(null),[busy,setBusy]=useState(false),[error,setError]=useState('');

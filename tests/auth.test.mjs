@@ -19,9 +19,9 @@ function req(path,{method='GET',token='',body={},originHeader=origin}={}){return
 async function signed(nonce,overrides={},key=pair.privateKey){return new SignJWT({iss:'https://accounts.google.com',aud:client.web.client_id,sub:'google-owner-1',email:'owner@example.com',email_verified:true,name:'Alex',nonce,iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600,...overrides}).setProtectedHeader({alg:'RS256'}).sign(key);}
 const grant='openid email profile https://www.googleapis.com/auth/gmail.readonly';
 function newFlow(){const f=auth.beginGoogle(),u=new URL(f.url);return {url:u,state:u.searchParams.get('state'),nonce:u.searchParams.get('nonce'),browser:f.cookie.split(';')[0].split('=')[1]};}
-async function complete(flow,{scope=grant,claims={}}={}){
+async function complete(flow,{scope=grant,claims={},profileEmail="owner@example.com",profileError=null,tokenError=null,refreshToken="fixture-refresh-token"}={}){
  const old=global.fetch;let sent;
- global.fetch=async(url,options)=>{if(String(url).includes('/token')){sent=options.body;return Response.json({id_token:await signed(flow.nonce,claims),access_token:'fixture-access-token',refresh_token:'fixture-refresh-token',expires_in:3600,scope});}return Response.json({emailAddress:'owner@example.com'});};
+ global.fetch=async(url,options)=>{if(String(url).includes('/token')){sent=options.body;if(tokenError)return Response.json({error:tokenError,error_description:'private provider detail'},{status:400});return Response.json({id_token:await signed(flow.nonce,claims),access_token:'fixture-access-token',refresh_token:refreshToken,expires_in:3600,scope});}if(profileError)return Response.json({error:{message:'private provider detail',details:[{'@type':'type.googleapis.com/google.rpc.ErrorInfo',reason:profileError}]}},{status:403});return Response.json({emailAddress:profileEmail});};
  try{const result=await auth.finishGoogle('fixture-code',flow.state,flow.browser,pair.publicKey);return {...result,sent};}finally{global.fetch=old;}
 }
 let session;
@@ -92,9 +92,47 @@ test('the callback route verifies Google keys, creates the cookie, redirects, an
   const token=cookies[0].split(';')[0].split('=')[1];assert.ok(auth.sessionFor(token));auth.endSession(token);
  }finally{global.fetch=old;db.run('DELETE FROM sync_runs WHERE id=?','busy-fixture');}
 });
+test('disabled Gmail API preserves verified sign-in and the grant for a later retry',async()=>{
+ const result=await complete(newFlow(),{profileError:'SERVICE_DISABLED'});
+ assert.equal(result.gmail,false);assert.equal(result.gmailIssue,'gmail_api_disabled');assert.ok(auth.sessionFor(result.token));
+ assert.equal(conn.connectionState().gmail.configured,true);assert.equal(conn.connectionState().gmail.issue.code,'gmail_api_disabled');
+ assert.equal(conn.secrets().gmail_tokens.refresh_token,'fixture-refresh-token');
+ const warning=auth.authDb.prepare("SELECT * FROM auth_events WHERE stage='gmail' AND outcome='warning' ORDER BY id DESC LIMIT 1").get();
+ assert.equal(warning.provider_reason,'SERVICE_DISABLED');assert.equal(warning.http_status,403);
+ const events=JSON.stringify(auth.authDb.prepare('SELECT * FROM auth_events').all());
+ for(const secret of ['fixture-access-token','fixture-refresh-token','fixture-secret',result.token,'private provider detail'])assert.ok(!events.includes(secret));
+ auth.endSession(result.token);
+ const recovered=await complete(newFlow());assert.equal(recovered.gmail,true);assert.equal(conn.connectionState().gmail.issue,null);auth.endSession(recovered.token);
+});
+test('Gmail account mismatches cannot overwrite credentials or create a session',async()=>{
+ const before=conn.secrets(),sessions=auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get().n;
+ await assert.rejects(()=>complete(newFlow(),{profileEmail:'other@example.com'}),e=>e.authCode==='account');
+ assert.deepEqual(conn.secrets(),before);assert.equal(auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get().n,sessions);
+});
+test('missing background Gmail permission still permits verified sign-in',async()=>{
+ const before=conn.secrets();const without={...before};delete without.gmail_tokens;conn.saveSecrets(without);
+ try{const result=await complete(newFlow(),{refreshToken:null});assert.equal(result.gmailIssue,'gmail_refresh');assert.ok(auth.sessionFor(result.token));assert.equal(conn.connectionState().gmail.configured,false);auth.endSession(result.token);}finally{conn.saveSecrets(before);}
+});
+test('rejected OAuth clients produce actionable diagnostics without creating a session',async()=>{
+ const sessions=auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get().n;
+ await assert.rejects(()=>complete(newFlow(),{tokenError:'invalid_client'}),e=>e.authCode==='client');
+ const event=auth.authDb.prepare('SELECT * FROM auth_events ORDER BY id DESC LIMIT 1').get();
+ assert.equal(event.stage,'token_exchange');assert.equal(event.code,'client');assert.equal(event.provider_reason,'invalid_client');
+ assert.equal(auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get().n,sessions);
+});
+test('callback sends verified users into Focus with the Gmail warning and no import',async()=>{
+ const f=newFlow(),old=global.fetch,runCount=db.one('SELECT COUNT(*) AS n FROM sync_runs').n;
+ global.fetch=async url=>String(url).includes('/token')?Response.json({id_token:await signed(f.nonce),access_token:'fixture-access-token',refresh_token:'fixture-refresh-token',scope:grant,expires_in:3600}):Response.json({error:{errors:[{reason:'accessNotConfigured'}]}},{status:403});
+ try{
+  const r=await route.GET(new Request(auth.CALLBACK+'?code=fixture&state='+f.state,{headers:{host:'127.0.0.1:3210',cookie:auth.FLOW_COOKIE+'='+f.browser}}));
+  assert.equal(r.headers.get('location'),origin+'/?gmail=gmail_api_disabled&import=manual');
+  const token=r.headers.getSetCookie()[0].split(';')[0].split('=')[1];assert.ok(auth.sessionFor(token));auth.endSession(token);
+  assert.equal(db.one('SELECT COUNT(*) AS n FROM sync_runs').n,runCount);
+ }finally{global.fetch=old;conn.clearGmailIssue();}
+});
 test('expired sessions and forged cookies cannot access existing data',async()=>{
  const result=await complete(newFlow());auth.authDb.prepare('UPDATE sessions SET expires_at=0').run();
  assert.equal(auth.sessionFor(result.token),null);assert.equal(auth.sessionFor('A'.repeat(43)),null);
- const callback=await route.GET(req('auth/google/callback?code=forged&state=forged'));assert.equal(callback.status,303);assert.match(callback.headers.get('location'),/login\?error=signin$/);
+ const callback=await route.GET(req('auth/google/callback?code=forged&state=forged'));assert.equal(callback.status,303);assert.match(callback.headers.get('location'),/login\?error=flow$/);
 });
 test.after(()=>{auth.authDb.close();db.db.close();rmSync(temp,{recursive:true,force:true});});

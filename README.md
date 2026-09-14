@@ -39,6 +39,10 @@ The requested scopes are `openid email profile https://www.googleapis.com/auth/g
 
 Gmail consent is requested in the same flow. Successful authorization saves background access and attempts to start an import. If another import is running, use Connections → Refresh later. You can decline Gmail access and still sign in. Sign-out does not revoke the Gmail grant or interrupt a running import.
 
+Gmail setup errors no longer block a verified Google login. Connections shows **Needs attention** and an actionable explanation. If the Gmail API is disabled, enable it in the same Google Cloud project, then choose **Refresh**; the approved grant is retained locally. A successful reconnect or import clears the warning. Account mismatches still block sign-in.
+
+Login failures distinguish expired browser flows, rejected clients or codes, identity verification, and network failures. The private `auth_events` table records stage, outcome, safe error category, HTTP status, and recognized provider/JWT reason codes. It never records tokens, authorization codes, OAuth URLs, or raw provider responses, and it is excluded from workspace exports.
+
 The first client upload is accepted only from this local app's origin and only before a client is configured. To replace it later, run:
 
 ```sh
@@ -88,7 +92,7 @@ Everything runs locally. By default, the ignored `data/` directory contains:
 
 - `xin.sqlite3`: source text, raw snapshots, full-text search, commitments, history, agent runs, proposals, and sync records.
 - `connections.secret.json`: API credentials and Google tokens, created during setup.
-- `auth.secret.sqlite3`: the pinned identity, hashed sessions, and temporary OAuth attempts.
+- `auth.secret.sqlite3`: the pinned identity, hashed sessions, temporary OAuth attempts, and the latest 200 sanitized authentication events.
 - `runs/`: structured outputs from agent reviews.
 
 The optional `XIN_DATA_DIR` override selects another private directory. **Do not commit any runtime data.** Workspace exports omit credentials and auth sessions but contain private source material and decisions. Use the in-app JSON export or SQLite's backup API for backups; copying a live database without its journal can miss writes.

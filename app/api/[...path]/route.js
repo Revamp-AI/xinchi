@@ -2,18 +2,19 @@ import {dashboard,searchSources,readSource,saveItem,all,one,run,setSetting,expor
 import {createJob,launchJob,recoverJobs,queueImportReview} from '../../../lib/agent.mjs';
 import {connectionState,configure,googleClient,configureGoogleClient,startSync} from '../../../lib/connectors.mjs';
 import {importDocuments,importResearchArchive} from '../../../lib/imports.mjs';
-import {APP_ORIGIN,SESSION_COOKIE,FLOW_COOKIE,SESSION_SECONDS,checkLocalRequest,sessionFor,requireSession,readCookie,cookie,beginGoogle,finishGoogle,endSession} from '../../../lib/auth.mjs';
+import {authMessages,gmailMessages} from '../../../lib/auth-messages.mjs';
+import {APP_ORIGIN,SESSION_COOKIE,FLOW_COOKIE,SESSION_SECONDS,checkLocalRequest,sessionFor,requireSession,readCookie,cookie,beginGoogle,finishGoogle,endSession,recordAuthEvent} from '../../../lib/auth.mjs';
 export const runtime='nodejs';export const dynamic='force-dynamic';
 function json(v,status=200){return Response.json(v,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}});}
 export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.url),path=decodeURIComponent(u.pathname.slice(5));
  if(path==='auth/status')return json({configured:!!googleClient(),user:sessionFor(readCookie(req,SESSION_COOKIE))});
  if(path==='auth/google/callback'){
   let result;
-  try{result=await finishGoogle(u.searchParams.get('code'),u.searchParams.get('state'),readCookie(req,FLOW_COOKIE));}
-  catch(e){const response=new Response(null,{status:303,headers:{Location:APP_ORIGIN+'/login?error='+(u.searchParams.get('error')==='access_denied'?'cancelled':e.authCode==='account'?'account':'signin'),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;}
+  try{if(u.searchParams.get('error')){recordAuthEvent('consent','failed',u.searchParams.get('error')==='access_denied'?'cancelled':'signin');throw Object.assign(Error('Google did not authorize sign-in.'),{authCode:u.searchParams.get('error')==='access_denied'?'cancelled':'signin'});}result=await finishGoogle(u.searchParams.get('code'),u.searchParams.get('state'),readCookie(req,FLOW_COOKIE));}
+  catch(e){const response=new Response(null,{status:303,headers:{Location:APP_ORIGIN+'/login?error='+(authMessages[e.authCode]?e.authCode:'signin'),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;}
   endSession(readCookie(req,SESSION_COOKIE));
   let importState='manual';if(result.gmail){try{startSync('gmail');importState='started';}catch{}}
-  const response=new Response(null,{status:303,headers:{Location:APP_ORIGIN+'/?gmail='+(result.gmail?'connected':'missing')+'&import='+importState,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+  const response=new Response(null,{status:303,headers:{Location:APP_ORIGIN+'/?gmail='+(gmailMessages[result.gmailIssue]?result.gmailIssue:result.gmail?'connected':'missing')+'&import='+importState,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
   response.headers.append('Set-Cookie',cookie(SESSION_COOKIE,result.token,SESSION_SECONDS));response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;
  }
  const user=requireSession(req);
