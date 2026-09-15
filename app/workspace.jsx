@@ -18,6 +18,7 @@ import {
   SourceDialog,
 } from '@/components/focus/dialogs';
 import { UpdateDraftDialog } from '@/components/focus/update-draft';
+import McpAccessSettings from '@/components/focus/mcp-access-settings';
 import { Brand, Notice } from '@/components/focus/shared';
 import { gmailMessages } from '../lib/auth-messages.mjs';
 
@@ -429,7 +430,12 @@ export default function Workspace() {
           items={state.items}
         />
       )}
-      {view === 'settings' && <ReviewSettingsView api={api} />}
+      {view === 'settings' && (
+        <>
+          <ReviewSettingsView api={api} />
+          <McpAccessSettings api={api} />
+        </>
+      )}
       {view === 'connections' && (
         <ConnectionsView
           {...{ state, busy, api, refresh }}

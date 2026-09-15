@@ -23,6 +23,7 @@
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@fontsource-variable/inter": "^5.3.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "ai": "^7.0.100",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -40,6 +41,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@next/eslint-plugin-next": "^16.3.5",
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4.3.3",
