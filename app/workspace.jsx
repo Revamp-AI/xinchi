@@ -9,6 +9,7 @@ import BoardView from '@/components/focus/board-view';
 import LibraryView from '@/components/focus/library-view';
 import ContactsView from '@/components/focus/contacts-view';
 import ConnectionsView from '@/components/focus/connections-view';
+import ReviewSettingsView from '@/components/focus/review-settings-view';
 import {
   ActivityDialog,
   CommitmentDialog,
@@ -68,6 +69,25 @@ export default function Workspace() {
     setConnectionLost(false);
     return next;
   };
+  useEffect(() => {
+    const fromHash = () => {
+      const requested = window.location.hash.slice(1);
+      if (
+        [
+          'agent',
+          'board',
+          'contacts',
+          'library',
+          'connections',
+          'settings',
+        ].includes(requested)
+      )
+        setView(requested);
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    return () => window.removeEventListener('hashchange', fromHash);
+  }, []);
   useEffect(() => {
     let mounted = true;
     api('state')
@@ -164,6 +184,7 @@ export default function Workspace() {
     }
   };
   const navigate = (next, nextTab) => {
+    window.history.replaceState(null, '', '#' + next);
     setView(next);
     if (nextTab) setTab(nextTab);
   };
@@ -405,6 +426,7 @@ export default function Workspace() {
           items={state.items}
         />
       )}
+      {view === 'settings' && <ReviewSettingsView api={api} />}
       {view === 'connections' && (
         <ConnectionsView
           {...{ state, busy }}

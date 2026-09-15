@@ -30,7 +30,11 @@ test('hosted origin and cookies fail closed; forwarded hosts cannot bypass origi
 test('public hosted setup cannot install attacker OAuth credentials and private APIs require sign-in',async()=>{
  const req=new Request('https://focus.example/api/auth/setup',{method:'POST',headers:{host:'focus.example',origin:'https://focus.example','x-xin-request':'1'},body:JSON.stringify({web:{client_id:'attacker.apps.googleusercontent.com',client_secret:'untrusted',redirect_uris:[auth.CALLBACK]}})});
  assert.equal((await route.POST(req)).status,403);
- for(const path of ['state','contacts','export'])assert.equal((await route.GET(request(path))).status,401);
+ for(const path of ['state','contacts','export','settings/reviews'])assert.equal((await route.GET(request(path))).status,401);
+ for(const action of ['start','poll','cancel','disconnect','test']){
+  const response=await route.POST(new Request('https://focus.example/api/settings/reviews/chatgpt/'+action,{method:'POST',headers:{host:'focus.example',origin:'https://focus.example','x-xin-request':'1'},body:'{}'}));
+  assert.equal(response.status,401);
+ }
 });
 test('provider credentials are encrypted, authenticated, concurrency-safe, and excluded from exports',async()=>{
  await Promise.all([store.updateSecrets(s=>{s.fireflies_key='private-fireflies';}),store.updateSecrets(s=>{s.granola_key='private-granola';})]);

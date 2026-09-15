@@ -18,6 +18,7 @@ import {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUplo
 import {start,getRun} from 'workflow/api';
 import {ingestionWorkflow} from '../../../workflows/ingestion.js';
 import {resumeDurable} from '../../../lib/durable-ingestion.mjs';
+import {reviewSettings,startChatGPTLogin,pollChatGPTLogin,cancelChatGPTLogin,disconnectChatGPT,testChatGPTConnection,saveReviewProvider} from '../../../lib/review-settings.mjs';
 export const maxDuration=800;
 function scheduleWork(){if(CLOUD_JOBS)after(async()=>{try{await drainCloudWork((...args)=>start(ingestionWorkflow,args),id=>getRun(id).status);}catch{console.error('Background work interrupted; pending dispatch will retry.');}});}
 export const runtime='nodejs';export const dynamic='force-dynamic';
@@ -35,6 +36,7 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
   response.headers.append('Set-Cookie',cookie(SESSION_COOKIE,result.token,SESSION_SECONDS));response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;
  }
  const user=(await requireSession(req));
+ if(path==='settings/reviews')return json(await reviewSettings());
  if(path==='contacts')return json(await listContacts(Object.fromEntries(u.searchParams)));
  if(path==='contacts/status'){await recoverContactRuns();return json(await contactStatus());}
  if(path==='contacts/merge-preview')return json(await mergePreview(u.searchParams.get('target_id'),u.searchParams.get('source_id')));
@@ -58,6 +60,12 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='auth/setup'){if(HOSTED||POSTGRES_SECRETS)return json({error:'Configure Google sign-in in the server environment.'},403);if(googleClient())return json({error:'Google sign-in is already configured. Use local setup to change its credentials.'},409);configureGoogleClient(data);return json({configured:true});}
  if(path==='auth/google/start'){const flow=(await beginGoogle(readCookie(req,FLOW_COOKIE)));const response=json({url:flow.url});response.headers.append('Set-Cookie',flow.cookie);return response;}
  if(path==='auth/logout'){(await endSession(readCookie(req,SESSION_COOKIE)));const response=json({signed_out:true});response.headers.append('Set-Cookie',cookie(SESSION_COOKIE,'',0));return response;}
+ if(path==='settings/reviews')return json(await saveReviewProvider(data));
+ if(path==='settings/reviews/chatgpt/start')return json(await startChatGPTLogin());
+ if(path==='settings/reviews/chatgpt/poll')return json(await pollChatGPTLogin(data.id));
+ if(path==='settings/reviews/chatgpt/cancel')return json(await cancelChatGPTLogin(data.id));
+ if(path==='settings/reviews/chatgpt/disconnect')return json(await disconnectChatGPT());
+ if(path==='settings/reviews/chatgpt/test')return json(await testChatGPTConnection(data.model));
 
  if(path==='contacts')return json(await saveContact(data));
  if(path==='contacts/affiliation')return json(await saveAffiliation(data));

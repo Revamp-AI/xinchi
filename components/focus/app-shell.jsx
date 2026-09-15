@@ -10,6 +10,7 @@ import {
   LogOut,
   Plug,
   Sparkles,
+  Settings2,
   Users,
 } from 'lucide-react';
 import {
@@ -48,6 +49,7 @@ const views = [
   ['contacts', Users, 'Contacts'],
   ['library', BookOpen, 'Context library'],
   ['connections', Plug, 'Connections'],
+  ['settings', Settings2, 'Settings'],
 ];
 function Navigation({ view, onViewChange, state, busy, onLogout }) {
   const { setOpenMobile } = useSidebar();
@@ -129,6 +131,10 @@ function Navigation({ view, onViewChange, state, busy, onLogout }) {
           <MenuPopup side="top" align="start" className="min-w-60">
             <div className="account-email">{state.user?.email}</div>
             <MenuSeparator />
+            <MenuItem onClick={() => navigate('settings')}>
+              <Settings2 />
+              AI review settings
+            </MenuItem>
             <MenuItem onClick={() => navigate('connections')}>
               <Plug />
               Manage connections

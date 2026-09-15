@@ -8,6 +8,7 @@ const views = {
   'Context library': 'Context library',
   Connections: 'Your connections',
   Contacts: 'Your contacts',
+  Settings: 'AI reviews',
 };
 const [fireflies] = sources;
 
@@ -47,7 +48,7 @@ test('the overview loads signed in', async ({ page, isMobile }) => {
   }
 });
 
-test('navigation reaches all five views', async ({ page }) => {
+test('navigation reaches all six views', async ({ page }) => {
   for (const view of Object.keys(views) as (keyof typeof views)[]) {
     await open(page, view);
     await expect(page.locator('.breadcrumb strong')).toHaveText(view);
