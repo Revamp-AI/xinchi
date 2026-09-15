@@ -24,3 +24,16 @@ test('cloud agent uses read-only context tools, verifies evidence, and records u
 test('cloud agent refuses fabricated citations and outputs produced without reading evidence',async()=>{
  for(const options of [{invalid:true},{noTools:true}]){const id=await createJob('Check the fictional context again.');await runCloudAgent(id,{model:model(options)});const job=await one('SELECT * FROM jobs WHERE id=?',id);assert.equal(job.status,'failed');assert.equal(job.result_json,null);}
 });
+test('cloud agent persists an actionable model-access failure and logs only safe diagnostics',async t=>{
+ const log=t.mock.method(console,'error',()=>{});
+ const id=await createJob('Test the fictional model-access failure.');
+ const failure=Object.assign(new Error('Free tier users do not have access to this model.'),{statusCode:403,requestBodyValues:{prompt:'private-fixture-prompt'}});
+ await runCloudAgent(id,{model:new MockLanguageModelV4({doGenerate:async()=>{throw failure;}})});
+ const job=await one('SELECT status,error,result_json FROM jobs WHERE id=?',id);
+ assert.equal(job.status,'failed');assert.equal(job.result_json,null);
+ assert.match(job.error,/requires paid AI Gateway credits/);
+ assert.equal(log.mock.calls.length,1);
+ const diagnostic=log.mock.calls[0].arguments[1];
+ assert.equal(diagnostic.jobId,id);assert.equal(diagnostic.statusCode,403);assert.equal(diagnostic.reason,'model_requires_paid_credits');
+ assert.equal(JSON.stringify(diagnostic).includes('private-fixture-prompt'),false);
+});
