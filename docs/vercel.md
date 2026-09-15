@@ -20,7 +20,7 @@ The app fails closed while Google credentials are missing. Public visitors canno
 
 ## Deploy
 
-Apply migrations through the direct Neon connection with `npm run db:migrate`, including migration 006 for Workflow coordination and temporary upload staging. Then run `npm test`, `npm run test:e2e`, and `npm run build`. Browser tests create fictional records in disposable loopback PostgreSQL databases. They never target production.
+Apply migrations through the direct Neon connection with `npm run db:migrate`, including migration 006 for Workflow coordination and temporary upload staging and 007 for one active import per provider. Then run `npm test`, `npm run test:e2e`, and `npm run build`. Browser tests create fictional records in disposable loopback PostgreSQL databases. They never target production.
 
 Run the dedicated compiled-Workflow browser check before deploying ingestion changes:
 
@@ -35,6 +35,8 @@ Deploy source with `vercel deploy --prod` from the linked checkout. `.verceligno
 ## Background work
 
 User requests enqueue work in PostgreSQL and start a Vercel Workflow after the response. The authenticated cron dispatches queued work every minute as a fallback. A Workflow advances through small steps: at most one provider API call and one complete source per step, or one source for contact extraction. File validation is a separate staging step. Source writes and progress changes commit together in Neon; revision and ownership checks prevent duplicate deliveries or an old worker from applying a step twice. Workflow arguments and outputs contain coordination identifiers and status, while source text and cursors stay in PostgreSQL.
+
+Gmail, Fireflies, Granola, and manual files have independent import slots. A running or retrying provider does not block another provider. Duplicate runs for the same provider remain blocked by both admission checks and a database constraint; contact extraction and AI review each retain their own single shared worker.
 
 Gmail saves pending message IDs and history/page positions, Granola saves note and transcript-page progress, and Fireflies saves its participant scope, fixed scan boundary, and transcript offset. A hosted backfill continues across function invocations until its pages are exhausted. Imports with changed sources queue contact extraction; extraction then requests a separate AI review. Cron continues requested jobs rather than initiating new scheduled provider scans.
 

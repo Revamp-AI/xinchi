@@ -53,7 +53,7 @@ test('finish rejects missing or mis-sized chunks without making the upload runna
  assert.equal((await one('SELECT state FROM sync_runs WHERE id=?',second.id)).state,'uploading');
 });
 
-test('uploading holds the shared import slot and cancelling releases staging safely',async()=>{
+test('uploading holds the file import slot and cancelling releases staging safely',async()=>{
  const request={format:'text',title:'Fictional.txt',bytes:4};
  const {id}=await createManualUpload(request);
  await appendManualChunk({id,part:0,content:'text'});

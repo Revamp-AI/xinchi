@@ -179,3 +179,29 @@ test('relationship map supports light, dark and narrow layouts', async ({page}, 
   await page.screenshot({path:testInfo.outputPath('contacts-dark.png'),fullPage:true});
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
 });
+test('other connections remain available while Gmail and another provider import',async({page})=>{
+ let sync=[{id:'gmail-busy-fixture',provider:'gmail',state:'running',imported:20,changed:20,started_at:new Date().toISOString(),updated_at:new Date().toISOString(),message:'Fictional Gmail request in progress'}];
+ const requested:string[]=[];
+ await page.route('**/api/state',async route=>{
+  const response=await route.fetch(),state=await response.json();
+  for(const provider of ['gmail','fireflies','granola'])state.connections[provider].configured=true;
+  state.sync=sync;state.worker.mode='cloud';
+  await route.fulfill({response,json:state});
+ });
+ await page.route('**/api/sync',async route=>{
+  const {provider}=route.request().postDataJSON();requested.push(provider);
+  const row={...sync[0],id:provider+'-busy-fixture',provider,state:'queued',imported:0,changed:0};sync=[row,...sync];
+  await route.fulfill({status:202,json:{id:row.id}});
+ });
+ await page.goto('/');await open(page,'Connections');
+ const connection=(name:string)=>page.locator('.connection-row').filter({has:page.getByRole('heading',{name:new RegExp('^'+name)})});
+ await expect(connection('Gmail').getByRole('button',{name:/Importing$/})).toBeDisabled();
+ await expect(connection('Fireflies').getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
+ await expect(connection('Granola').getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
+ await connection('Fireflies').getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect(connection('Fireflies').getByRole('button',{name:/Importing$/})).toBeDisabled();
+ await expect(connection('Granola').getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
+ await connection('Granola').getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect(connection('Granola').getByRole('button',{name:/Importing$/})).toBeDisabled();
+ expect(requested).toEqual(['fireflies','granola']);
+});

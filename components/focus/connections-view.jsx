@@ -87,8 +87,10 @@ export default function ConnectionsView({
   sync,
   cancelUpload,
 }) {
-  const active = state.sync.find((run) =>
-    ['queued', 'running', 'uploading'].includes(run.state),
+  const manualActive = state.sync.some(
+    (run) =>
+      run.provider === 'manual' &&
+      ['queued', 'running', 'uploading'].includes(run.state),
   );
   const manual = state.sync.find((run) => run.provider === 'manual');
   return (
@@ -104,8 +106,9 @@ export default function ConnectionsView({
       </Heading>
       {state.worker?.mode === 'cloud' && (
         <Notice>
-          Imports save progress as they go and retry temporary interruptions
-          automatically. Contact extraction follows, then your cloud review.
+          Each connection imports independently. Imports save progress as they
+          go and retry temporary interruptions automatically. Contact extraction
+          follows, then your cloud review.
         </Notice>
       )}
       <div className="connection-list">
@@ -125,7 +128,7 @@ export default function ConnectionsView({
               {manual.state === 'failed' &&
                 !/Upload (cancelled|expired)/.test(manual.message) && (
                   <Button
-                    disabled={busy || !!active}
+                    disabled={busy || manualActive}
                     onClick={() => sync('manual', manual.id)}
                   >
                     Retry import
@@ -208,7 +211,7 @@ export default function ConnectionsView({
                   <Button
                     size="sm"
                     variant={connection.configured ? 'default' : 'outline'}
-                    disabled={!connection.configured || busy || !!active}
+                    disabled={!connection.configured || busy || importing}
                     onClick={() =>
                       sync(
                         provider,
@@ -360,7 +363,7 @@ export default function ConnectionsView({
             <p>
               Source text, previous versions, decisions, and agent activity are
               saved in your configured Postgres database. Provider credentials
-              remain on this computer.
+              stay on the server and are excluded from workspace exports.
             </p>
             <Accordion>
               <AccordionItem value="storage">
