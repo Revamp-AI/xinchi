@@ -95,3 +95,7 @@
 .review-signin-link { font-weight: 600; text-decoration: underline; text-underline-offset: .2em; }
 .review-settings-view .form-field { max-width: 28rem; }
 @media(max-width: 480px) { .review-settings-actions > button { white-space: normal; height: auto; min-height: 2.5rem; } }
+.beeper-setup-steps { padding-left: 1.3rem; display: grid; gap: .8rem; }
+.beeper-setup-steps a { text-decoration: underline; }
+.beeper-command { white-space: pre-wrap; overflow-wrap: anywhere; padding: .7rem; background: var(--muted); border-radius: .4rem; font-size: .8rem; }
+.beeper-pairing { display: block; width: 100%; margin-top: .5rem; padding: .6rem; border: 1px solid var(--border); border-radius: .4rem; font-family: monospace; }

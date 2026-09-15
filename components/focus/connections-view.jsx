@@ -20,6 +20,7 @@ import {
   AccordionPanel,
 } from '@/components/ui/accordion';
 import { Spinner } from '@/components/ui/spinner';
+import BeeperConnection from './beeper-connection';
 import {
   Table,
   TableBody,
@@ -86,6 +87,8 @@ export default function ConnectionsView({
   configure,
   sync,
   cancelUpload,
+  api,
+  refresh,
 }) {
   const manualActive = state.sync.some(
     (run) =>
@@ -112,6 +115,7 @@ export default function ConnectionsView({
         </Notice>
       )}
       <div className="connection-list">
+        <BeeperConnection state={state} api={api} refresh={refresh} />
         {manual && (
           <Card className="connection-row">
             <div className="connection-primary">

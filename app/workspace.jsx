@@ -429,7 +429,7 @@ export default function Workspace() {
       {view === 'settings' && <ReviewSettingsView api={api} />}
       {view === 'connections' && (
         <ConnectionsView
-          {...{ state, busy }}
+          {...{ state, busy, api, refresh }}
           configure={(provider) => {
             setError('');
             setSetup(provider);

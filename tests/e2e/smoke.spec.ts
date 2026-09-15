@@ -206,3 +206,16 @@ test('other connections remain available while Gmail and another provider import
  await expect(connection('Granola').getByRole('button',{name:/Importing$/})).toBeDisabled();
  expect(requested).toEqual(['fireflies','granola']);
 });
+test('Beeper setup provides a downloadable companion and owner-only pairing on desktop and mobile',async({page,request},testInfo)=>{
+ await page.goto('/');await open(page,'Connections');
+ await page.getByRole('button',{name:'Connect Beeper',exact:true}).click();
+ await expect(page.getByRole('dialog')).toBeVisible();
+ await expect(page.getByRole('link',{name:'Download the Focus companion'})).toHaveAttribute('href','/beeper-companion.mjs');
+ const file=await request.get('/beeper-companion.mjs');expect(file.ok()).toBe(true);expect(await file.text()).toContain('export async function authorizeBeeper');
+ await page.getByRole('button',{name:'Generate pairing code',exact:true}).click();
+ await expect(page.getByLabel('One-time pairing code · expires in 10 minutes')).toHaveValue(/^[A-Za-z0-9_-]{43}$/);
+ await expect(page.getByRole('dialog')).toContainText('Selected messages are saved in your Focus cloud archive');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+ // Mask the disposable pairing code even in test artifacts.
+ await page.screenshot({path:testInfo.outputPath('beeper-setup.png'),fullPage:true,mask:[page.locator('#beeper-pairing')]});
+});
