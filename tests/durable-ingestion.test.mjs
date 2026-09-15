@@ -8,7 +8,8 @@ import {join} from 'node:path';
 const privateDir=mkdtempSync(join(tmpdir(),'focus-durable-'));process.env.XIN_DATA_DIR=privateDir;process.env.XIN_AGENT_MODE='cloud';
 const {one,run,uid,stamp,upsertSource,getSetting,setSetting}=await import('../lib/db.mjs');
 const {prepareDispatches,acknowledgeDispatch,advanceDurableUnit,resumeDurable,failDurableRun}=await import('../lib/durable-ingestion.mjs');
-const {expireLeases}=await import('../lib/leases.mjs');
+const {expireLeases,claimLease,heartbeatLease}=await import('../lib/leases.mjs');
+const {reconcileWorkflows}=await import('../lib/workflow-recovery.mjs');
 const {createManualUpload,appendManualChunk,finishManualUpload}=await import('../lib/manual-ingestion.mjs');
 async function queued(provider='fireflies'){await run("UPDATE sync_runs SET state='complete' WHERE state IN ('queued','running','uploading')");await run("UPDATE contact_runs SET state='complete' WHERE state IN ('queued','running')");const id=uid();await run("INSERT INTO sync_runs(id,provider,state,started_at,updated_at) VALUES(?,?,'queued',?,?)",id,provider,stamp(),stamp());const rows=await prepareDispatches(),row=rows.find(r=>r.id===id);return{...row,wf:'wf-'+id};}
 const unit=(row,revision,adapters)=>advanceDurableUnit('sync',row.id,row.token,row.wf,revision,adapters);
@@ -104,5 +105,30 @@ test('resuming failed contact work keeps its review request and cursor while fen
  const old=await advanceDurableUnit('contacts',row.id,row.token,row.wf,1,{contacts:async()=>{throw Error('The old workflow must not continue');}});assert.equal(old.done,true);assert.equal((await one('SELECT state FROM contact_runs WHERE id=?',row.id)).state,'queued');
  const dispatch=(await prepareDispatches()).find(value=>value.id===row.id);assert.notEqual(dispatch.token,row.token);
  let resumed=false;await advanceDurableUnit('contacts',row.id,dispatch.token,'replacement-contact-workflow',1,{contacts:async cursor=>{resumed=true;assert.deepEqual(cursor,{processed:7});return{cursor,records:[],complete:false};}});assert.equal(resumed,true);assert.equal((await one('SELECT review_requested FROM contact_runs WHERE id=?',row.id)).review_requested,true);
+});
+test('a legacy lease acquired before Workflow adoption finishes its current invocation first',async()=>{
+ const row=await queued(),legacy=await claimLease('sync_runs',row.id);assert.ok(legacy);let calls=0;
+ const adapters={initial:async()=>({n:0}),advance:async()=>{calls++;return{cursor:{n:1},records:[],complete:false};}};
+ const waiting=await unit(row,0,adapters);assert.equal(calls,0);assert.equal(waiting.done,false);assert.equal(waiting.revision,0);assert.ok(waiting.waitMs>=1000);
+ assert.equal((await one('SELECT lease_owner FROM sync_runs WHERE id=?',row.id)).lease_owner,legacy.token);assert.equal(await heartbeatLease('sync_runs',row.id,legacy.token),true);
+ // The old deployed worker saves its checkpoint and atomically yields this way.
+ await run("UPDATE sync_runs SET state='queued',lease_owner='',lease_until=NULL,pid=NULL WHERE id=? AND lease_owner=?",row.id,legacy.token);
+ const adopted=await unit(row,0,adapters);assert.equal(adopted.done,false);assert.equal(calls,1);assert.equal((await one('SELECT lease_owner FROM sync_runs WHERE id=?',row.id)).lease_owner,'workflow:'+row.wf);assert.equal(await heartbeatLease('sync_runs',row.id,legacy.token),false);
+});
+test('late legacy claims cannot attach after Workflow adoption or between durable steps',async()=>{
+ for(const kind of ['sync','contacts']){
+  const row=kind==='sync'?await queued():await contactRun(),table=kind==='sync'?'sync_runs':'contact_runs';
+  const adapters=kind==='sync'?{initial:async()=>({n:0}),advance:async()=>({cursor:{n:1},records:[],complete:false})}:{contacts:async()=>({cursor:{n:1},records:[],complete:false})};
+  const advance=revision=>advanceDurableUnit(kind,row.id,row.token,row.wf,revision,adapters);
+  assert.equal((await advance(0)).done,false);const parent=await one('SELECT lease_owner,lease_until FROM '+table+' WHERE id=?',row.id);assert.equal(parent.lease_owner,'workflow:'+row.wf);assert.equal(parent.lease_until,null);
+  assert.equal(await claimLease(table,row.id),null);assert.equal((await advance(1)).done,false);assert.equal(await claimLease(table,row.id),null);
+ }
+});
+for(const terminal of ['complete','partial'])test('a legacy '+terminal+' result before the first Workflow step remains terminal after reconciliation',async()=>{
+ const row=await queued(),legacy=await claimLease('sync_runs',row.id);assert.ok(legacy);await acknowledgeDispatch('sync',row.id,row.token,row.wf);
+ await run('UPDATE sync_runs SET state=?,message=?,finished_at=?,imported=1000 WHERE id=?',terminal,'Legacy invocation finished',stamp(),row.id);const parent=await one('SELECT * FROM sync_runs WHERE id=?',row.id);
+ const stopped=await unit(row,0,{initial:async()=>{throw Error('A terminal legacy run must not be ingested again');}});assert.equal(stopped.done,true);
+ const inspected=[];await reconcileWorkflows(async id=>{inspected.push(id);return id===row.wf?'completed':'running';});
+ assert.deepEqual(await one('SELECT * FROM sync_runs WHERE id=?',row.id),parent);assert.equal((await one('SELECT completed FROM durable_runs WHERE run_id=?',row.id)).completed,true);assert.equal(inspected.includes(row.wf),false);
 });
 test.after(()=>rmSync(privateDir,{recursive:true,force:true}));
