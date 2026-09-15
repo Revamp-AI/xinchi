@@ -26,7 +26,7 @@ To verify appearance changes, choose Dark, reload, and confirm Dark remains sele
 
 ## Deploy to Vercel
 
-Follow the [production deployment guide](docs/vercel.md) for HTTPS authentication, encrypted credential storage, AI Gateway reviews, and durable background jobs.
+Follow the [production deployment guide](docs/vercel.md) for HTTPS authentication, encrypted credential storage, AI Gateway reviews, and durable ingestion through Vercel Workflows.
 
 ## Run locally
 
@@ -75,7 +75,9 @@ Replacing the client revokes existing browser sessions and pending login attempt
 
 In **Connections**, configure Fireflies or Granola and choose Refresh. Fireflies filters meetings by `XIN_FIREFLIES_PARTICIPANT_EMAIL`, falling back to `XIN_ALLOWED_EMAIL`; it never silently imports an unfiltered account. Granola uses a Personal API key, subject to the provider's plan and workspace policy.
 
-The context library accepts `.txt`, `.md`, and normalized JSON documents. JSON can also be imported locally:
+The context library accepts `.txt`, `.md`, and normalized JSON documents. Hosted uploads send small text chunks, then queue the import so the browser can close once the upload finishes. Connections shows upload and import progress. Hosted limits are 64 MiB of UTF-8 input, 5,000 source records, and 20 MiB per normalized record including its retained raw evidence. The whole file is validated before any source is written; successful imports remove temporary staging. Interrupted uploads must be selected again.
+
+JSON can also be imported locally:
 
 ```sh
 npm run import -- /path/to/sources.json
@@ -104,24 +106,29 @@ The agent searches source text, reads full source pages, reviews previous reques
 
 Proposals require your review. The board allows up to three active outcomes; a fourth requires explicit displacement. Accepted outcomes need a defined finish, next action, owner, and checkpoint. Deferrals, waiting dependencies, and completion evidence are recorded with decision history.
 
-UI/provider imports trigger an agent review or queue a follow-up behind the current review. The Codex CLI uses its existing account sign-in and usage allowance.
+UI/provider imports trigger an agent review or queue a follow-up behind the current review. Hosted imports finish contact extraction before requesting that review. Local reviews use the Codex CLI's existing account sign-in and usage allowance; hosted reviews use billable AI Gateway model calls.
 
 ## Storage and sync status
 
-The app runs locally or on Vercel. Hosted reviews use AI Gateway; queued imports and extraction run in Vercel Functions. Sources, source snapshots, commitments, relationship records, state history, drafts and worker coordination live in your configured PostgreSQL database. Neon can host that database remotely. Authentication uses the restricted `focus_auth` schema, excluded from workspace exports.
+The app runs locally or on Vercel. Hosted imports and contact extraction use Vercel Workflows; reviews use AI Gateway in a separate worker. Each ingestion step makes at most one provider request and saves at most one complete source, with its progress checkpoint committed atomically in PostgreSQL. Workflow retries can resume across function invocations without restarting a full backfill. Local mode retains its detached import, extraction, and Codex workers.
 
-The ignored private `data/` directory holds `connections.secret.json` (provider credentials and Google tokens) and `runs/` (agent output). `XIN_DATA_DIR` selects another private directory. **Do not commit runtime data or connection strings.** Exports omit credentials and authentication but include private source and relationship material.
+Sources, source snapshots, commitments, relationship records, state history, drafts and worker coordination live in your configured PostgreSQL database. Neon can host that database remotely. Authentication uses the restricted `focus_auth` schema, excluded from workspace exports.
+
+In local mode, the ignored private `data/` directory holds `connections.secret.json` (provider credentials and Google tokens) and `runs/` (agent output). `XIN_DATA_DIR` selects another private directory. Hosted credentials are encrypted in PostgreSQL. Temporary file chunks, staged records, and ingestion cursors also stay in the private database and are excluded from workspace exports. **Do not commit runtime data or connection strings.** Exports omit credentials and authentication but include private source and relationship material.
 
 See [Postgres setup, migration, backup and recovery](docs/postgres-cutover.md) and [Contacts behavior and limits](docs/contacts.md). Existing SQLite archives are retained read-only after cutover. Use PostgreSQL backups and verified restore procedures for the active database.
 
-Connections shows stored coverage and the latest available run state: running, complete, partial, or failed. Progress counts processed records, including unchanged records. Gmail backfill is resumable in batches of up to 1,000 messages per refresh, followed by incremental history sync for the default scope. Custom Gmail query scopes rescan. Google rate limits (403/429) trigger bounded exponential backoff, honor Retry-After/RetryInfo delays, and report the wait in Connections. Retrying a message preserves pagination and avoids duplicate records; an exhausted retry budget leaves a distinct rate-limit warning. Granola stores an update boundary; Fireflies rescans its participant scope with stable IDs.
+Connections shows stored coverage and upload, queued, running, complete, partial, or failed states. Progress counts processed records, including unchanged records. Hosted Gmail backfills advance through message pages automatically, then use incremental history for the default scope; custom queries rescan. Granola checkpoints individual notes and transcript pages. Fireflies checkpoints one transcript at a time within its participant scope and fixed scan boundary. Local Gmail backfills retain their existing limit of up to 1,000 messages per refresh.
+
+Hosted transient provider failures retry with durable waits; provider retry delays are honored up to 24 hours per wait. Permanent validation/authentication failures or 12 consecutive failures at the same position require attention. **Retry import** resumes a failed hosted run from its saved position after the underlying problem is fixed. A cron checks for Workflow runs that ended without updating Focus and makes them available for retry. It also dispatches queued work every minute; it does not start new periodic provider scans.
 
 ## Current limits
 
 - Single owner only; no multi-user data isolation. Local mode binds to `127.0.0.1:3210`; hosted mode accepts only its configured HTTPS origin.
-- HttpOnly, SameSite=Lax session cookies on loopback HTTP. Hosting would require HTTPS/Secure cookies, trusted origins, hosted credentials, and workers.
+- HttpOnly, SameSite=Lax session cookies on loopback HTTP; hosted sessions additionally use Secure, host-only cookies and an exact HTTPS origin.
 - Local files are not separately encrypted by the app; OS account and disk protections still matter.
 - Text ingestion only: recording media and email attachment contents are not downloaded. Attachment names are retained.
+- Hosted provider responses, checkpoints, and normalized records are limited to 8 MiB each. Very large records need a smaller export; durable execution does not remove per-record limits.
 - Exact excerpts establish provenance, not the truth of statements or the correctness of model interpretation.
 - No scheduled provider polling, proactive failure alerts, full ingestion-history UI, or automatic backup service.
 - Live Google/provider setup requires your own credentials. Tests use fictional fixtures and simulated provider responses; they do not verify a particular live account.
@@ -141,5 +148,13 @@ npm run test:e2e
 Tests use isolated temporary databases and cover Google token verification, owner restrictions, session/callback security, protected endpoints, imports, source history, quote validation, commitment rules, and sync recovery, migration fidelity, snapshot citations, contact identity/merge undo, cadence classification, and concurrent capacity.
 
 `npm run lint` runs ESLint with the Next.js core-web-vitals rules. `npm run format:check` verifies Prettier formatting for `app/`, `components/focus/`, `hooks/`, and the TypeScript helpers in `lib/`; `npm run format` rewrites them. `npm run test:e2e` builds the app, starts it on `127.0.0.1:3210` with a temporary data directory seeded with fictional sources and a signed-in owner session, and drives all five views in desktop and phone-width Chromium. It refuses to run while anything else listens on port 3210, so stop a running Focus first. Run `npx playwright install chromium` once before the first run.
+
+To exercise real compiled Workflow steps locally, including file upload, source persistence, contact extraction, and staging cleanup:
+
+```sh
+FOCUS_E2E_DURABLE=1 npm run test:e2e -- workflow.spec.ts --project=desktop-chromium
+```
+
+This check uses a disposable loopback database and fictional records. It verifies that a review is queued without making a model call or contacting live providers.
 
 Technical references: [Next.js](https://nextjs.org/docs/app/getting-started/installation), [Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [Fireflies transcript queries](https://docs.fireflies.ai/graphql-api/query/transcripts), [Granola API](https://docs.granola.ai/introduction), and [jose verification](https://github.com/panva/jose).

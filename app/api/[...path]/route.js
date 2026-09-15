@@ -14,8 +14,12 @@ import {HOSTED,POSTGRES_SECRETS,CLOUD_JOBS} from '../../../lib/runtime.mjs';
 import {workerStatus} from '../../../lib/workers.mjs';
 import {after} from 'next/server.js';
 import {drainCloudWork} from '../../../lib/cloud-jobs.mjs';
+import {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUpload} from '../../../lib/manual-ingestion.mjs';
+import {start,getRun} from 'workflow/api';
+import {ingestionWorkflow} from '../../../workflows/ingestion.js';
+import {resumeDurable} from '../../../lib/durable-ingestion.mjs';
 export const maxDuration=800;
-function scheduleWork(){if(CLOUD_JOBS)after(async()=>{try{await drainCloudWork();}catch{console.error('Background work interrupted; the durable queue will retry.');}});}
+function scheduleWork(){if(CLOUD_JOBS)after(async()=>{try{await drainCloudWork((...args)=>start(ingestionWorkflow,args),id=>getRun(id).status);}catch{console.error('Background work interrupted; pending dispatch will retry.');}});}
 export const runtime='nodejs';export const dynamic='force-dynamic';
 function publicError(e){return e.code?'The database could not complete this request. Check its connection and migrations, then retry.':e.message;}
 function json(v,status=200){return Response.json(v,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}});}
@@ -48,9 +52,9 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
  }catch(e){return json({error:publicError(e)},e.status||400);}}
 export async function POST(req){try{checkLocalRequest(req,true);const path=decodeURIComponent(new URL(req.url).pathname.slice(5));
  if(!['auth/setup','auth/google/start'].includes(path))(await requireSession(req));
- const limit=path.startsWith('auth/')?32*1024:20*1024*1024;
+ const limit=path.startsWith('auth/')?32*1024:HOSTED?4*1024*1024:20*1024*1024;
  if(Number(req.headers.get('content-length'))>limit)throw Error('The request is too large.');
- const raw=await req.text();if(raw.length>limit)throw Error('The request is too large.');const data=JSON.parse(raw||'{}');
+ const raw=await req.text();if(Buffer.byteLength(raw)>limit)throw Error('The request is too large.');const data=JSON.parse(raw||'{}');
  if(path==='auth/setup'){if(HOSTED||POSTGRES_SECRETS)return json({error:'Configure Google sign-in in the server environment.'},403);if(googleClient())return json({error:'Google sign-in is already configured. Use local setup to change its credentials.'},409);configureGoogleClient(data);return json({configured:true});}
  if(path==='auth/google/start'){const flow=(await beginGoogle(readCookie(req,FLOW_COOKIE)));const response=json({url:flow.url});response.headers.append('Set-Cookie',flow.cookie);return response;}
  if(path==='auth/logout'){(await endSession(readCookie(req,SESSION_COOKIE)));const response=json({signed_out:true});response.headers.append('Set-Cookie',cookie(SESSION_COOKIE,'',0));return response;}
@@ -58,7 +62,7 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='contacts')return json(await saveContact(data));
  if(path==='contacts/affiliation')return json(await saveAffiliation(data));
  if(path==='contacts/import')return json(await importContactsCsv(data.csv));
- if(path==='contacts/backfill'){const result=await startContactProjection(data);scheduleWork();return json(result,202);}
+ if(path==='contacts/backfill'){const failed=CLOUD_JOBS&&data.retry?await one("SELECT c.id FROM contact_runs c JOIN durable_runs d ON d.kind='contacts' AND d.run_id=c.id WHERE c.state='failed' ORDER BY c.started_at DESC LIMIT 1"):null;const result=failed?await resumeDurable('contacts',failed.id):await startContactProjection(data);scheduleWork();return json(result,202);}
  if(path==='contacts/interaction')return json(await logInteraction(data));
  if(path==='contacts/interaction-review')return json(await reviewInteraction(data));
  if(path==='contacts/coverage')return json(await confirmCoverage(data.id));
@@ -73,7 +77,14 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='jobs/cancel')return json((await cancelJob(data.id)));
  if(path==='proposals/dismiss'){(await run("UPDATE proposals SET status='dismissed' WHERE id=?",data.id));return json({saved:true});}
  if(path==='connections')return json((await configure(data)));
- if(path==='sync'){const result=await startSync(data.provider);scheduleWork();return json(result,202);}
- if(path==='import'){const result=data.fireflies_records?(await importResearchArchive(data)):(await importDocuments(Array.isArray(data)?data:[data]));if(result.changed){await startContactProjection({drain:true});await queueImportReview();scheduleWork();}return json(result);}
+ if(path==='sync'){const resumed=CLOUD_JOBS&&data.retry_id?await resumeDurable('sync',data.retry_id,data.provider):null;const result=resumed||await startSync(data.provider);scheduleWork();return json(result,202);}
+ if(path==='imports/start')return json(await createManualUpload(data),201);
+ if(path==='imports/chunk')return json(await appendManualChunk(data));
+ if(path==='imports/cancel')return json(await cancelManualUpload(data));
+ if(path==='imports/finish'){const result=await finishManualUpload(data);scheduleWork();return json(result,202);}
+ if(path==='import'){
+  if(CLOUD_JOBS){const content=JSON.stringify(data),upload=await createManualUpload({format:'json',title:'Imported archive',bytes:Buffer.byteLength(content)});try{let part=0;for(let offset=0;offset<content.length;){let end=Math.min(offset+65536,content.length);if(end<content.length&&/[\uD800-\uDBFF]/.test(content[end-1]))end--;await appendManualChunk({id:upload.id,part:part++,content:content.slice(offset,end)});offset=end;}const result=await finishManualUpload({id:upload.id,parts:part});scheduleWork();return json(result,202);}catch(e){await cancelManualUpload({id:upload.id});throw e;}}
+  const result=data.fireflies_records?(await importResearchArchive(data)):(await importDocuments(Array.isArray(data)?data:[data]));if(result.changed){await startContactProjection({drain:true});await queueImportReview();scheduleWork();}return json(result);
+ }
  return json({error:'Not found'},404);
  }catch(e){return json({error:publicError(e)},e.status||400);}}

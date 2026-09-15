@@ -218,27 +218,80 @@ export default function Workspace() {
     inspect('update-draft?since=' + encodeURIComponent(since), setDraft);
   const importFile = (file) =>
     act(async () => {
-      const text = await file.text();
-      const result = await api(
-        'import',
-        file.name.endsWith('.json')
-          ? JSON.parse(text)
-          : {
-              provider: 'manual',
-              external_id: crypto.randomUUID(),
-              title: file.name,
-              body: text,
-              coverage: 'document',
-              occurred_at: new Date().toISOString(),
-            },
-      );
-      setNotice(
-        `${result.changed} sources added or updated. Agent review queued when available.`,
-      );
-      setQ('');
-      setProvider('');
-      setOffset(0);
-      setLibrary(await api('sources'));
+      if (state?.worker?.mode !== 'cloud') {
+        const text = await file.text();
+        const result = await api(
+          'import',
+          file.name.toLowerCase().endsWith('.json')
+            ? JSON.parse(text)
+            : {
+                provider: 'manual',
+                external_id: crypto.randomUUID(),
+                title: file.name,
+                body: text,
+                coverage: 'document',
+                occurred_at: new Date().toISOString(),
+              },
+        );
+        setNotice(
+          `${result.changed} sources added or updated. Agent review queued when available.`,
+        );
+        setQ('');
+        setProvider('');
+        setOffset(0);
+        setLibrary(await api('sources'));
+        return;
+      }
+      if (!file.size || file.size > 64 * 1024 * 1024) {
+        throw Error('Choose a non-empty file of up to 64 MiB.');
+      }
+      let text;
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(
+          await file.arrayBuffer(),
+        );
+      } catch {
+        throw Error('Choose a valid UTF-8 text or JSON file.');
+      }
+      let id;
+      try {
+        ({ id } = await api('imports/start', {
+          format: file.name.toLowerCase().endsWith('.json') ? 'json' : 'text',
+          title: file.name,
+          bytes: new TextEncoder().encode(text).length,
+        }));
+        setView('connections');
+        setNotice(
+          'Uploading file. Keep this tab open until the upload finishes.',
+        );
+        await refresh();
+        let part = 0;
+        for (let offset = 0; offset < text.length; part++) {
+          let end = Math.min(offset + 128 * 1024, text.length);
+          // Keep surrogate pairs together so every part has the same UTF-8 bytes.
+          if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end--;
+          await api('imports/chunk', {
+            id,
+            part,
+            content: text.slice(offset, end),
+          });
+          offset = end;
+          setNotice(
+            `Uploading file: ${Math.floor((offset / text.length) * 100)}%.`,
+          );
+        }
+        await api('imports/finish', { id, parts: part });
+        setNotice(
+          'File uploaded. Import queued; progress appears in Connections. You can close this tab.',
+        );
+        setQ('');
+        setProvider('');
+        setOffset(0);
+      } catch (error) {
+        if (id) await api('imports/cancel', { id }).catch(() => {});
+        setNotice('');
+        throw error;
+      }
     });
   const onLogout = async () => {
     setBusy(true);
@@ -359,10 +412,16 @@ export default function Workspace() {
             setError('');
             setSetup(provider);
           }}
-          sync={(provider) =>
+          sync={(provider, retry_id) =>
             act(async () => {
-              await api('sync', { provider });
+              await api('sync', { provider, retry_id });
               setNotice('Import started. Progress appears below.');
+            })
+          }
+          cancelUpload={(id) =>
+            act(async () => {
+              await api('imports/cancel', { id });
+              setNotice('Upload cancelled. You can choose another file.');
             })
           }
         />

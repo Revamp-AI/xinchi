@@ -70,6 +70,10 @@ export default async function globalSetup(config: FullConfig) {
   const { migrateDatabase } = await import('../../lib/migrations.mjs');
   await migrateDatabase();
   const db = await import('../../lib/db.mjs');
+  if(process.env.FOCUS_E2E_DURABLE === '1') {
+    // Prevent billable review generation while exercising real local Workflow queues.
+    await db.run("INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at,lease_owner,lease_until) VALUES('e2e-review-blocker','review','running','Fictional blocked review',?,?,'fixture',now()+interval '1 hour')",db.stamp(),db.stamp());
+  }
   const {saveContact, confirmCoverage} = await import('../../lib/contacts.mjs');
   const {logInteraction} = await import('../../lib/contact-extraction.mjs');
   const groups = [

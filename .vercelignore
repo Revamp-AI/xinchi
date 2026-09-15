@@ -1,4 +1,5 @@
 .git
+.workflow-data
 .env*
 data
 outputs

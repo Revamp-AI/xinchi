@@ -1,5 +1,7 @@
 node_modules/
 .vercel/
+.workflow-data/
+.well-known/workflow/
 .next/
 data/
 .env*
@@ -23,3 +25,4 @@ client_secret*.json
 
 # Claude Code workflow worktrees
 .claude/worktrees/
+/.swc

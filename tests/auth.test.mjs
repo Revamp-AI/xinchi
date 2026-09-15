@@ -29,7 +29,7 @@ async function complete(flow,{scope=grant,claims={},profileEmail="owner@example.
 let session;
 test('all private reads and writes reject anonymous callers; setup is same-origin and one-time',async()=>{
  for(const p of ['state','sources','sources/manual:private','export','events/private','jobs/private','update-draft','contacts','contacts/private','contacts/status','contacts/merge-preview'])assert.equal((await route.GET(req(p))).status,401,p);
- for(const p of ['items','settings','jobs','jobs/cancel','proposals/dismiss','connections','sync','import','auth/logout','contacts','contacts/affiliation','contacts/import','contacts/backfill','contacts/interaction','contacts/interaction-review','contacts/coverage','contacts/link','contacts/draft','contacts/merge','contacts/undo-merge','contacts/separate'])assert.equal((await route.POST(req(p,{method:'POST'}))).status,401,p);
+ for(const p of ['items','settings','jobs','jobs/cancel','proposals/dismiss','connections','sync','import','imports/start','imports/chunk','imports/finish','imports/cancel','auth/logout','contacts','contacts/affiliation','contacts/import','contacts/backfill','contacts/interaction','contacts/interaction-review','contacts/coverage','contacts/link','contacts/draft','contacts/merge','contacts/undo-merge','contacts/separate'])assert.equal((await route.POST(req(p,{method:'POST'}))).status,401,p);
  assert.deepEqual(await (await route.GET(req('auth/status'))).json(),{configured:false,user:null});
  assert.equal((await route.POST(req('auth/setup',{method:'POST',originHeader:'https://untrusted.example',body:client}))).status,403);
  assert.equal((await route.POST(req('auth/setup',{method:'POST',body:{installed:client.web}}))).status,400);
