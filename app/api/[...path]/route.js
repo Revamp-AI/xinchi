@@ -94,7 +94,7 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='beeper/pairing')return json(await createBeeperPairing());
  if(path==='beeper/revoke')return json(await revokeBeeper());
  if(path==='beeper/refresh')return json(await requestBeeperSync(),202);
- if(path==='sync'){const resumed=CLOUD_JOBS&&data.retry_id?await resumeDurable('sync',data.retry_id,data.provider):null;const result=resumed||await startSync(data.provider);scheduleWork();return json(result,202);}
+ if(path==='sync'){if(data.retry_id&&data.rescan)throw Error('Choose either resume or rescan history.');const resumed=CLOUD_JOBS&&data.retry_id?await resumeDurable('sync',data.retry_id,data.provider):null;const result=resumed||await startSync(data.provider,{rescan:data.rescan??false});scheduleWork();return json(result,202);}
  if(path==='imports/start')return json(await createManualUpload(data),201);
  if(path==='imports/chunk')return json(await appendManualChunk(data));
  if(path==='imports/cancel')return json(await cancelManualUpload(data));

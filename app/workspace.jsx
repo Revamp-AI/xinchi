@@ -437,10 +437,14 @@ export default function Workspace() {
             setError('');
             setSetup(provider);
           }}
-          sync={(provider, retry_id) =>
+          sync={(provider, retry_id, rescan = false) =>
             act(async () => {
-              await api('sync', { provider, retry_id });
-              setNotice('Import started. Progress appears below.');
+              await api('sync', { provider, retry_id, rescan });
+              setNotice(
+                rescan
+                  ? 'History rescan started. Progress appears below.'
+                  : 'Import started. Progress appears below.',
+              );
             })
           }
           cancelUpload={(id) =>

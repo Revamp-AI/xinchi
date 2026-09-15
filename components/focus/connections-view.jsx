@@ -234,6 +234,23 @@ export default function ConnectionsView({
                   </Button>
                 </div>
               </div>
+              {provider === 'fireflies' && connection.configured && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="max-w-lg text-xs leading-relaxed text-muted-foreground">
+                    After the first import, Refresh checks new transcripts with
+                    a seven-day overlap. Rescan history also checks older
+                    transcripts.
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy || importing}
+                    onClick={() => sync('fireflies', undefined, true)}
+                  >
+                    Rescan history
+                  </Button>
+                </div>
+              )}
               {connection.issue && !importing && (
                 <Notice error>
                   {connection.issue.message}
