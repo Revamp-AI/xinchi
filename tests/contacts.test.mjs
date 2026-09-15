@@ -41,12 +41,12 @@ test('proper mailbox parsing handles quoted names and groups; newsletters and CC
  const group=extractInteraction(source,gmail('group','sender@example.com','owner@example.com, bystander@example.com'),['owner@example.com']);assert.equal(group.participants.find(p=>p.address==='bystander@example.com').role,'cc');
  const undated=gmail('3','avery@example.com','owner@example.com');delete undated.internalDate;assert.equal(extractInteraction(source,undated,['owner@example.com']).occurred_at,null);
 });
-test('source projection is idempotent, preserves source versions and flags identity overlap for review',async()=>{
+test('source projection is idempotent and attaches exact email evidence to the maintained contact',async()=>{
  const source=await email('mail-1','Avery Chen <avery@example.com>','Owner <owner@example.com>');
  const count=(await one('SELECT count(*) AS n FROM contacts')).n;await projectSource(source);assert.equal((await one('SELECT count(*) AS n FROM contacts')).n,count);
  const identity=await one("SELECT * FROM contact_identities WHERE provider='gmail' AND address='avery@example.com'");const detail=await contactDetail(identity.contact_id);
- assert.equal(detail.confirmed,false);assert.equal(detail.interactions.length,1);assert.ok(detail.interactions[0].citations[0].source_version_id);
- assert.ok((await one("SELECT count(*) AS n FROM identity_reviews WHERE status='pending'")).n>0);
+ assert.equal(detail.confirmed,true);assert.equal(detail.tracked,true);assert.equal(detail.role,'Advisor');assert.equal(detail.interactions.length,1);assert.ok(detail.interactions[0].citations[0].source_version_id);
+ assert.equal((await one("SELECT count(*) AS n FROM contacts WHERE email='avery@example.com' AND merged_into IS NULL")).n,1);
  assert.equal((await one('SELECT state FROM contact_queue WHERE source_id=?',source)).state,'complete');
 });
 test('same names without provider IDs remain recording-scoped, and two recordings do not double count',async()=>{

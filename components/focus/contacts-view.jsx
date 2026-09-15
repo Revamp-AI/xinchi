@@ -1312,7 +1312,10 @@ export default function ContactsView({
                 <summary>Identity bindings and relationship history</summary>
                 {c.identities.map((i) => (
                   <p key={i.id}>
-                    {i.provider} · {i.address || i.display_name}{' '}
+                    {i.provider} · {i.display_name || i.address}
+                    {i.address && i.display_name !== i.address
+                      ? ' · ' + i.address
+                      : ''}{' '}
                     {i.address ? '' : '· identity needs review'}
                   </p>
                 ))}
