@@ -7,7 +7,9 @@ import AppShell from '@/components/focus/app-shell';
 import AgentView from '@/components/focus/agent-view';
 import BoardView from '@/components/focus/board-view';
 import LibraryView from '@/components/focus/library-view';
+import ContactsView from '@/components/focus/contacts-view';
 import ConnectionsView from '@/components/focus/connections-view';
+import ReviewSettingsView from '@/components/focus/review-settings-view';
 import {
   ActivityDialog,
   CommitmentDialog,
@@ -43,7 +45,8 @@ export default function Workspace() {
     [state, setState] = useState(null),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [connectionLost, setConnectionLost] = useState(false);
   const [prompt, setPrompt] = useState(''),
     [editing, setEditing] = useState(null),
     [source, setSource] = useState(null),
@@ -63,8 +66,28 @@ export default function Workspace() {
   const refresh = async () => {
     const next = await api('state');
     setState(next);
+    setConnectionLost(false);
     return next;
   };
+  useEffect(() => {
+    const fromHash = () => {
+      const requested = window.location.hash.slice(1);
+      if (
+        [
+          'agent',
+          'board',
+          'contacts',
+          'library',
+          'connections',
+          'settings',
+        ].includes(requested)
+      )
+        setView(requested);
+    };
+    fromHash();
+    window.addEventListener('hashchange', fromHash);
+    return () => window.removeEventListener('hashchange', fromHash);
+  }, []);
   useEffect(() => {
     let mounted = true;
     api('state')
@@ -81,9 +104,14 @@ export default function Workspace() {
     const timer = setInterval(() => {
       api('state')
         .then((next) => {
-          if (mounted) setState(next);
+          if (mounted) {
+            setState(next);
+            setConnectionLost(false);
+          }
         })
-        .catch(() => {});
+        .catch(() => {
+          if (mounted) setConnectionLost(true);
+        });
     }, 2500);
     const query = new URLSearchParams(location.search),
       gmail = query.get('gmail');
@@ -142,16 +170,21 @@ export default function Workspace() {
       setBusy(false);
     }
   };
-  const openSource = async (id, quote = '') => {
+  const openSource = async (id, quote = '', version = '') => {
     setError('');
     try {
-      const record = await api('sources/' + encodeURIComponent(id));
+      const record = await api(
+        'sources/' +
+          encodeURIComponent(id) +
+          (version ? '?version=' + encodeURIComponent(version) : ''),
+      );
       setSource({ ...record, quote });
     } catch (error) {
       setError(error.message);
     }
   };
   const navigate = (next, nextTab) => {
+    window.history.replaceState(null, '', '#' + next);
     setView(next);
     if (nextTab) setTab(nextTab);
   };
@@ -170,7 +203,7 @@ export default function Workspace() {
     });
   const edit = (item) => {
     setError('');
-    setEditing(item);
+    setEditing({ ...item, owner: item.owner || state?.user?.name || 'You' });
   };
   const create = () =>
     edit({
@@ -189,6 +222,7 @@ export default function Workspace() {
       ...proposal.payload,
       source_id: proposal.payload.citations[0].source_id,
       source_quote: proposal.payload.citations[0].quote,
+      source_version_id: proposal.payload.citations[0].source_version_id,
       proposal_id: proposal.id,
       status: original?.status || 'candidate',
       reason: proposal.payload.rationale,
@@ -205,27 +239,80 @@ export default function Workspace() {
     inspect('update-draft?since=' + encodeURIComponent(since), setDraft);
   const importFile = (file) =>
     act(async () => {
-      const text = await file.text();
-      const result = await api(
-        'import',
-        file.name.endsWith('.json')
-          ? JSON.parse(text)
-          : {
-              provider: 'manual',
-              external_id: crypto.randomUUID(),
-              title: file.name,
-              body: text,
-              coverage: 'document',
-              occurred_at: new Date().toISOString(),
-            },
-      );
-      setNotice(
-        `${result.changed} sources added or updated. Agent review queued when available.`,
-      );
-      setQ('');
-      setProvider('');
-      setOffset(0);
-      setLibrary(await api('sources'));
+      if (state?.worker?.mode !== 'cloud') {
+        const text = await file.text();
+        const result = await api(
+          'import',
+          file.name.toLowerCase().endsWith('.json')
+            ? JSON.parse(text)
+            : {
+                provider: 'manual',
+                external_id: crypto.randomUUID(),
+                title: file.name,
+                body: text,
+                coverage: 'document',
+                occurred_at: new Date().toISOString(),
+              },
+        );
+        setNotice(
+          `${result.changed} sources added or updated. Agent review queued when available.`,
+        );
+        setQ('');
+        setProvider('');
+        setOffset(0);
+        setLibrary(await api('sources'));
+        return;
+      }
+      if (!file.size || file.size > 64 * 1024 * 1024) {
+        throw Error('Choose a non-empty file of up to 64 MiB.');
+      }
+      let text;
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(
+          await file.arrayBuffer(),
+        );
+      } catch {
+        throw Error('Choose a valid UTF-8 text or JSON file.');
+      }
+      let id;
+      try {
+        ({ id } = await api('imports/start', {
+          format: file.name.toLowerCase().endsWith('.json') ? 'json' : 'text',
+          title: file.name,
+          bytes: new TextEncoder().encode(text).length,
+        }));
+        setView('connections');
+        setNotice(
+          'Uploading file. Keep this tab open until the upload finishes.',
+        );
+        await refresh();
+        let part = 0;
+        for (let offset = 0; offset < text.length; part++) {
+          let end = Math.min(offset + 128 * 1024, text.length);
+          // Keep surrogate pairs together so every part has the same UTF-8 bytes.
+          if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1])) end--;
+          await api('imports/chunk', {
+            id,
+            part,
+            content: text.slice(offset, end),
+          });
+          offset = end;
+          setNotice(
+            `Uploading file: ${Math.floor((offset / text.length) * 100)}%.`,
+          );
+        }
+        await api('imports/finish', { id, parts: part });
+        setNotice(
+          'File uploaded. Import queued; progress appears in Connections. You can close this tab.',
+        );
+        setQ('');
+        setProvider('');
+        setOffset(0);
+      } catch (error) {
+        if (id) await api('imports/cancel', { id }).catch(() => {});
+        setNotice('');
+        throw error;
+      }
     });
   const onLogout = async () => {
     setBusy(true);
@@ -252,7 +339,16 @@ export default function Workspace() {
     );
   const now = state.items.filter((item) => item.status === 'now');
   return (
-    <AppShell {...{ view, state, busy, onLogout }} onViewChange={navigate}>
+    <AppShell
+      {...{ view, state, busy, onLogout, connectionLost }}
+      onViewChange={navigate}
+    >
+      {connectionLost && (
+        <Notice error>
+          Connection interrupted. Showing the last loaded data; saving changes
+          needs a connection.
+        </Notice>
+      )}
       {error && !editing && !setup && (
         <Notice error onClose={() => setError('')}>
           {error}
@@ -295,7 +391,10 @@ export default function Workspace() {
             create,
             edit,
             openDraft,
+            openSource,
+            selectProposal,
           }}
+          dismiss={(id) => act(() => api('proposals/dismiss', { id }))}
           saveFocus={() =>
             act(async () => {
               await api('settings', { focus, available_hours: hours });
@@ -321,17 +420,33 @@ export default function Workspace() {
           loading={libraryLoading}
         />
       )}
+      {view === 'contacts' && (
+        <ContactsView
+          api={api}
+          openSource={openSource}
+          onReview={start}
+          onCommitment={edit}
+          items={state.items}
+        />
+      )}
+      {view === 'settings' && <ReviewSettingsView api={api} />}
       {view === 'connections' && (
         <ConnectionsView
-          {...{ state, busy }}
+          {...{ state, busy, api, refresh }}
           configure={(provider) => {
             setError('');
             setSetup(provider);
           }}
-          sync={(provider) =>
+          sync={(provider, retry_id) =>
             act(async () => {
-              await api('sync', { provider });
+              await api('sync', { provider, retry_id });
               setNotice('Import started. Progress appears below.');
+            })
+          }
+          cancelUpload={(id) =>
+            act(async () => {
+              await api('imports/cancel', { id });
+              setNotice('Upload cancelled. You can choose another file.');
             })
           }
         />
@@ -341,6 +456,9 @@ export default function Workspace() {
           item={editing}
           setItem={setEditing}
           {...{ now, busy, error, openSource }}
+          api={api}
+          self={state.user?.name}
+          owners={state.items.map((item) => item.owner)}
           close={() => setEditing(null)}
           save={() =>
             act(async () => {

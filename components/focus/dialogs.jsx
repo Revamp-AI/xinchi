@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Card } from '@/components/ui/card';
+import { OwnerPicker } from './owner-picker';
 import {
   Choice,
   FormField,
@@ -61,6 +62,9 @@ export function CommitmentDialog({
   save,
   openSource,
   showHistory,
+  api,
+  self,
+  owners,
 }) {
   const update = (key, value) =>
     setItem((current) => ({ ...current, [key]: value }));
@@ -135,7 +139,14 @@ export function CommitmentDialog({
           placeholder: 'The next step you can actually take',
         })}
         <div className="form-pair">
-          {field('owner', 'Owner')}
+          <FormField label="Owner">
+            <OwnerPicker
+              value={item.owner}
+              onChange={(owner) => update('owner', owner)}
+              required={needs('owner')}
+              {...{ api, self, owners }}
+            />
+          </FormField>
           {checkpoint}
         </div>
         {status === 'waiting' && (
@@ -230,7 +241,13 @@ export function CommitmentDialog({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => openSource(item.source_id, item.source_quote)}
+              onClick={() =>
+                openSource(
+                  item.source_id,
+                  item.source_quote,
+                  item.source_version_id,
+                )
+              }
             >
               <FileText />
               View source material
@@ -474,7 +491,7 @@ export function ConnectionDialog({
             />
             <p className="dialog-note">
               <LockKeyhole size={14} />
-              Stored privately on this Mac. Excluded from exports.
+              Stored privately on the server. Excluded from exports.
             </p>
           </>
         )}

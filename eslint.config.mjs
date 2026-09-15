@@ -12,6 +12,8 @@ export default defineConfig([
   globalIgnores([
     'node_modules/**',
     '.next/**',
+    'app/.well-known/workflow/**',
+    '.workflow-data/**',
     'data/**',
     // Tool worktrees (Claude Code workflows) are checked out under .claude/.
     '.claude/**',

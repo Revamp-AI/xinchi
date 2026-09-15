@@ -20,6 +20,7 @@ import {
   AccordionPanel,
 } from '@/components/ui/accordion';
 import { Spinner } from '@/components/ui/spinner';
+import BeeperConnection from './beeper-connection';
 import {
   Table,
   TableBody,
@@ -80,8 +81,21 @@ const secondsAgo = (value) =>
   Math.max(0, Math.round((Date.now() - Date.parse(value)) / 1000));
 const successLine = (run) =>
   `Last successful import ${formatDate(run.finished_at || run.started_at)} · ${(run.changed || 0).toLocaleString()} added or updated · ${(run.imported || 0).toLocaleString()} processed`;
-export default function ConnectionsView({ state, busy, configure, sync }) {
-  const active = state.sync.find((run) => run.state === 'running');
+export default function ConnectionsView({
+  state,
+  busy,
+  configure,
+  sync,
+  cancelUpload,
+  api,
+  refresh,
+}) {
+  const manualActive = state.sync.some(
+    (run) =>
+      run.provider === 'manual' &&
+      ['queued', 'running', 'uploading'].includes(run.state),
+  );
+  const manual = state.sync.find((run) => run.provider === 'manual');
   return (
     <>
       <Heading
@@ -93,7 +107,49 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
           {countSources(state).toLocaleString()} records stored
         </StatusBadge>
       </Heading>
+      {state.worker?.mode === 'cloud' && (
+        <Notice>
+          Each connection imports independently. Imports save progress as they
+          go and retry temporary interruptions automatically. Contact extraction
+          follows, then your cloud review.
+        </Notice>
+      )}
       <div className="connection-list">
+        <BeeperConnection state={state} api={api} refresh={refresh} />
+        {manual && (
+          <Card className="connection-row">
+            <div className="connection-primary">
+              <div className="connection-identity">
+                <h2>
+                  File import <StatusBadge>{manual.state}</StatusBadge>
+                </h2>
+                <p>{manual.message || 'Your file import'}</p>
+              </div>
+              <div className="connection-total">
+                <strong>{manual.imported.toLocaleString()}</strong>
+                <span>records processed</span>
+              </div>
+              {manual.state === 'failed' &&
+                !/Upload (cancelled|expired)/.test(manual.message) && (
+                  <Button
+                    disabled={busy || manualActive}
+                    onClick={() => sync('manual', manual.id)}
+                  >
+                    Retry import
+                  </Button>
+                )}
+              {manual.state === 'uploading' && (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => cancelUpload(manual.id)}
+                >
+                  Cancel upload
+                </Button>
+              )}
+            </div>
+          </Card>
+        )}
         {['gmail', 'fireflies', 'granola'].map((provider) => {
           const connection = state.connections[provider],
             rows = state.coverage.filter((row) => row.provider === provider),
@@ -107,7 +163,7 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
               : state.sync_history.find(
                   (item) => item.provider === provider && finished(item),
                 ),
-            importing = run?.state === 'running';
+            importing = ['queued', 'running'].includes(run?.state);
           const [label, tone] = importing
             ? ['Importing', 'info']
             : connection.issue || run?.state === 'failed'
@@ -159,15 +215,22 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
                   <Button
                     size="sm"
                     variant={connection.configured ? 'default' : 'outline'}
-                    disabled={!connection.configured || busy || !!active}
-                    onClick={() => sync(provider)}
+                    disabled={!connection.configured || busy || importing}
+                    onClick={() =>
+                      sync(
+                        provider,
+                        run?.state === 'failed' ? run.id : undefined,
+                      )
+                    }
                   >
                     {importing ? <Spinner /> : <RefreshCw />}
                     {importing
                       ? 'Importing'
                       : run?.state === 'partial'
                         ? 'Continue import'
-                        : 'Refresh'}
+                        : run?.state === 'failed'
+                          ? 'Retry import'
+                          : 'Refresh'}
                   </Button>
                 </div>
               </div>
@@ -300,10 +363,11 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
             <HardDrive size={19} />
           </span>
           <div>
-            <h3>Your context stays on this Mac</h3>
+            <h3>Your context, stored in Postgres</h3>
             <p>
               Source text, previous versions, decisions, and agent activity are
-              saved in one local archive.
+              saved in your configured Postgres database. Provider credentials
+              stay on the server and are excluded from workspace exports.
             </p>
             <Accordion>
               <AccordionItem value="storage">

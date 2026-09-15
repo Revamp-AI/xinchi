@@ -76,6 +76,6 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: false,
     timeout: 300_000,
-    env: { XIN_DATA_DIR: dataDir, XIN_ALLOWED_EMAIL: ownerEmail },
+    env: { XIN_DATA_DIR: dataDir, XIN_ALLOWED_EMAIL: ownerEmail, DATABASE_URL: process.env.DATABASE_URL!, XIN_AGENT_MODE: process.env.FOCUS_E2E_DURABLE === '1' ? 'cloud' : 'local', WORKFLOW_TARGET_WORLD: 'local', WORKFLOW_LOCAL_BASE_URL: baseURL, WORKFLOW_LOCAL_DATA_DIR: path.join(dataDir,'workflow'), CRON_SECRET:'fictional-e2e-cron', AI_GATEWAY_API_KEY:'fictional-disabled-key' },
   },
 });

@@ -67,19 +67,40 @@ export default async function globalSetup(config: FullConfig) {
   process.env.XIN_DATA_DIR = dataDir;
   process.env.XIN_ALLOWED_EMAIL = ownerEmail;
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  const { migrateDatabase } = await import('../../lib/migrations.mjs');
+  await migrateDatabase();
   const db = await import('../../lib/db.mjs');
+  if(process.env.FOCUS_E2E_DURABLE === '1') {
+    // Prevent billable review generation while exercising real local Workflow queues.
+    await db.run("INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at,lease_owner,lease_until) VALUES('e2e-review-blocker','review','running','Fictional blocked review',?,?,'fixture',now()+interval '1 hour')",db.stamp(),db.stamp());
+  }
+  const {saveContact, confirmCoverage} = await import('../../lib/contacts.mjs');
+  const {logInteraction} = await import('../../lib/contact-extraction.mjs');
+  const groups = [
+    ['New', ['Nora James','Theo Park','Maya West'], 3],
+    ['Active', ['Avery Chen','Priya Shah','Jamie Lee','Owen Reed'], 9],
+    ['Cooling', ['Sam Rivera','Ella Stone','Noah Brooks'], 45],
+    ['Dormant', ['Alex Quinn','Riley Morgan'], 100],
+    ['Paused', ['Sage Ellis','Casey North'], 20],
+    ['Unclassified', ['Drew Lake','Rowan Fox'], 0],
+  ] as const;
+  for (const [state,names,days] of groups) for (const name of names) {
+    const c = await saveContact({name, email:name.toLowerCase().replaceAll(' ','.')+'@example.com',tracked:state!=='Unclassified',paused:state==='Paused',tags:[state==='New'?'Peer':'Partner'],organization:'Fictional Studio',role:'Collaborator'});
+    if (state!=='Unclassified') await logInteraction({contact_id:c.id,kind:state==='New'?'email':'meeting',direction:state==='New'?'inbound':'mutual',meaningful:true,occurred_at:new Date(Date.now()-days*86400000).toISOString(),body:'Discussed the fictional release plan and agreed to compare notes.'});
+    if (state==='Cooling'||state==='Dormant') await confirmCoverage(c.id);
+  }
   const auth = await import('../../lib/auth.mjs');
-  for (const source of sources) db.upsertSource(source);
-  db.saveItem(candidate);
-  auth.authDb
+  for (const source of sources) await db.upsertSource(source);
+  await db.saveItem(candidate);
+  await auth.authDb
     .prepare(
       'INSERT INTO owner VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET sub=excluded.sub,email=excluded.email,name=excluded.name',
     )
     .run('e2e-owner', ownerEmail, ownerName);
   const tokenHash = createHash('sha256').update(sessionToken).digest('hex');
   const tenYears = 10 * 365 * 24 * 60 * 60 * 1000;
-  auth.authDb
-    .prepare('INSERT OR REPLACE INTO sessions VALUES(?,?,?,?)')
+  await auth.authDb
+    .prepare('INSERT INTO sessions VALUES(?,?,?,?) ON CONFLICT(token_hash) DO UPDATE SET expires_at=excluded.expires_at')
     .run(tokenHash, 'e2e-owner', Date.now(), Date.now() + tenYears);
   writeFileSync(
     path.join(dataDir, 'storage-state.json'),
