@@ -81,6 +81,14 @@ test('Fireflies processes a single recording using the same snapshot boundary af
  const done=await saveAdvance('fireflies',first.cursor);assert.equal(done.complete,true);assert.equal(await getSetting('fireflies_page'),null);assert.equal(calls,2);
 });
 
+test('both Fireflies import paths use the participant type required by its GraphQL schema',async t=>{
+ const queries=[];
+ t.mock.method(global,'fetch',async(_url,options)=>{queries.push(JSON.parse(options.body).query);return Response.json({data:{transcripts:[]}});});
+ await advanceProvider('fireflies',await initialProviderCursor('fireflies'));
+ const {syncProvider}=await import('../lib/connectors.mjs');await syncProvider('fireflies');
+ assert.equal(queries.length,2);for(const query of queries)assert.match(query,/\$participants\s*:\s*\[String!\]/);
+});
+
 test('provider rate limits return retry metadata without sleeping or leaking response text',async t=>{
  let calls=0;t.mock.method(global,'fetch',async()=>{calls++;return Response.json({error:{message:'fixture-refresh-secret',details:[{'@type':'type.googleapis.com/google.rpc.ErrorInfo',reason:'RATE_LIMIT_EXCEEDED'},{'@type':'type.googleapis.com/google.rpc.RetryInfo',retryDelay:'12s'}]}},{status:403,headers:{'retry-after':'5'}});});
  const cursor=await initialProviderCursor('gmail');await assert.rejects(advanceProvider('gmail',cursor),error=>{assert.equal(error.permanent,false);assert.equal(error.retryAfterMs,12000);assert.equal(error.providerReason,'RATE_LIMIT_EXCEEDED');assert.equal(error.status,403);assert.doesNotMatch(error.message+JSON.stringify(error),/fixture-refresh-secret/);return true;});assert.equal(calls,1);assert.equal(cursor.phase,'profile');
