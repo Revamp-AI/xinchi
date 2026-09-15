@@ -61,7 +61,14 @@ function Navigation({ view, onViewChange, state, busy, onLogout }) {
   return (
     <Sidebar collapsible="offcanvas" className="focus-sidebar">
       <SidebarHeader className="sidebar-brand">
-        <Brand />
+        <a
+          href="#agent"
+          onClick={() => navigate('agent')}
+          aria-label="Focus overview"
+          className="w-fit rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+        >
+          <Brand />
+        </a>
       </SidebarHeader>
       <SidebarContent>
         <div className="workspace-label">
