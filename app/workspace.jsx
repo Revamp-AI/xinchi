@@ -203,7 +203,7 @@ export default function Workspace() {
     });
   const edit = (item) => {
     setError('');
-    setEditing(item);
+    setEditing({ ...item, owner: item.owner || state?.user?.name || 'You' });
   };
   const create = () =>
     edit({
@@ -456,6 +456,9 @@ export default function Workspace() {
           item={editing}
           setItem={setEditing}
           {...{ now, busy, error, openSource }}
+          api={api}
+          self={state.user?.name}
+          owners={state.items.map((item) => item.owner)}
           close={() => setEditing(null)}
           save={() =>
             act(async () => {

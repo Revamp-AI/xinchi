@@ -37,6 +37,11 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
   response.headers.append('Set-Cookie',cookie(SESSION_COOKIE,result.token,SESSION_SECONDS));response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;
  }
  const user=(await requireSession(req));
+ if(path==='owners'){
+  const query='%'+(u.searchParams.get('q')||'').trim().slice(0,200)+'%';
+  const rows=await all("SELECT name FROM (SELECT name FROM contacts WHERE merged_into IS NULL AND archived=false AND name<>'' AND (name ILIKE ? OR email ILIKE ?) UNION SELECT owner AS name FROM items WHERE owner<>'' AND owner ILIKE ?) AS owners ORDER BY lower(name),name LIMIT 51",query,query,query);
+  return json({owners:rows.slice(0,50).map(row=>row.name),hasMore:rows.length>50});
+ }
  if(path==='settings/reviews')return json(await reviewSettings());
  if(path==='contacts')return json(await listContacts(Object.fromEntries(u.searchParams)));
  if(path==='contacts/status'){await recoverContactRuns();return json(await contactStatus());}
