@@ -391,7 +391,10 @@ export default function Workspace() {
             create,
             edit,
             openDraft,
+            openSource,
+            selectProposal,
           }}
+          dismiss={(id) => act(() => api('proposals/dismiss', { id }))}
           saveFocus={() =>
             act(async () => {
               await api('settings', { focus, available_hours: hours });

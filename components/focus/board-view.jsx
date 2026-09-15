@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTab, TabsPanel } from '@/components/ui/tabs';
 import { localToday } from '../../lib/urgency.mjs';
 import { AttentionBadge, CarryoverBadge } from './attention';
+import { ProposalQueue } from './proposal-queue';
 import {
   Empty,
   FormField,
@@ -35,6 +36,9 @@ export default function BoardView({
   create,
   edit,
   openDraft,
+  openSource,
+  selectProposal,
+  dismiss,
 }) {
   const today = localToday(new Date());
   const carried = Object.fromEntries(
@@ -96,6 +100,24 @@ export default function BoardView({
           </div>
         </form>
       </Card>
+      {state.proposals.length > 0 && tab !== 'candidate' && (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4">
+          <div>
+            <p className="text-sm font-medium">
+              {state.proposals.length}{' '}
+              {state.proposals.length === 1 ? 'proposal is' : 'proposals are'}{' '}
+              ready for your decision
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Review suggestions from your context and choose what to take on.
+            </p>
+          </div>
+          <Button variant="outline" onClick={() => setTab('candidate')}>
+            Review proposals
+            <ArrowRight />
+          </Button>
+        </div>
+      )}
       <Tabs value={tab} onValueChange={setTab} className="commitment-tabs">
         <div className="tabs-scroll">
           <TabsList variant="underline" aria-label="Commitment status">
@@ -103,92 +125,103 @@ export default function BoardView({
               <TabsTab key={id} value={id}>
                 {label}
                 <span className="tab-count">
-                  {state.items.filter((item) => item.status === id).length}
+                  {state.items.filter((item) => item.status === id).length +
+                    (id === 'candidate' ? state.proposals.length : 0)}
                 </span>
               </TabsTab>
             ))}
           </TabsList>
         </div>
         {Object.entries(statusNames).map(([id, label]) => (
-          <TabsPanel key={id} value={id}>
+          <TabsPanel key={id} value={id} className="space-y-5">
             {id === 'candidate' && (
               <p className="queue-note">
                 These are possibilities, not commitments. Confirm what’s still
                 relevant before choosing one.
               </p>
             )}
-            <Card className="commitment-list">
-              {state.items
-                .filter((item) => item.status === id)
-                .map((item, index) => (
-                  <div className="commitment-row" key={item.id}>
-                    <span className="outcome-index">
-                      {String(index + 1).padStart(2, '0')}
-                    </span>
-                    <div className="commitment-info">
-                      <div>
-                        <Button
-                          variant="link"
-                          className="outcome-title"
-                          onClick={() => edit(item)}
-                        >
-                          {item.title}
-                        </Button>
-                        <StatusBadge>{item.kind}</StatusBadge>
-                      </div>
-                      <p>
-                        {item.next_action || 'Define a concrete next action'}
-                      </p>
-                    </div>
-                    <div className="checkpoint">
-                      <span>
-                        <Clock3 size={14} />
-                        {formatDate(item.checkpoint)}
+            {id === 'candidate' && (
+              <ProposalQueue
+                proposals={state.proposals}
+                {...{ busy, openSource, selectProposal, dismiss }}
+              />
+            )}
+            {(state.items.some((item) => item.status === id) ||
+              id !== 'candidate' ||
+              state.proposals.length === 0) && (
+              <Card className="commitment-list">
+                {state.items
+                  .filter((item) => item.status === id)
+                  .map((item, index) => (
+                    <div className="commitment-row" key={item.id}>
+                      <span className="outcome-index">
+                        {String(index + 1).padStart(2, '0')}
                       </span>
-                      {item.hard_deadline && (
-                        <small>Due {formatDate(item.hard_deadline)}</small>
-                      )}
-                      <div className="mt-1.5 flex flex-wrap justify-end gap-1.5 empty:hidden">
-                        <AttentionBadge item={item} today={today} />
-                        <CarryoverBadge count={carried[item.id]} />
+                      <div className="commitment-info">
+                        <div>
+                          <Button
+                            variant="link"
+                            className="outcome-title"
+                            onClick={() => edit(item)}
+                          >
+                            {item.title}
+                          </Button>
+                          <StatusBadge>{item.kind}</StatusBadge>
+                        </div>
+                        <p>
+                          {item.next_action || 'Define a concrete next action'}
+                        </p>
                       </div>
+                      <div className="checkpoint">
+                        <span>
+                          <Clock3 size={14} />
+                          {formatDate(item.checkpoint)}
+                        </span>
+                        {item.hard_deadline && (
+                          <small>Due {formatDate(item.hard_deadline)}</small>
+                        )}
+                        <div className="mt-1.5 flex flex-wrap justify-end gap-1.5 empty:hidden">
+                          <AttentionBadge item={item} today={today} />
+                          <CarryoverBadge count={carried[item.id]} />
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Review ${item.title}`}
+                        onClick={() => edit(item)}
+                      >
+                        <ArrowRight />
+                      </Button>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Review ${item.title}`}
-                      onClick={() => edit(item)}
-                    >
-                      <ArrowRight />
-                    </Button>
-                  </div>
-                ))}
-              {!state.items.some((item) => item.status === id) && (
-                <Empty
-                  icon={CheckCheck}
-                  title={
-                    id === 'now'
-                      ? 'Make one deliberate choice'
-                      : `Nothing ${label.toLowerCase()} yet`
-                  }
-                  description={
-                    id === 'now'
-                      ? 'Choose a meaningful outcome from your queue, or ask Focus to help you decide.'
-                      : 'Your outcomes will appear here when you move them to this stage.'
-                  }
-                >
-                  {id === 'now' && (
-                    <Button
-                      variant="outline"
-                      onClick={() => setTab('candidate')}
-                    >
-                      Review the queue
-                      <ArrowRight />
-                    </Button>
-                  )}
-                </Empty>
-              )}
-            </Card>
+                  ))}
+                {!state.items.some((item) => item.status === id) && (
+                  <Empty
+                    icon={CheckCheck}
+                    title={
+                      id === 'now'
+                        ? 'Make one deliberate choice'
+                        : `Nothing ${label.toLowerCase()} yet`
+                    }
+                    description={
+                      id === 'now'
+                        ? 'Choose a meaningful outcome from your queue, or ask Focus to help you decide.'
+                        : 'Your outcomes will appear here when you move them to this stage.'
+                    }
+                  >
+                    {id === 'now' && (
+                      <Button
+                        variant="outline"
+                        onClick={() => setTab('candidate')}
+                      >
+                        Review the queue
+                        <ArrowRight />
+                      </Button>
+                    )}
+                  </Empty>
+                )}
+              </Card>
+            )}
           </TabsPanel>
         ))}
       </Tabs>
