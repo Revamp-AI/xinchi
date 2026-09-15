@@ -1,0 +1,52 @@
+import {setupTestDatabase} from './helpers/postgres.mjs';
+await setupTestDatabase();
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomBytes} from 'node:crypto';
+process.env.XIN_APP_ORIGIN='https://focus.example';
+process.env.XIN_AGENT_MODE='cloud';
+process.env.XIN_SECRET_STORAGE='postgres';
+process.env.XIN_SECRETS_KEY=randomBytes(32).toString('base64url');
+process.env.XIN_ALLOWED_EMAIL='owner@example.com';
+const auth=await import('../lib/auth.mjs');
+const store=await import('../lib/secret-store.mjs');
+const runtime=await import('../lib/runtime.mjs');
+const {one,run,exportData,stamp}=await import('../lib/db.mjs');
+const route=await import('../app/api/[...path]/route.js');
+const cron=await import('../app/api/internal/jobs/route.js');
+const {expireLeases}=await import('../lib/leases.mjs');
+const request=(path,host='focus.example',extra={})=>new Request('https://focus.example/api/'+path,{headers:{host,...extra}});
+test('hosted origin and cookies fail closed; forwarded hosts cannot bypass origin checks',()=>{
+ assert.equal(auth.CALLBACK,'https://focus.example/api/auth/google/callback');
+ assert.match(auth.cookie(auth.SESSION_COOKIE,'test',100),/^__Host-xin_session=.*; Secure$/);
+ auth.checkLocalRequest(request('state'));
+ for(const host of ['evil.example','focus.example.evil.example','localhost:3210'])assert.throws(()=>auth.checkLocalRequest(request('state',host,{'x-forwarded-host':'focus.example'})),/configured address/);
+ assert.throws(()=>auth.checkLocalRequest(request('settings','focus.example',{origin:'https://evil.example','x-xin-request':'1'}),true),/from this app/);
+ auth.checkLocalRequest(request('settings','focus.example',{origin:'https://focus.example','x-xin-request':'1'}),true);
+ assert.throws(()=>runtime.resolveAppOrigin({XIN_APP_ORIGIN:'http://focus.example'}),/HTTPS/);
+ assert.throws(()=>runtime.resolveAppOrigin({XIN_APP_ORIGIN:'https://focus.example/private'}),/without a path/);
+ assert.throws(()=>runtime.resolveAppOrigin({VERCEL:'1'}),/XIN_APP_ORIGIN/);
+});
+test('public hosted setup cannot install attacker OAuth credentials and private APIs require sign-in',async()=>{
+ const req=new Request('https://focus.example/api/auth/setup',{method:'POST',headers:{host:'focus.example',origin:'https://focus.example','x-xin-request':'1'},body:JSON.stringify({web:{client_id:'attacker.apps.googleusercontent.com',client_secret:'untrusted',redirect_uris:[auth.CALLBACK]}})});
+ assert.equal((await route.POST(req)).status,403);
+ for(const path of ['state','contacts','export'])assert.equal((await route.GET(request(path))).status,401);
+});
+test('provider credentials are encrypted, authenticated, concurrency-safe, and excluded from exports',async()=>{
+ await Promise.all([store.updateSecrets(s=>{s.fireflies_key='private-fireflies';}),store.updateSecrets(s=>{s.granola_key='private-granola';})]);
+ assert.deepEqual(await store.secrets(),{fireflies_key:'private-fireflies',granola_key:'private-granola'});
+ const payload=(await one('SELECT payload FROM focus_auth.provider_secrets')).payload;
+ assert.ok(!JSON.stringify(payload).includes('private-'));
+ const tampered={...payload,tag:randomBytes(16).toString('base64url')};assert.throws(()=>store.decryptSecrets(tampered));
+ const key=process.env.XIN_SECRETS_KEY;process.env.XIN_SECRETS_KEY=randomBytes(32).toString('base64url');assert.throws(()=>store.decryptSecrets(payload));process.env.XIN_SECRETS_KEY=key;
+ assert.ok(!JSON.stringify(await exportData()).includes('private-fireflies'));
+ delete process.env.XIN_SECRETS_KEY;await assert.rejects(store.secrets,/encryption key/);process.env.XIN_SECRETS_KEY=key;
+});
+test('cron authentication is mandatory and queued cloud work survives an idle interval',async()=>{
+ delete process.env.CRON_SECRET;assert.equal((await cron.GET(request('internal/jobs'))).status,401);
+ process.env.CRON_SECRET='fixture-cron-secret';assert.equal((await cron.GET(request('internal/jobs','focus.example',{authorization:'Bearer wrong'}))).status,401);
+ await run("INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at) VALUES('cloud-queued','review','queued','Fixture',?,?)",stamp(),new Date(Date.now()-300000).toISOString());
+ await expireLeases('jobs');assert.equal((await one("SELECT status FROM jobs WHERE id='cloud-queued'")).status,'queued');
+ await run("DELETE FROM jobs WHERE id='cloud-queued'");
+ assert.equal((await cron.GET(request('internal/jobs','focus.example',{authorization:'Bearer fixture-cron-secret'}))).status,200);
+});

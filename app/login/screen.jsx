@@ -25,7 +25,6 @@ import { Brand, Notice } from '@/components/focus/shared';
 import { ThemeToggle } from '@/components/focus/theme';
 import { authMessages } from '../../lib/auth-messages.mjs';
 
-const callback = 'http://127.0.0.1:3210/api/auth/google/callback';
 async function post(path, data) {
   const response = await fetch('/api/auth/' + path, {
     method: 'POST',
@@ -58,7 +57,12 @@ function GoogleIcon() {
     </svg>
   );
 }
-export default function Login({ configured, ownerConfigured = true }) {
+export default function Login({
+  configured,
+  ownerConfigured = true,
+  callback,
+  hosted = false,
+}) {
   const [ready, setReady] = useState(configured),
     [client, setClient] = useState(null),
     [busy, setBusy] = useState(false),
@@ -136,7 +140,13 @@ export default function Login({ configured, ownerConfigured = true }) {
             </Notice>
           )}
           {error && <Notice error>{error}</Notice>}
-          {!ready && (
+          {!ready && hosted && (
+            <Notice>
+              Google sign-in is being configured for this workspace. Your
+              archive stays private until setup is complete.
+            </Notice>
+          )}
+          {!ready && !hosted && (
             <Accordion defaultValue={['setup']} className="sign-in-setup">
               <AccordionItem value="setup">
                 <AccordionTrigger>One-time Google setup</AccordionTrigger>

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Focus is a single-owner, local-only Next.js 16 app. It ingests meeting and email context (Fireflies, Granola, Gmail, manual files) into PostgreSQL, runs agent reviews through the signed-in Codex CLI, and keeps a commitment board capped at three active outcomes. Everything binds to `http://127.0.0.1:3210`. The repo is public; runtime data, credentials, and the owner's private context never go in it.
+Focus is a single-owner Next.js 16 app with local and Vercel production modes. It ingests meeting and email context (Fireflies, Granola, Gmail, manual files) into PostgreSQL, runs agent reviews through the signed-in Codex CLI, and keeps a commitment board capped at three active outcomes. Local mode binds to `http://127.0.0.1:3210`. Hosted mode uses the exact HTTPS `XIN_APP_ORIGIN`, Secure host-only cookies, encrypted Postgres provider credentials, and AI Gateway reviews. See `docs/vercel.md`. The repo is public; runtime data, credentials, and the owner's private context never go in it.
 
 ## Commands
 
@@ -35,7 +35,7 @@ The Next server, provider sync worker, contact extraction worker and agent worke
 
 `lib/leases.mjs` claims 45-second durable leases and workers heartbeat every 10 seconds. PID fields are diagnostic only. Expired/cancelled workers must not write sources, checkpoints or results; guard writes in a transaction with the current lease. Capacity and contact merges lock `workspace_lock`.
 
-`DATABASE_URL` selects runtime storage; optional `DATABASE_URL_UNPOOLED` selects the migration connection. `focus_auth` holds the pinned owner, hashed sessions, OAuth attempts and sanitized audit, and is excluded from exports. Local `connections.secret.json` and `data/runs/` remain private. Do not read or migrate a live personal archive during tests.
+`DATABASE_URL` selects runtime storage; optional `DATABASE_URL_UNPOOLED` selects the migration connection. `focus_auth` holds the pinned owner, hashed sessions, OAuth attempts and sanitized audit, and is excluded from exports. Local `connections.secret.json` and `data/runs/` remain private. Hosted provider credentials use `focus_auth.provider_secrets` and `XIN_SECRETS_KEY`; Google client credentials are environment-only. `secrets()`, `saveSecrets()`, and credential mutations are asynchronous. Do not read or migrate a live personal archive during tests.
 
 `npm test` creates an isolated local Postgres cluster and each test file creates a unique database. `FOCUS_TEST_DATABASE_URL` may point at a dedicated loopback test server. Browser tests also use a temporary Postgres database and fictional fixtures.
 
@@ -57,11 +57,11 @@ This function is the business-rule center; the UI only mirrors it.
 
 ### Agent contract (`lib/agent.mjs`, `scripts/worker.mjs`)
 
-`AgentResult` (zod) becomes the JSON Schema handed to Codex. `validateResult()` rejects the whole result if any citation quote is not a substring of the cited source body or if `existing_item_id` is unknown; a rejected result fails the job and saves nothing. Proposals dedupe by fingerprint (title + first source + existing item). One job runs at a time; imports finishing during a job queue a single `pending_import_review` that the worker drains on exit. `recoverJobs()` fails expired durable leases; the worker times out at 8 minutes and fails any run that never called a context tool. The agent policy is the inline prompt string in `scripts/worker.mjs`.
+`AgentResult` (zod) becomes the JSON Schema used by both the local Codex runner and cloud AI Gateway runner. `validateResult()` rejects the whole result if any citation quote is not a substring of the cited source body or if `existing_item_id` is unknown; a rejected result fails the job and saves nothing. Proposals dedupe by fingerprint (title + first source + existing item). One job runs at a time; imports finishing during a job queue a single `pending_import_review` that the worker drains on exit. `recoverJobs()` fails expired durable leases; the worker times out at 8 minutes and fails any run that never called a context tool. Both runners share the policy in `lib/agent-policy.mjs` and read-only tools in `lib/context-tools.mjs`.
 
 ### Auth and request protection (`lib/auth.mjs`)
 
-Google OIDC with PKCE, one owner (`XIN_ALLOWED_EMAIL`; the Google `sub` is pinned on first login). `checkLocalRequest()` requires `Host: 127.0.0.1:3210` exactly (`localhost` is rejected), and every POST needs `Origin: http://127.0.0.1:3210` plus the `X-Xin-Request: 1` header. The `api()` / `post()` helpers in `app/workspace.jsx` and `app/login/screen.jsx` add it; any new fetch must too. Only `auth/setup` and `auth/google/start` are unauthenticated POSTs. Text shown to the browser comes exclusively from the fixed strings in `lib/auth-messages.mjs`; never surface raw provider responses. `tests/auth.test.mjs` enumerates protected paths, so add new API paths to those lists.
+Google OIDC with PKCE, one owner (`XIN_ALLOWED_EMAIL`; the Google `sub` is pinned on first login). `checkLocalRequest()` requires the exact configured origin host (`127.0.0.1:3210` in local mode; `localhost` is rejected), and every POST needs `Origin: http://127.0.0.1:3210` plus the `X-Xin-Request: 1` header (hosted writes use the configured HTTPS origin). The `api()` / `post()` helpers in `app/workspace.jsx` and `app/login/screen.jsx` add it; any new fetch must too. Only `auth/setup` and `auth/google/start` are unauthenticated POSTs; hosted `auth/setup` is always forbidden. `/api/internal/jobs` requires the cron bearer secret. Text shown to the browser comes exclusively from the fixed strings in `lib/auth-messages.mjs`; never surface raw provider responses. `tests/auth.test.mjs` enumerates protected paths, so add new API paths to those lists.
 
 ### UI
 

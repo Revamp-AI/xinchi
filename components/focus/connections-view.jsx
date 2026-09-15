@@ -93,6 +93,13 @@ export default function ConnectionsView({ state, busy, configure, sync }) {
           {countSources(state).toLocaleString()} records stored
         </StatusBadge>
       </Heading>
+      {state.worker?.mode === 'cloud' && (
+        <Notice>
+          Reviews run in the cloud. Imports and contact extraction continue in
+          the background. Model usage is billed through your Vercel AI Gateway
+          account.
+        </Notice>
+      )}
       <div className="connection-list">
         {['gmail', 'fireflies', 'granola'].map((provider) => {
           const connection = state.connections[provider],

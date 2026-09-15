@@ -1,6 +1,6 @@
 # Focus
 
-A local Next.js app backed by PostgreSQL for turning meeting and email context into evidence-backed priorities and explicit commitments.
+A single-owner Next.js app backed by PostgreSQL for turning meeting and email context into evidence-backed priorities and explicit commitments.
 
 The public repository contains application code, fictional test fixtures, and setup documentation. It starts with an empty workspace. Personal recordings, transcripts, analysis, databases, agent outputs, screenshots, credentials, and session archives are not included.
 
@@ -20,9 +20,13 @@ To verify appearance changes, choose Dark, reload, and confirm Dark remains sele
 
 - Node.js 24 or later.
 - PostgreSQL 16+ or a Neon database. Local PostgreSQL tools are also used for isolated tests.
-- Codex CLI installed and signed in on the same Mac for agent reviews.
+- Local mode: Codex CLI installed and signed in on the same Mac for agent reviews. Hosted mode: Vercel AI Gateway model access.
 - A Google Cloud project for Google login and read-only Gmail access.
 - Optional Fireflies and Granola API keys for live meeting imports.
+
+## Deploy to Vercel
+
+Follow the [production deployment guide](docs/vercel.md) for HTTPS authentication, encrypted credential storage, AI Gateway reviews, and durable background jobs.
 
 ## Run locally
 
@@ -55,7 +59,7 @@ The requested scopes are `openid email profile https://www.googleapis.com/auth/g
 
 Gmail consent is requested in the same flow. Successful authorization saves background access and attempts to start an import. If another import is running, use Connections → Refresh later. You can decline Gmail access and still sign in. Sign-out does not revoke the Gmail grant or interrupt a running import.
 
-Gmail setup errors no longer block a verified Google login. Connections shows **Needs attention** and an actionable explanation. If the Gmail API is disabled, enable it in the same Google Cloud project, then choose **Refresh**; the approved grant is retained locally. A successful reconnect or import clears the warning. Account mismatches still block sign-in.
+Gmail setup errors no longer block a verified Google login. Connections shows **Needs attention** and an actionable explanation. If the Gmail API is disabled, enable it in the same Google Cloud project, then choose **Refresh**; the approved grant is retained in private credential storage. A successful reconnect or import clears the warning. Account mismatches still block sign-in.
 
 Login failures distinguish expired browser flows, rejected clients or codes, identity verification, and network failures. The private `auth_events` table records stage, outcome, safe error category, HTTP status, and recognized provider/JWT reason codes. It never records tokens, authorization codes, OAuth URLs, or raw provider responses, and it is excluded from workspace exports.
 
@@ -104,7 +108,7 @@ UI/provider imports trigger an agent review or queue a follow-up behind the curr
 
 ## Storage and sync status
 
-The app and detached workers run locally. Sources, source snapshots, commitments, relationship records, state history, drafts and worker coordination live in your configured PostgreSQL database. Neon can host that database remotely. Authentication uses the restricted `focus_auth` schema, excluded from workspace exports.
+The app runs locally or on Vercel. Hosted reviews use AI Gateway; queued imports and extraction run in Vercel Functions. Sources, source snapshots, commitments, relationship records, state history, drafts and worker coordination live in your configured PostgreSQL database. Neon can host that database remotely. Authentication uses the restricted `focus_auth` schema, excluded from workspace exports.
 
 The ignored private `data/` directory holds `connections.secret.json` (provider credentials and Google tokens) and `runs/` (agent output). `XIN_DATA_DIR` selects another private directory. **Do not commit runtime data or connection strings.** Exports omit credentials and authentication but include private source and relationship material.
 
@@ -114,7 +118,7 @@ Connections shows stored coverage and the latest available run state: running, c
 
 ## Current limits
 
-- Single-owner local app, bound to `127.0.0.1:3210`; no shared hosted service or multi-user data isolation.
+- Single owner only; no multi-user data isolation. Local mode binds to `127.0.0.1:3210`; hosted mode accepts only its configured HTTPS origin.
 - HttpOnly, SameSite=Lax session cookies on loopback HTTP. Hosting would require HTTPS/Secure cookies, trusted origins, hosted credentials, and workers.
 - Local files are not separately encrypted by the app; OS account and disk protections still matter.
 - Text ingestion only: recording media and email attachment contents are not downloaded. Attachment names are retained.

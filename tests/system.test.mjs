@@ -67,7 +67,7 @@ test('an expired Gmail history cursor falls back to a full sync and records new 
 });
 test('Google Gmail grants refuse to mix mailboxes',async()=>{
  const oldFetch=global.fetch;global.fetch=async()=>Response.json({emailAddress:'different@example.com'});
- try{await assert.rejects(()=>conn.saveGoogleGrant({access_token:'different-access',refresh_token:'different-refresh',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.readonly'},{email:'owner@example.com'}),/do not match/);assert.equal((await m.getSetting('gmail_email')),'owner@example.com');assert.notEqual(conn.secrets().gmail_tokens.access_token,'different-access');}finally{global.fetch=oldFetch;}
+ try{await assert.rejects(()=>conn.saveGoogleGrant({access_token:'different-access',refresh_token:'different-refresh',expires_in:3600,scope:'https://www.googleapis.com/auth/gmail.readonly'},{email:'owner@example.com'}),/do not match/);assert.equal((await m.getSetting('gmail_email')),'owner@example.com');assert.notEqual((await conn.secrets()).gmail_tokens.access_token,'different-access');}finally{global.fetch=oldFetch;}
 });
 test('imports arriving during a review become one durable follow-up',async()=>{
  const active=(await agent.createJob('Current review','test'));

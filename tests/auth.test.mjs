@@ -98,7 +98,7 @@ test('disabled Gmail API preserves verified sign-in and the grant for a later re
  const result=await complete((await newFlow()),{profileError:'SERVICE_DISABLED'});
  assert.equal(result.gmail,false);assert.equal(result.gmailIssue,'gmail_api_disabled');assert.ok((await auth.sessionFor(result.token)));
  assert.equal((await conn.connectionState()).gmail.configured,true);assert.equal((await conn.connectionState()).gmail.issue.code,'gmail_api_disabled');
- assert.equal(conn.secrets().gmail_tokens.refresh_token,'fixture-refresh-token');
+ assert.equal((await conn.secrets()).gmail_tokens.refresh_token,'fixture-refresh-token');
  const warning=(await auth.authDb.prepare("SELECT * FROM auth_events WHERE stage='gmail' AND outcome='warning' ORDER BY id DESC LIMIT 1").get());
  assert.equal(warning.provider_reason,'SERVICE_DISABLED');assert.equal(warning.http_status,403);
  const events=JSON.stringify((await auth.authDb.prepare('SELECT * FROM auth_events').all()));
@@ -107,13 +107,13 @@ test('disabled Gmail API preserves verified sign-in and the grant for a later re
  const recovered=await complete((await newFlow()));assert.equal(recovered.gmail,true);assert.equal((await conn.connectionState()).gmail.issue,null);(await auth.endSession(recovered.token));
 });
 test('Gmail account mismatches cannot overwrite credentials or create a session',async()=>{
- const before=conn.secrets(),sessions=(await auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()).n;
+ const before=(await conn.secrets()),sessions=(await auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()).n;
  await assert.rejects(async ()=>complete((await newFlow()),{profileEmail:'other@example.com'}),e=>e.authCode==='account');
- assert.deepEqual(conn.secrets(),before);assert.equal((await auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()).n,sessions);
+ assert.deepEqual((await conn.secrets()),before);assert.equal((await auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()).n,sessions);
 });
 test('missing background Gmail permission still permits verified sign-in',async()=>{
- const before=conn.secrets();const without={...before};delete without.gmail_tokens;conn.saveSecrets(without);
- try{const result=await complete((await newFlow()),{refreshToken:null});assert.equal(result.gmailIssue,'gmail_refresh');assert.ok((await auth.sessionFor(result.token)));assert.equal((await conn.connectionState()).gmail.configured,false);(await auth.endSession(result.token));}finally{conn.saveSecrets(before);}
+ const before=(await conn.secrets());const without={...before};delete without.gmail_tokens;await conn.saveSecrets(without);
+ try{const result=await complete((await newFlow()),{refreshToken:null});assert.equal(result.gmailIssue,'gmail_refresh');assert.ok((await auth.sessionFor(result.token)));assert.equal((await conn.connectionState()).gmail.configured,false);(await auth.endSession(result.token));}finally{await conn.saveSecrets(before);}
 });
 test('rejected OAuth clients produce actionable diagnostics without creating a session',async()=>{
  const sessions=(await auth.authDb.prepare('SELECT COUNT(*) AS n FROM sessions').get()).n;
@@ -130,7 +130,7 @@ test('callback sends verified users into Focus with the Gmail warning and no imp
   assert.equal(r.headers.get('location'),origin+'/?gmail=gmail_api_disabled&import=manual');
   const token=r.headers.getSetCookie()[0].split(';')[0].split('=')[1];assert.ok((await auth.sessionFor(token)));(await auth.endSession(token));
   assert.equal((await db.one('SELECT COUNT(*) AS n FROM sync_runs')).n,runCount);
- }finally{global.fetch=old;conn.clearGmailIssue();}
+ }finally{global.fetch=old;await conn.clearGmailIssue();}
 });
 test('expired sessions and forged cookies cannot access existing data',async()=>{
  const result=await complete((await newFlow()));(await auth.authDb.prepare('UPDATE sessions SET expires_at=0').run());

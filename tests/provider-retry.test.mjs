@@ -29,7 +29,7 @@ test('disabled APIs and denied permissions fail immediately; quota retries are b
 });
 test('Gmail resumes a rate-limited message without losing pagination or duplicating records',async t=>{
  noWait(t);const notices=[];let secondAttempts=0;
- conn.saveSecrets({google_client:{client_id:'fixture',client_secret:'fixture'},gmail_tokens:{access_token:'fixture',refresh_token:'fixture',expires_at:Date.now()+3600000}});
+ await conn.saveSecrets({google_client:{client_id:'fixture',client_secret:'fixture'},gmail_tokens:{access_token:'fixture',refresh_token:'fixture',expires_at:Date.now()+3600000}});
  t.mock.method(globalThis,'fetch',async url=>{
   const u=new URL(url);
   if(u.pathname.endsWith('/profile'))return Response.json({emailAddress:'owner@example.com',historyId:'h-start'});

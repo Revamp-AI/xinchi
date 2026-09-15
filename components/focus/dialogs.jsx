@@ -480,7 +480,7 @@ export function ConnectionDialog({
             />
             <p className="dialog-note">
               <LockKeyhole size={14} />
-              Stored privately on this Mac. Excluded from exports.
+              Stored privately on the server. Excluded from exports.
             </p>
           </>
         )}

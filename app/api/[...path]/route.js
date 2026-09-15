@@ -10,6 +10,12 @@ import {authMessages,gmailMessages} from '../../../lib/auth-messages.mjs';
 import {APP_ORIGIN,SESSION_COOKIE,FLOW_COOKIE,SESSION_SECONDS,checkLocalRequest,sessionFor,requireSession,readCookie,cookie,beginGoogle,finishGoogle,endSession,recordAuthEvent} from '../../../lib/auth.mjs';
 import {buildUpdateDraft,renderUpdateDraft} from '../../../lib/update-draft.mjs';
 import {localToday} from '../../../lib/urgency.mjs';
+import {HOSTED,POSTGRES_SECRETS,CLOUD_JOBS} from '../../../lib/runtime.mjs';
+import {workerStatus} from '../../../lib/workers.mjs';
+import {after} from 'next/server.js';
+import {drainCloudWork} from '../../../lib/cloud-jobs.mjs';
+export const maxDuration=800;
+function scheduleWork(){if(CLOUD_JOBS)after(async()=>{try{await drainCloudWork();}catch{console.error('Background work interrupted; the durable queue will retry.');}});}
 export const runtime='nodejs';export const dynamic='force-dynamic';
 function publicError(e){return e.code?'The database could not complete this request. Check its connection and migrations, then retry.':e.message;}
 function json(v,status=200){return Response.json(v,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}});}
@@ -20,7 +26,7 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
   try{if(u.searchParams.get('error')){(await recordAuthEvent('consent','failed',u.searchParams.get('error')==='access_denied'?'cancelled':'signin'));throw Object.assign(Error('Google did not authorize sign-in.'),{authCode:u.searchParams.get('error')==='access_denied'?'cancelled':'signin'});}result=await finishGoogle(u.searchParams.get('code'),u.searchParams.get('state'),readCookie(req,FLOW_COOKIE));}
   catch(e){const response=new Response(null,{status:303,headers:{Location:APP_ORIGIN+'/login?error='+(authMessages[e.authCode]?e.authCode:'signin'),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;}
   (await endSession(readCookie(req,SESSION_COOKIE)));
-  let importState='manual';if(result.gmail){try{(await startSync('gmail'));importState='started';}catch{}}
+  let importState='manual';if(result.gmail){try{(await startSync('gmail'));scheduleWork();importState='started';}catch{}}
   const response=new Response(null,{status:303,headers:{Location:APP_ORIGIN+'/?gmail='+(gmailMessages[result.gmailIssue]?result.gmailIssue:result.gmail?'connected':'missing')+'&import='+importState,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
   response.headers.append('Set-Cookie',cookie(SESSION_COOKIE,result.token,SESSION_SECONDS));response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;
  }
@@ -30,12 +36,12 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
  if(path==='contacts/merge-preview')return json(await mergePreview(u.searchParams.get('target_id'),u.searchParams.get('source_id')));
  if(path.startsWith('contacts/'))return json(await contactDetail(path.slice(9)));
 
- if(path==='state'){(await recoverJobs());(await recoverSyncRuns());return json({...(await dashboard()),connections:(await connectionState()),user});}
+ if(path==='state'){(await recoverJobs());(await recoverSyncRuns());return json({...(await dashboard()),connections:(await connectionState()),worker:await workerStatus(),user});}
  if(path==='sources')return json((await searchSources(u.searchParams.get('q')||'',u.searchParams.get('provider')||'',u.searchParams.get('offset')||0)));
  if(path.startsWith('sources/'))return json(u.searchParams.get('version')?await readSourceVersion(u.searchParams.get('version')):await readSource(path.slice(8),0,2000000));
  if(path.startsWith('events/'))return json((await all('SELECT * FROM events WHERE item_id=? ORDER BY created_at DESC',path.slice(7))));
  if(path.startsWith('jobs/'))return json({job:(await one('SELECT * FROM jobs WHERE id=?',path.slice(5))),events:(await all('SELECT * FROM job_events WHERE job_id=? ORDER BY id',path.slice(5)))});
- if(path==='update-draft'){const requested=u.searchParams.get('since')||'';if(requested&&!dateOK(requested))throw Error('Choose a valid date.');const now=new Date(),today=localToday(now),since=requested||localToday(new Date(now.getFullYear(),now.getMonth(),now.getDate()-7));const draft=buildUpdateDraft({items:(await all('SELECT * FROM items')),events:(await all('SELECT e.*,i.shared FROM events e JOIN items i ON i.id=e.item_id WHERE e.created_at>=? ORDER BY e.created_at',since)),since,today});return json({since,draft,text:renderUpdateDraft(draft)});}
+ if(path==='update-draft'){const requested=u.searchParams.get('since')||'';if(requested&&!dateOK(requested))throw Error('Choose a valid date.');const now=new Date(),today=localToday(now,process.env.XIN_TIME_ZONE),since=requested||localToday(new Date(now.getTime()-7*86400000),process.env.XIN_TIME_ZONE);const draft=buildUpdateDraft({items:(await all('SELECT * FROM items')),events:(await all('SELECT e.*,i.shared FROM events e JOIN items i ON i.id=e.item_id WHERE e.created_at>=? ORDER BY e.created_at',since)),since,today});return json({since,draft,text:renderUpdateDraft(draft)});}
  if(path==='export')return new Response(JSON.stringify((await exportData()),null,2),{headers:{'Content-Type':'application/json','Content-Disposition':'attachment; filename="xin-system-export.json"','Cache-Control':'no-store'}});
 
  return json({error:'Not found'},404);
@@ -45,14 +51,14 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  const limit=path.startsWith('auth/')?32*1024:20*1024*1024;
  if(Number(req.headers.get('content-length'))>limit)throw Error('The request is too large.');
  const raw=await req.text();if(raw.length>limit)throw Error('The request is too large.');const data=JSON.parse(raw||'{}');
- if(path==='auth/setup'){if(googleClient())return json({error:'Google sign-in is already configured. Use local setup to change its credentials.'},409);configureGoogleClient(data);return json({configured:true});}
+ if(path==='auth/setup'){if(HOSTED||POSTGRES_SECRETS)return json({error:'Configure Google sign-in in the server environment.'},403);if(googleClient())return json({error:'Google sign-in is already configured. Use local setup to change its credentials.'},409);configureGoogleClient(data);return json({configured:true});}
  if(path==='auth/google/start'){const flow=(await beginGoogle(readCookie(req,FLOW_COOKIE)));const response=json({url:flow.url});response.headers.append('Set-Cookie',flow.cookie);return response;}
  if(path==='auth/logout'){(await endSession(readCookie(req,SESSION_COOKIE)));const response=json({signed_out:true});response.headers.append('Set-Cookie',cookie(SESSION_COOKIE,'',0));return response;}
 
  if(path==='contacts')return json(await saveContact(data));
  if(path==='contacts/affiliation')return json(await saveAffiliation(data));
  if(path==='contacts/import')return json(await importContactsCsv(data.csv));
- if(path==='contacts/backfill')return json(await startContactProjection(data),202);
+ if(path==='contacts/backfill'){const result=await startContactProjection(data);scheduleWork();return json(result,202);}
  if(path==='contacts/interaction')return json(await logInteraction(data));
  if(path==='contacts/interaction-review')return json(await reviewInteraction(data));
  if(path==='contacts/coverage')return json(await confirmCoverage(data.id));
@@ -63,11 +69,11 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='contacts/separate')return json(await keepSeparate(data.id));
  if(path==='items')return json((await saveItem(data)));
  if(path==='settings'){if(typeof data.focus==='string')(await setSetting('focus',data.focus.slice(0,2000)));if(data.available_hours!==undefined)(await setSetting('available_hours',Math.max(0,Math.min(168,Number(data.available_hours)||0))));return json({saved:true});}
- if(path==='jobs'){const id=(await createJob(data.prompt,'review',{answers:data.answers,parent_id:data.parent_id}));(await launchJob(id));return json({id},202);}
+ if(path==='jobs'){const id=(await createJob(data.prompt,'review',{answers:data.answers,parent_id:data.parent_id}));(await launchJob(id));scheduleWork();return json({id},202);}
  if(path==='jobs/cancel')return json((await cancelJob(data.id)));
  if(path==='proposals/dismiss'){(await run("UPDATE proposals SET status='dismissed' WHERE id=?",data.id));return json({saved:true});}
  if(path==='connections')return json((await configure(data)));
- if(path==='sync')return json((await startSync(data.provider)),202);
- if(path==='import'){const result=data.fireflies_records?(await importResearchArchive(data)):(await importDocuments(Array.isArray(data)?data:[data]));if(result.changed){await startContactProjection({drain:true});await queueImportReview();}return json(result);}
+ if(path==='sync'){const result=await startSync(data.provider);scheduleWork();return json(result,202);}
+ if(path==='import'){const result=data.fireflies_records?(await importResearchArchive(data)):(await importDocuments(Array.isArray(data)?data:[data]));if(result.changed){await startContactProjection({drain:true});await queueImportReview();scheduleWork();}return json(result);}
  return json({error:'Not found'},404);
  }catch(e){return json({error:publicError(e)},e.status||400);}}
