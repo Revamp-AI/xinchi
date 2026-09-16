@@ -7,6 +7,8 @@ const views = {
   Commitments: 'Your commitments',
   'Context library': 'Context library',
   Connections: 'Your connections',
+  Contacts: 'Your contacts',
+  Settings: 'AI reviews',
 };
 const [fireflies] = sources;
 
@@ -46,7 +48,7 @@ test('the overview loads signed in', async ({ page, isMobile }) => {
   }
 });
 
-test('navigation reaches all four views', async ({ page }) => {
+test('navigation reaches all six views', async ({ page }) => {
   for (const view of Object.keys(views) as (keyof typeof views)[]) {
     await open(page, view);
     await expect(page.locator('.breadcrumb strong')).toHaveText(view);
@@ -135,4 +137,86 @@ test('on mobile the sidebar trigger opens navigation', async ({
   await sheet.getByRole('button', { name: 'Connections', exact: true }).click();
   await expect(sheet).toBeHidden();
   await expect(heading(page, views.Connections)).toBeVisible();
+});
+
+
+test('contact profile, timeline, map and list work together', async ({ page }, testInfo) => {
+  await open(page, 'Contacts');
+  await page.getByRole('button', { name: 'New contact', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: 'New contact' });
+  const name = 'Morgan ' + testInfo.project.name;
+  await dialog.getByLabel('Name', { exact: true }).fill(name);
+  await dialog.getByLabel('Email', { exact: true }).fill(testInfo.project.name + '@example.com');
+  await dialog.getByRole('button', { name: 'Save contact' }).click();
+  dialog = page.getByRole('dialog', { name, exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: 'Log interaction' }).click();
+  const log = page.getByRole('dialog', { name: 'Log an interaction' });
+  await log.getByLabel('What happened?').fill('Reviewed the fictional product roadmap together.');
+  await log.getByRole('button', { name: 'Save interaction' }).click();
+  await expect(dialog).toContainText('A meaningful exchange is within');
+  await expect(dialog).toContainText('Reviewed the fictional product roadmap together.');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'List', exact: true }).click();
+  const table = page.getByRole('table', { name: 'Contacts', exact: true });
+  await expect(table.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+  await expect(table.getByRole('row').filter({ hasText: name })).toContainText('Active');
+});
+
+
+test('relationship map supports light, dark and narrow layouts', async ({page}, testInfo) => {
+  await open(page,'Contacts');
+  await expect(page.getByRole('button',{name:'Avery Chen, Active',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Change appearance'}).click();
+  await page.getByRole('menuitemradio',{name:'Light',exact:true}).click();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toBeHidden();
+  await page.screenshot({path:testInfo.outputPath('contacts-light.png'),fullPage:true});
+  await page.getByRole('button',{name:'Change appearance'}).click();
+  await page.getByRole('menuitemradio',{name:'Dark',exact:true}).click();
+  await expect(page.locator('html')).toHaveClass(/dark/);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toBeHidden();
+  await page.screenshot({path:testInfo.outputPath('contacts-dark.png'),fullPage:true});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+});
+test('other connections remain available while Gmail and another provider import',async({page})=>{
+ let sync=[{id:'gmail-busy-fixture',provider:'gmail',state:'running',imported:20,changed:20,started_at:new Date().toISOString(),updated_at:new Date().toISOString(),message:'Fictional Gmail request in progress'}];
+ const requested:string[]=[];
+ await page.route('**/api/state',async route=>{
+  const response=await route.fetch(),state=await response.json();
+  for(const provider of ['gmail','fireflies','granola'])state.connections[provider].configured=true;
+  state.sync=sync;state.worker.mode='cloud';
+  await route.fulfill({response,json:state});
+ });
+ await page.route('**/api/sync',async route=>{
+  const {provider}=route.request().postDataJSON();requested.push(provider);
+  const row={...sync[0],id:provider+'-busy-fixture',provider,state:'queued',imported:0,changed:0};sync=[row,...sync];
+  await route.fulfill({status:202,json:{id:row.id}});
+ });
+ // This checks concurrent imports; navigate directly after installing the state fixture.
+ await page.goto('/#connections');await expect(heading(page,views.Connections)).toBeVisible();
+ const connection=(name:string)=>page.locator('.connection-row').filter({has:page.getByRole('heading',{name:new RegExp('^'+name)})});
+ await expect(connection('Gmail').getByRole('button',{name:/Importing$/})).toBeDisabled();
+ await expect(connection('Fireflies').getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
+ await expect(connection('Granola').getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
+ await connection('Fireflies').getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect(connection('Fireflies').getByRole('button',{name:/Importing$/})).toBeDisabled();
+ await expect(connection('Granola').getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
+ await connection('Granola').getByRole('button',{name:'Refresh',exact:true}).click();
+ await expect(connection('Granola').getByRole('button',{name:/Importing$/})).toBeDisabled();
+ expect(requested).toEqual(['fireflies','granola']);
+});
+test('Beeper setup provides a downloadable companion and owner-only pairing on desktop and mobile',async({page,request},testInfo)=>{
+ await page.goto('/');await open(page,'Connections');
+ await page.getByRole('button',{name:'Connect Beeper',exact:true}).click();
+ await expect(page.getByRole('dialog')).toBeVisible();
+ await expect(page.getByRole('link',{name:'Download the Focus companion'})).toHaveAttribute('href','/beeper-companion.mjs');
+ const file=await request.get('/beeper-companion.mjs');expect(file.ok()).toBe(true);expect(await file.text()).toContain('export async function authorizeBeeper');
+ await page.getByRole('button',{name:'Generate pairing code',exact:true}).click();
+ await expect(page.getByLabel('One-time pairing code · expires in 10 minutes')).toHaveValue(/^[A-Za-z0-9_-]{43}$/);
+ await expect(page.getByRole('dialog')).toContainText('Selected messages are saved in your Focus cloud archive');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+ // Mask the disposable pairing code even in test artifacts.
+ await page.screenshot({path:testInfo.outputPath('beeper-setup.png'),fullPage:true,mask:[page.locator('#beeper-pairing')]});
 });

@@ -1,1 +1,2 @@
-export default {serverExternalPackages:['node:sqlite'],experimental:{serverActions:{bodySizeLimit:'20mb'}},devIndicators:false,async headers(){return [{source:'/:path*',headers:[{key:'Referrer-Policy',value:'no-referrer'},{key:'X-Frame-Options',value:'DENY'},{key:'X-Content-Type-Options',value:'nosniff'}]}]}};
+import {withWorkflow} from 'workflow/next';
+export default withWorkflow({serverExternalPackages:['pg'],experimental:{serverActions:{bodySizeLimit:'20mb'}},devIndicators:false,async headers(){return [{source:'/:path*',headers:[{key:'Referrer-Policy',value:'no-referrer'},{key:'X-Frame-Options',value:'DENY'},{key:'X-Content-Type-Options',value:'nosniff'}]}]}});

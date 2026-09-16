@@ -1,3 +1,5 @@
+import {setupTestDatabase} from './helpers/postgres.mjs';
+await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -8,7 +10,7 @@ const db=await import('../lib/db.mjs');
 const conn=await import('../lib/connectors.mjs');
 const {gmailFailureCode}=await import('../lib/auth-messages.mjs');
 const quota=()=>Response.json({error:{details:[{'@type':'type.googleapis.com/google.rpc.ErrorInfo',reason:'RATE_LIMIT_EXCEEDED'},{'@type':'type.googleapis.com/google.rpc.RetryInfo',retryDelay:'12s'}]}},{status:403,headers:{'Retry-After':'15'}});
-function noWait(t){const delays=[];t.mock.method(globalThis,'setTimeout',(callback,ms)=>{delays.push(ms);queueMicrotask(callback);return 0;});return delays;}
+function noWait(t){const delays=[],original=globalThis.setTimeout;t.mock.method(globalThis,'setTimeout',(callback,ms,...args)=>{if(ms<15000)return original(callback,ms,...args);delays.push(ms);queueMicrotask(callback);return 0;});return delays;}
 test('Google 403 quota errors honor retry instructions and retry the same request',async t=>{
  const delays=noWait(t),calls=[],notices=[];
  t.mock.method(globalThis,'fetch',async(url,options)=>{calls.push({url,options});return calls.length===1?quota():Response.json({ok:true});});
@@ -27,7 +29,7 @@ test('disabled APIs and denied permissions fail immediately; quota retries are b
 });
 test('Gmail resumes a rate-limited message without losing pagination or duplicating records',async t=>{
  noWait(t);const notices=[];let secondAttempts=0;
- conn.saveSecrets({google_client:{client_id:'fixture',client_secret:'fixture'},gmail_tokens:{access_token:'fixture',refresh_token:'fixture',expires_at:Date.now()+3600000}});
+ await conn.saveSecrets({google_client:{client_id:'fixture',client_secret:'fixture'},gmail_tokens:{access_token:'fixture',refresh_token:'fixture',expires_at:Date.now()+3600000}});
  t.mock.method(globalThis,'fetch',async url=>{
   const u=new URL(url);
   if(u.pathname.endsWith('/profile'))return Response.json({emailAddress:'owner@example.com',historyId:'h-start'});
@@ -37,6 +39,6 @@ test('Gmail resumes a rate-limited message without losing pagination or duplicat
  });
  const result=await conn.syncProvider('gmail',()=>{},n=>notices.push(n));
  assert.equal(result.complete,true);assert.equal(result.total,2);assert.equal(secondAttempts,2);assert.match(notices[0],/rate limit.*15 seconds/);
- assert.equal(db.one("SELECT COUNT(*) AS n FROM sources WHERE provider='gmail'").n,2);assert.equal(db.getSetting('gmail_page'),null);assert.equal(db.getSetting('gmail_history'),'h-start');
+ assert.equal((await db.one("SELECT COUNT(*) AS n FROM sources WHERE provider='gmail'")).n,2);assert.equal((await db.getSetting('gmail_page')),null);assert.equal((await db.getSetting('gmail_history')),'h-start');
 });
-test.after(()=>{db.db.close();rmSync(temp,{recursive:true,force:true});});
+test.after(async ()=>{(await db.db.close());rmSync(temp,{recursive:true,force:true});});

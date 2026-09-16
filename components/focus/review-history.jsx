@@ -47,7 +47,7 @@ export function ReviewHistory({ jobs, selectedJobId, onSelect }) {
                 key={job.id}
                 variant="ghost"
                 aria-current={current ? 'true' : undefined}
-                className={`h-auto w-full items-start justify-start gap-3 whitespace-normal rounded-lg px-3 py-2.5 text-left ${current ? 'border-border bg-muted' : ''}`}
+                className={`h-auto w-full min-w-0 items-start justify-start gap-3 whitespace-normal rounded-lg px-3 py-2.5 text-left sm:h-auto ${current ? 'border-border bg-muted' : ''}`}
                 onClick={() => onSelect(job.id)}
               >
                 <span className="flex min-w-0 flex-1 flex-col gap-1">
@@ -66,7 +66,7 @@ export function ReviewHistory({ jobs, selectedJobId, onSelect }) {
                       {formatDate(job.created_at)}
                     </span>
                   </span>
-                  <span className="text-sm leading-snug font-medium">
+                  <span className="line-clamp-2 text-sm leading-snug font-medium [overflow-wrap:anywhere]">
                     {firstLine(job.result?.brief) || 'Review ready'}
                   </span>
                   <span className="truncate text-xs text-muted-foreground">

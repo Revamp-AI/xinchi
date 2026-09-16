@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Focus is a single-owner, local-only Next.js 16 app. It ingests meeting and email context (Fireflies, Granola, Gmail, manual files) into SQLite, runs agent reviews through the signed-in Codex CLI, and keeps a commitment board capped at three active outcomes. Everything binds to `http://127.0.0.1:3210`. The repo is public; runtime data, credentials, and the owner's private context never go in it.
+Focus is a single-owner Next.js 16 app with local and Vercel production modes. It ingests meeting and email context (Fireflies, Granola, Gmail, manual files) into PostgreSQL, runs agent reviews through the signed-in Codex CLI, and keeps a commitment board capped at three active outcomes. Local mode binds to `http://127.0.0.1:3210`. Hosted mode uses the exact HTTPS `XIN_APP_ORIGIN`, Secure host-only cookies, encrypted Postgres provider credentials, and AI Gateway reviews. See `docs/vercel.md`. The repo is public; runtime data, credentials, and the owner's private context never go in it.
 
 ## Commands
 
-Node 24+ is required (`node:sqlite`). ESLint (`eslint.config.mjs`, a JavaScript-only flat config built from the `@next/eslint-plugin-next` core-web-vitals rules plus the React, React Hooks, and jsx-a11y plugins) and Prettier (`.prettierrc`) are configured; Prettier skips the dense `lib/*.mjs`, `scripts/`, `tests/*.test.mjs`, `app/api/`, and vendored `components/ui/` files (`.prettierignore`). Type checking runs inside `next build` (`tsconfig.json` has `strict: false` and `allowJs`) using the native TypeScript 7 compiler. TypeScript files are not linted because typescript-eslint does not support TypeScript 7 yet; `next build` is what catches type errors in them.
+Node 24+ and PostgreSQL 16+ are required. SQLite is used only by the offline legacy importer. ESLint (`eslint.config.mjs`, a JavaScript-only flat config built from the `@next/eslint-plugin-next` core-web-vitals rules plus the React, React Hooks, and jsx-a11y plugins) and Prettier (`.prettierrc`) are configured; Prettier skips the dense `lib/*.mjs`, `scripts/`, `tests/*.test.mjs`, `app/api/`, and vendored `components/ui/` files (`.prettierignore`). Type checking runs inside `next build` (`tsconfig.json` has `strict: false` and `allowJs`) using the native TypeScript 7 compiler. TypeScript files are not linted because typescript-eslint does not support TypeScript 7 yet; `next build` is what catches type errors in them.
 
 | Task | Command |
 |---|---|
@@ -16,8 +16,8 @@ Node 24+ is required (`node:sqlite`). ESLint (`eslint.config.mjs`, a JavaScript-
 | Dev server | `npm run dev` (port 3210; run only one instance) |
 | Production | `npm run build && npm start` |
 | All tests | `npm test` |
-| One test file | `node --test tests/system.test.mjs` |
-| One test by name | `node --test --test-name-pattern="displacement" tests/system.test.mjs` |
+| One test file | `npm test -- tests/system.test.mjs` |
+| One test by name | `npm test -- --test-name-pattern="displacement" tests/system.test.mjs` |
 | Lint | `npm run lint` |
 | Format | `npm run format` (check only: `npm run format:check`) |
 | Browser smoke test | `npm run test:e2e` (Playwright; builds and starts the app on port 3210 with a temporary `XIN_DATA_DIR`, so the port must be free; run `npx playwright install chromium` once) |
@@ -25,29 +25,27 @@ Node 24+ is required (`node:sqlite`). ESLint (`eslint.config.mjs`, a JavaScript-
 | Replace Google client | `node --env-file-if-exists=.env.local scripts/configure-google.mjs client.json` |
 | Add a Coss UI component | `npx shadcn@latest add @coss/<name>` (registry alias in `components.json`) |
 
-`.env.local` must set `XIN_ALLOWED_EMAIL` (see `.env.example`). `dev` and `build` pass `--webpack`; keep that unless you have verified Turbopack with `node:sqlite` (listed in `serverExternalPackages`) and the Tailwind v4 PostCSS setup. Running the build or the tests creates `data/` as a side effect; it is gitignored.
+`.env.local` must set `XIN_ALLOWED_EMAIL` (see `.env.example`). `dev` and `build` pass `--webpack`; keep that unless you have verified Turbopack with `pg` (listed in `serverExternalPackages`) and the Tailwind v4 PostCSS setup. Running the build or the tests creates `data/` as a side effect; it is gitignored.
 
 ## Architecture
 
-### Three processes, one database
+### Processes and persistence
 
-- **Next server.** One catch-all route, `app/api/[...path]/route.js`, dispatches on the path string. Pages are `app/page.jsx` (session-gated workspace) and `app/login/page.jsx`.
-- **Sync worker.** `startSync()` in `lib/connectors.mjs` inserts a `sync_runs` row and spawns a detached `scripts/sync-worker.mjs`, which runs `syncProvider()` and writes progress back to that row. A running row counts as live only while its `pid` is alive (`isProcessAlive()`) and its heartbeat (`updated_at`, falling back to `started_at`) is under 15 minutes old (`staleRun()`); `recoverSyncRuns()` marks stale rows failed on every `GET /api/state` poll and at the start of `startSync()`, which then refuses to start beside a live run. Finished runs store `imported` (records processed) and `changed` (added or updated) separately.
-- **Agent worker.** `createJob()` / `launchJob()` in `lib/agent.mjs` insert a `jobs` row and spawn a detached `scripts/worker.mjs`. That process runs `codex exec` (read-only sandbox, most features disabled, `--output-schema`) with `scripts/context-mcp.mjs` attached as a stdio MCP server exposing exactly three read-only tools: `search_context`, `read_source`, `read_commitments`. Every tool call appends a `job_events` row, which is both the job heartbeat and the "activity" log shown in the UI.
+The Next server, provider sync worker, contact extraction worker and agent worker share asynchronous PostgreSQL helpers in `lib/postgres.mjs`. Every `all`, `one`, `run`, `getSetting`, source write, item write and auth database operation must be awaited. Transactions use AsyncLocalStorage and one checked-out connection. Runtime imports do not run migrations. Run `npm run db:migrate` explicitly; migration tooling lives in `lib/migrations.mjs` and must not be imported by the web app.
 
-Children receive `XIN_APP_ROOT` and `XIN_DATA_DIR` so they resolve `scripts/` and `data/` the same way the server does. There is no websocket and no scheduler: the workspace polls `GET /api/state` every 2.5 s, and `dashboard()` in `lib/db.mjs` is the single payload every view reads.
+Local workers and cloud reviews use `lib/leases.mjs` with 45-second leases and 10-second heartbeats. Hosted ingestion and contact extraction use `workflows/ingestion.js`: each bounded step commits source writes and its cursor atomically in Neon. `lib/durable-ingestion.mjs` fences dispatch ownership, step revisions and 120-second unit leases so replay and late workers cannot repeat a commit. Durable waits are exempt from legacy lease expiration; cron reconciles confirmed terminal Workflow runs and offers resumable failures. PID fields are diagnostic only. Capacity, ingestion commits and contact merges lock `workspace_lock`.
 
-### Storage (`data/`, override with `XIN_DATA_DIR`)
+`DATABASE_URL` selects runtime storage; optional `DATABASE_URL_UNPOOLED` selects the migration connection. `focus_auth` holds the pinned owner, hashed sessions, OAuth attempts and sanitized audit, and is excluded from exports. Local `connections.secret.json` and `data/runs/` remain private. Hosted provider credentials use `focus_auth.provider_secrets` and `XIN_SECRETS_KEY`; Google client credentials are environment-only. `secrets()`, `saveSecrets()`, and credential mutations are asynchronous. Do not read or migrate a live personal archive during tests.
 
-- `xin.sqlite3` via `lib/db.mjs`: `sources`, `source_versions` (raw snapshots), FTS5 `source_search`, `items`, `events`, `proposals`, `jobs`, `job_events`, `sync_runs`, `settings`.
-- `auth.secret.sqlite3` via `lib/auth.mjs`: owner, hashed sessions, OAuth attempts, sanitized `auth_events`.
-- `connections.secret.json` via `lib/connectors.mjs`: provider keys, Google client, Gmail tokens, last Gmail issue.
+`npm test` creates an isolated local Postgres cluster and each test file creates a unique database. `FOCUS_TEST_DATABASE_URL` may point at a dedicated loopback test server. Browser tests also use a temporary Postgres database and fictional fixtures.
 
-Importing `lib/db.mjs` or `lib/auth.mjs` opens the database and creates the schema as a module side effect. Tests set `process.env.XIN_DATA_DIR` to a temp dir *before* `await import(...)`. `lib/*.mjs` are plain ESM shared by the Next server and the standalone scripts; keep them free of Next and React imports.
+`FOCUS_E2E_DURABLE=1 npm run test:e2e -- workflow.spec.ts --project=desktop-chromium` verifies the compiled Workflow runtime with fictional uploads and contact extraction. Its temporary local Workflow world and review blocker prevent production queue access or model invocation. Manual hosted uploads use authenticated chunks and private staging tables; Workflow inputs and outputs contain opaque IDs, revisions and completion/retry metadata, never source content or credentials.
+
+Contacts modules separate manual CRUD/policy (`contacts.mjs`), parsing/projection (`contact-extraction.mjs`), audited merge/undo (`contact-identity.mjs`), workers and pure versioned cadence rules (`relationship-rules.mjs`). Cross-provider identity equality suggests review; it does not silently merge. Source versions and contact queues are durable; state is rebuildable. [Contacts behavior](docs/contacts.md) and the [cutover runbook](docs/postgres-cutover.md) describe invariants and limits.
 
 ### Source records
 
-`upsertSource()` is the only write path. The id is `provider:external_id`. An unchanged content hash is a no-op; a new hash updates the row, appends a `source_versions` snapshot, and rebuilds the FTS row. Coverage is ranked (`metadata`/`empty` < `summary` < `document`/`email body` < `transcript` < `deleted upstream`) and a lower-ranked import cannot overwrite a higher-ranked body. Prompts typed into the agent composer are stored as `manual` sources so later reviews can find them.
+`upsertSource()` is the only write path. The id is `provider:external_id`. An unchanged content hash is a no-op; a new hash updates the row, appends a `source_versions` snapshot, and enqueues contact extraction where applicable. PostgreSQL maintains the full-text index. Coverage is ranked (`metadata`/`empty` < `summary` < `document`/`email body` < `transcript` < `deleted upstream`) and a lower-ranked import cannot overwrite a higher-ranked body. Prompts typed into the agent composer are stored as `manual` sources so later reviews can find them.
 
 ### Commitment rules live in `saveItem()` (`lib/db.mjs`)
 
@@ -56,16 +54,16 @@ This function is the business-rule center; the UI only mirrors it.
 - Statuses: `candidate` (UI label "To decide"), `now`, `waiting`, `later`, `done`, `dropped` (UI label "Closed"). Kinds: `action`, `decision`.
 - `now` requires `done_when`, `next_action`, `owner`, `checkpoint`. A fourth `now` item must pass `replace_id`, `tradeoff_reason`, `replace_checkpoint`; the displaced item moves to `later` with a `displaced` event, in the same transaction.
 - `waiting` requires `dependency` + `checkpoint`; `later` requires `reason` + `checkpoint`; `dropped` requires `reason`; `done` requires `evidence`. Moving a checkpoint after one was set requires a `reason`.
-- `source_quote` must be a verbatim substring of the linked source body. `version` gives optimistic concurrency. Every save writes an `events` row with before/after JSON.
+- `source_quote` must be a verbatim substring of the linked source body. `version` gives optimistic concurrency. Every save writes an `events` row with before/after JSON. `item_contacts` links follow-ups to people without creating a second task ledger.
 - Accepting a proposal is just `saveItem({...payload, proposal_id})`. Nothing becomes an item without the user.
 
 ### Agent contract (`lib/agent.mjs`, `scripts/worker.mjs`)
 
-`AgentResult` (zod) becomes the JSON Schema handed to Codex. `validateResult()` rejects the whole result if any citation quote is not a substring of the cited source body or if `existing_item_id` is unknown; a rejected result fails the job and saves nothing. Proposals dedupe by fingerprint (title + first source + existing item). One job runs at a time; imports finishing during a job queue a single `pending_import_review` that the worker drains on exit. `recoverJobs()` fails jobs with no heartbeat for 10 minutes; the worker times out at 8 minutes and fails any run that never called a context tool. The agent policy is the inline prompt string in `scripts/worker.mjs`.
+`AgentResult` (zod) becomes the JSON Schema used by both the local Codex runner and cloud AI Gateway runner. `validateResult()` rejects the whole result if any citation quote is not a substring of the cited source body or if `existing_item_id` is unknown; a rejected result fails the job and saves nothing. Proposals dedupe by fingerprint (title + first source + existing item). One job runs at a time; imports finishing during a job queue a single `pending_import_review` that the worker drains on exit. `recoverJobs()` fails expired durable leases; the worker times out at 8 minutes and fails any run that never called a context tool. Both runners share the policy in `lib/agent-policy.mjs` and read-only tools in `lib/context-tools.mjs`.
 
 ### Auth and request protection (`lib/auth.mjs`)
 
-Google OIDC with PKCE, one owner (`XIN_ALLOWED_EMAIL`; the Google `sub` is pinned on first login). `checkLocalRequest()` requires `Host: 127.0.0.1:3210` exactly (`localhost` is rejected), and every POST needs `Origin: http://127.0.0.1:3210` plus the `X-Xin-Request: 1` header. The `api()` / `post()` helpers in `app/workspace.jsx` and `app/login/screen.jsx` add it; any new fetch must too. Only `auth/setup` and `auth/google/start` are unauthenticated POSTs. Text shown to the browser comes exclusively from the fixed strings in `lib/auth-messages.mjs`; never surface raw provider responses. `tests/auth.test.mjs` enumerates protected paths, so add new API paths to those lists.
+Google OIDC with PKCE, one owner (`XIN_ALLOWED_EMAIL`; the Google `sub` is pinned on first login). `checkLocalRequest()` requires the exact configured origin host (`127.0.0.1:3210` in local mode; `localhost` is rejected), and every POST needs `Origin: http://127.0.0.1:3210` plus the `X-Xin-Request: 1` header (hosted writes use the configured HTTPS origin). The `api()` / `post()` helpers in `app/workspace.jsx` and `app/login/screen.jsx` add it; any new fetch must too. Only `auth/setup` and `auth/google/start` are unauthenticated POSTs; hosted `auth/setup` is always forbidden. `/api/internal/jobs` requires the cron bearer secret. Text shown to the browser comes exclusively from the fixed strings in `lib/auth-messages.mjs`; never surface raw provider responses. `tests/auth.test.mjs` enumerates protected paths, so add new API paths to those lists.
 
 ### UI
 

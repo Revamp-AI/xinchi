@@ -10,6 +10,8 @@ import {
   LogOut,
   Plug,
   Sparkles,
+  Settings2,
+  Users,
 } from 'lucide-react';
 import {
   SidebarProvider,
@@ -44,8 +46,10 @@ import { ThemeToggle } from './theme';
 const views = [
   ['agent', Sparkles, 'Overview'],
   ['board', CheckCheck, 'Commitments'],
+  ['contacts', Users, 'Contacts'],
   ['library', BookOpen, 'Context library'],
   ['connections', Plug, 'Connections'],
+  ['settings', Settings2, 'Settings'],
 ];
 function Navigation({ view, onViewChange, state, busy, onLogout }) {
   const { setOpenMobile } = useSidebar();
@@ -57,7 +61,14 @@ function Navigation({ view, onViewChange, state, busy, onLogout }) {
   return (
     <Sidebar collapsible="offcanvas" className="focus-sidebar">
       <SidebarHeader className="sidebar-brand">
-        <Brand />
+        <a
+          href="#agent"
+          onClick={() => navigate('agent')}
+          aria-label="Focus overview"
+          className="w-fit rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
+        >
+          <Brand />
+        </a>
       </SidebarHeader>
       <SidebarContent>
         <div className="workspace-label">
@@ -127,6 +138,10 @@ function Navigation({ view, onViewChange, state, busy, onLogout }) {
           <MenuPopup side="top" align="start" className="min-w-60">
             <div className="account-email">{state.user?.email}</div>
             <MenuSeparator />
+            <MenuItem onClick={() => navigate('settings')}>
+              <Settings2 />
+              AI review settings
+            </MenuItem>
             <MenuItem onClick={() => navigate('connections')}>
               <Plug />
               Manage connections
@@ -147,6 +162,7 @@ function Navigation({ view, onViewChange, state, busy, onLogout }) {
   );
 }
 export default function AppShell({
+  connectionLost,
   view,
   onViewChange,
   state,
@@ -169,14 +185,16 @@ export default function AppShell({
               <strong>{views.find(([id]) => id === view)?.[2]}</strong>
             </div>
             <div className="topbar-status">
-              {activeImports.length > 0 ? (
+              {connectionLost ? (
+                <StatusBadge tone="warning">Connection interrupted</StatusBadge>
+              ) : activeImports.length > 0 ? (
                 <StatusBadge tone="info" dot>
                   Importing context
                 </StatusBadge>
               ) : (
                 <span className="local-status">
                   <span className="live-dot" />
-                  Saved on this Mac
+                  Saved in Postgres
                 </span>
               )}
               <ThemeToggle />

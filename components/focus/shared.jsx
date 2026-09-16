@@ -9,6 +9,7 @@ import {
   Focus,
   Leaf,
   Mail,
+  MessagesSquare,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -47,6 +48,7 @@ export const providerNames = {
   granola: 'Granola',
   gmail: 'Gmail',
   manual: 'Your notes',
+  beeper: 'Beeper',
 };
 export function formatDate(value) {
   if (!value) return 'No checkpoint';
@@ -77,9 +79,13 @@ export function Brand({ compact = false }) {
 }
 export function ProviderIcon({ provider, small = false }) {
   const Icon =
-    { fireflies: Flame, granola: Leaf, gmail: Mail, manual: FileText }[
-      provider
-    ] || FileText;
+    {
+      fireflies: Flame,
+      granola: Leaf,
+      gmail: Mail,
+      manual: FileText,
+      beeper: MessagesSquare,
+    }[provider] || FileText;
   return (
     <span
       className={`provider-symbol provider-${provider}${small ? ' provider-small' : ''}`}
@@ -243,7 +249,13 @@ export function Citations({ citations = [], openSource }) {
             variant="outline"
             size="xs"
             className="max-w-full"
-            onClick={() => openSource(citation.source_id, citation.quote)}
+            onClick={() =>
+              openSource(
+                citation.source_id,
+                citation.quote,
+                citation.source_version_id,
+              )
+            }
           >
             <ProviderIcon small provider={provider} />
             <span className="min-w-0 truncate">
