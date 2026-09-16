@@ -132,3 +132,23 @@ for(const terminal of ['complete','partial'])test('a legacy '+terminal+' result 
  assert.deepEqual(await one('SELECT * FROM sync_runs WHERE id=?',row.id),parent);assert.equal((await one('SELECT completed FROM durable_runs WHERE run_id=?',row.id)).completed,true);assert.equal(inspected.includes(row.wf),false);
 });
 test.after(()=>rmSync(privateDir,{recursive:true,force:true}));
+
+test('bounded workflow handoff retains cursor and rejects late writes from the old owner',async()=>{
+ const {yieldDurableRun}=await import('../lib/durable-ingestion.mjs');
+ const row=await queued();await unit(row,0,{initial:async()=>({n:0}),advance:async()=>({cursor:{n:500},records:[],complete:false})});
+ assert.equal(await yieldDurableRun('sync',row.id,row.token,'not-the-owner'),false);
+ assert.equal(await yieldDurableRun('sync',row.id,row.token,row.wf),true);
+ assert.equal((await one('SELECT state FROM sync_runs WHERE id=?',row.id)).state,'queued');
+ const next=(await prepareDispatches()).find(r=>r.id===row.id);assert.notEqual(next.token,row.token);
+ assert.equal((await unit(row,1,{advance:async()=>{throw Error('Old owner must not run');}})).done,true);
+ const caughtUp=await advanceDurableUnit('sync',row.id,next.token,'continued-workflow',0);assert.equal(caughtUp.revision,1);
+ await advanceDurableUnit('sync',row.id,next.token,'continued-workflow',1,{advance:async(_provider,cursor)=>{assert.equal(cursor.n,500);return{cursor,records:[],complete:true};}});
+ assert.equal((await one('SELECT state FROM sync_runs WHERE id=?',row.id)).state,'complete');
+});
+test('automatic historical extraction fills only missing source work and keeps progress',async()=>{
+ const {scheduleContactHistory}=await import('../lib/contact-jobs.mjs');
+ await run("UPDATE contact_runs SET state='complete' WHERE state IN ('queued','running')");await run("UPDATE contact_queue SET state='complete'");
+ const s=await upsertSource({provider:'fireflies',external_id:'old-backfill-test',title:'Old fictional meeting',occurred_at:'2020-01-01T12:00:00Z',body:'Old fictional evidence.'});await run('DELETE FROM contact_queue WHERE source_id=?',s.id);
+ const first=await scheduleContactHistory();assert.ok(first.id);assert.equal((await one('SELECT state FROM contact_queue WHERE source_id=?',s.id)).state,'pending');
+ await run("UPDATE contact_queue SET state='complete' WHERE source_id=?",s.id);await scheduleContactHistory();assert.equal((await one('SELECT state FROM contact_queue WHERE source_id=?',s.id)).state,'complete');
+});

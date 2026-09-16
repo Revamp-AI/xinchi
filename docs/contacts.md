@@ -5,7 +5,7 @@ Contacts is the fifth Focus destination. It combines a searchable people list, a
 ## Daily use
 
 - Add a contact manually or import a CSV with `name,email,company,role,notes,tags`. Quoted commas and multiline fields work; separate tags with semicolons. Reimporting an identical row is idempotent. Exact personal-email matches reuse the existing profile and preserve its chosen name and preferences. CSV notes and tags are combined; imported names remain searchable identity aliases.
-- Bring in contacts from the most recent 90 days of stored Gmail, Beeper, Fireflies and Granola material, or explicitly choose all stored history. Newly imported recent sources enter the extraction queue automatically. CLI imports can be extracted from the Contacts screen.
+- Stored Gmail, Beeper, Fireflies and Granola history is queued for contact extraction automatically, including sources older than ninety days. New and changed sources enter the queue automatically. The manual import controls can also request recent or all history.
 - Relationship classification happens automatically from verified activity. Identity confirmation and follow-up tracking do not block classification. Set a cadence and add purpose tags independently.
 - Exact normalized personal emails resolve to one contact across providers and accounts. Provider identities, source names and evidence remain attached to that contact. Email normalization trims whitespace and ignores letter case; it does not remove dots or plus tags. Name-only matches, shared mailboxes, conflicting maintained profiles, and explicit keep-separate decisions still require review. Names without stable identifiers remain scoped to their recording. Identity matching does not enable follow-up tracking.
 - Beeper names come from the other participant or the verified direct conversation's title. Your outgoing sender name never labels the other person. Conversations with unresolved participant ownership remain in source evidence until a verified participant list is available.
@@ -25,14 +25,24 @@ Purpose tags, relationship state and commitment attention are separate.
 | --- | --- |
 | New | A first verified interaction within 14 days, without a reciprocal exchange. |
 | Active | Last meaningful reply or attended conversation is within the chosen cadence. |
-| Cooling | Beyond one cadence, through three cadences, with complete recent coverage. |
-| Dormant | Beyond three cadences, with complete recent coverage. |
+| Cooling | Last recorded meaningful exchange is beyond one cadence, through three cadences. Marked estimated when coverage is partial. |
+| Dormant | Last recorded meaningful exchange is beyond three cadences. Marked estimated when coverage is partial. |
 | Paused | Paused, snoozed, or marked do-not-contact. |
-| Unclassified | Insufficient verified interaction evidence, outbound-only history, or incomplete/stale coverage that prevents a cooling conclusion. |
+| Unclassified | No verified meaningful interaction evidence, or outbound-only history. An address book connection alone is insufficient. |
 
 Cadence defaults to 30 days and applies whether or not follow-up tracking is enabled. It can be changed per person. Unconfirmed identities can have an activity classification while their merge suggestions remain pending. Outbound outreach alone cannot renew warmth. An imported event uses its occurrence time, never its import time. A recent real exchange after a Cooling/Dormant state can display a Reconnected badge; changing cadence alone cannot create it. The map contains actual contact records; it has no fabricated activity or ambient traffic animation.
 
-Coverage requires complete recent provider imports and no outstanding extraction for those providers. A filtered Gmail query is partial coverage. Beeper's locally available history also needs a coverage check before inferring silence. For a manually maintained timeline, the owner can explicitly confirm that it is complete through today; that confirmation remains fresh for 48 hours. This checks completeness of history, independently of identity confirmation. State evaluation is versioned, recorded in history, and refreshed when contacts/events change, the rules change, or the view's evaluation becomes stale.
+Complete coverage requires complete recent provider imports and no outstanding extraction for those providers. A filtered Gmail query is partial coverage. Beeper's locally available history is partial. Incomplete coverage no longer hides older relationships in Unclassified: Cooling and Dormant describe the recorded timeline, with an explicit estimate and coverage explanation. Paused is never inferred from silence; it follows pause, snooze or do-not-contact preferences, with pause/resume available on the profile. For a manually maintained timeline, the owner can explicitly confirm that it is complete through today; that confirmation remains fresh for 48 hours. This checks completeness of history, independently of identity confirmation. State evaluation is versioned, recorded in history, and refreshed when contacts/events change, the rules change, or the view's evaluation becomes stale.
+
+## Automatic relationship agent
+
+The Contacts page shows a Relationship agent panel, enabled by default, with progress, errors, pause and Analyze now controls. Production cron runs bounded analysis passes using the provider/model already selected in Settings → Reviews (including the connected ChatGPT subscription). No separate credentials are required. The panel refreshes while analysis continues; closing the page does not stop the cron.
+
+Each pass assesses up to eight profiles with conversation or user-note evidence and marks up to five hundred address-book-only profiles as lacking relationship context without calling a model. The agent can read longer pages of linked sources using a read-only tool, with a four-step limit, reading budget and two-minute model timeout. Input fingerprints include contact edits, source revisions, participant corrections and affiliations; unchanged profiles do not spend another model call. Leases prevent overlapping writes, stale results are discarded, and failures back off and defer the affected batch so other people can still be analyzed.
+
+The output includes up to three purpose tags, a relationship summary and one optional next step. Every nonempty inference requires an exact quote from an immutable source version linked to that specific person. Source contents are treated as untrusted data. Employers and job titles alone do not establish Customer, Investor or other relationships to the owner. Purpose is shown as inferred; unknown purpose is shown as Not enough context. Manual tags take precedence and are never overwritten. Profiles expose evidence, confidence, assessment date and a persistent dismissal. Merge/undo invalidates derived results for reassessment. The agent cannot send messages, create commitments, merge identities or change contact preferences; restricted contacts get no suggested outreach.
+
+Historical extraction fills missing queue entries once and preserves completed work. All future revisions, including older records, enter extraction. Ingestion workflows yield after five hundred steps, keeping their database cursor, and the next cron dispatch resumes in a fresh workflow to avoid unbounded event histories.
 
 ## LinkedIn connection exports
 
@@ -62,7 +72,7 @@ For profiles created by the old Beeper outgoing-sender fallback, run `node scrip
 
 Run `node scripts/reconcile-contact-emails.mjs` with the intended database environment to preview existing exact-email duplicates, then add `--apply` to reconcile them. Each email group commits atomically under the same workspace lock as ingestion. Repeated runs are idempotent. No source text or snapshot is deleted. Provider extraction also reconciles eligible legacy duplicates when it encounters them. Aliases are available in profile identity details and contact search.
 
-The map/list page holds 500 contacts at a time; segment counts cover the full filtered result. Map regions show up to 15 people and link to the full segment list. Profile timelines show the most recent 300 interactions; classification evaluates the full stored timeline. Identity/duplicate review panels show the next 30 pending records and refill after decisions.
+The list holds 500 contacts at a time; segment counts and purpose filter choices cover the full result. Map regions independently sample up to fifteen contacts per segment from the full filtered set, including people outside the first alphabetical page, and link to the full segment list. Profile timelines show the most recent 300 interactions; classification evaluates the full stored timeline. Identity/duplicate review panels show the next 30 pending records and refill after decisions.
 
 Cross-provider meeting matching uses normalized titles and nearby timestamps to suggest duplicates. Suggestions are excluded from warmth until reviewed; they are not independent corroboration. Participant schemas vary across source archives. Missing owner attendance or email identity is shown as uncertain, and speaker names never silently identify a person across recordings.
 

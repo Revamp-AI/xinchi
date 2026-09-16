@@ -15,7 +15,9 @@ test('cadence rules use event time, reciprocal exchanges, real coverage and deli
  const state=(c,i,fresh=true)=>relationshipState(c,i,{now,coverage:{fresh}}).state;
  assert.equal(state(person,[event(5)]),'New');assert.equal(state(person,[event(5),event(6,'outbound')]),'Active');
  assert.equal(state(person,[event(30)]),'Active');assert.equal(state(person,[event(31)]),'Cooling');assert.equal(state(person,[event(91)]),'Dormant');
- assert.equal(state(person,[event(31)],false),'Unclassified');assert.equal(state(person,[event(80,'outbound')]),'Unclassified');
+ assert.equal(state(person,[event(31)],false),'Cooling');assert.equal(state(person,[event(80,'outbound')]),'Unclassified');
+ assert.equal(relationshipState(person,[event(91)],{now,coverage:{fresh:false}}).basis.estimated,true);
+ assert.equal(relationshipState(person,[event(91)],{now,coverage:{fresh:true}}).basis.estimated,false);
  assert.equal(state(person,[event(80),event(0,'outbound')]),'Cooling');assert.equal(state({...person,paused:true},[event(2)]),'Paused');
  assert.equal(state({...person,do_not_contact:true},[event(2)]),'Paused');assert.equal(state({...person,tracked:false},[event(2)]),'New');
  assert.equal(state(person,[{...event(0),duplicate_status:'review',duplicate_of:'x'}]),'Unclassified');
@@ -28,7 +30,7 @@ test('classification is independent of identity confirmation and follow-up track
   assert.equal(state([event(5),event(6,'outbound')]),'Active');
   assert.equal(state([event(31)]),'Cooling');
   assert.equal(state([event(91)]),'Dormant');
-  assert.equal(state([event(31)],false),'Unclassified');
+  assert.equal(state([event(31)],false),'Cooling');
   assert.equal(state([]),'Unclassified');
   assert.equal(state([{...event(5),qualified:false}]),'Unclassified');
   assert.equal(state([{...event(5),exclusion:'Automated account'}]),'Unclassified');

@@ -1,3 +1,4 @@
+import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntelligence,dismissContactInsight,runContactIntelligence} from '../../../lib/contact-intelligence.mjs';
 import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.mjs';
 import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.mjs';
 import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,mergeReviewGroup,bulkKeepSeparate} from '../../../lib/contact-identity.mjs';
@@ -45,7 +46,7 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
  }
  if(path==='settings/reviews')return json(await reviewSettings());
  if(path==='contacts')return json(await listContacts(Object.fromEntries(u.searchParams)));
- if(path==='contacts/status'){await recoverContactRuns();return json({...await contactStatus(),auto_match:await autoMatchStatus()});}
+ if(path==='contacts/status'){await recoverContactRuns();return json({...await contactStatus(),auto_match:await autoMatchStatus(),intelligence:await contactIntelligenceStatus()});}
  if(path==='contacts/merge-preview')return json(await mergePreview(u.searchParams.get('target_id'),u.searchParams.get('source_id')));
  if(path.startsWith('contacts/'))return json(await contactDetail(path.slice(9)));
 
@@ -87,6 +88,9 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='contacts/bulk-merge-preview')return json(await bulkMergePreview(data));
  if(path==='contacts/bulk-merge')return json(await mergeReviewGroup(data));
  if(path==='contacts/bulk-separate')return json(await bulkKeepSeparate(data));
+ if(path==='contacts/intelligence'){const result=await queueContactIntelligence();after(()=>runContactIntelligence());return json(result,202);}
+ if(path==='contacts/intelligence/settings')return json(await configureContactIntelligence(data.enabled));
+ if(path==='contacts/intelligence/dismiss')return json(await dismissContactInsight(data.id));
  if(path==='contacts/auto-match')return json(await runAutoContactMatching({force:true}));
  if(path==='contacts/auto-match/settings')return json(await setAutoMatchEnabled(data.enabled));
  if(path==='contacts/undo-merge')return json(await undoMerge(data.id));

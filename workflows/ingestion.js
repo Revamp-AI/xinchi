@@ -10,9 +10,13 @@ async function failed(kind,id,workflowId){
  'use step';
  const {failDurableRun}=await import('../lib/durable-ingestion.mjs');await failDurableRun(kind,id,workflowId);
 }
+async function continueLater(kind,id,token,workflowId){
+ 'use step';
+ const {yieldDurableRun}=await import('../lib/durable-ingestion.mjs');return yieldDurableRun(kind,id,token,workflowId);
+}
 export async function ingestionWorkflow(kind,id,token){
  'use workflow';
  const {workflowRunId}=getWorkflowMetadata();let revision=0;
- try{for(;;){const result=await advance(kind,id,token,workflowRunId,revision);if(result.done)return{completed:!result.failed};revision=result.revision;if(result.waitMs)await sleep(result.waitMs);}}
+ try{for(let steps=0;steps<500;steps++){const result=await advance(kind,id,token,workflowRunId,revision);if(result.done)return{completed:!result.failed};revision=result.revision;if(result.waitMs)await sleep(result.waitMs);}return{continued:await continueLater(kind,id,token,workflowRunId)};}
  catch{await failed(kind,id,workflowRunId);return{completed:false};}
 }

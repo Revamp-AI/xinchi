@@ -31,6 +31,10 @@ import {
   formatDate,
 } from './shared';
 import { SEGMENTS } from '../../lib/relationship-rules.mjs';
+import {
+  ContactIntelligencePanel,
+  ContactInsight,
+} from './contact-intelligence';
 import { ReviewSelection, BulkMergeReview } from './contact-bulk-review';
 
 const descriptions = {
@@ -375,13 +379,13 @@ export default function ContactsView({
     };
   }, [api, query]);
   const running =
+    status?.intelligence?.running ||
     status?.auto_match?.running ||
     status?.runs.some((r) => ['queued', 'running'].includes(r.state));
   useEffect(() => {
-    if (!running) return;
     const timer = setInterval(
       () => load().catch((e) => setError(e.message)),
-      3000,
+      running ? 3000 : 30000,
     );
     return () => clearInterval(timer);
   }, [running, load]);
@@ -545,7 +549,9 @@ export default function ContactsView({
     selectedRecordings.includes(d.id),
   ).length;
   const due = records.filter((c) => c.promises_due > 0),
-    tags = [...new Set(records.flatMap((c) => c.tags))].sort();
+    tags =
+      data?.purpose_tags ||
+      [...new Set(records.flatMap((c) => c.purpose_tags || c.tags))].sort();
   const c = modal?.contact;
   return (
     <>
@@ -573,6 +579,11 @@ export default function ContactsView({
         </Notice>
       )}
       {notice && <Notice onClose={() => setNotice('')}>{notice}</Notice>}
+      <ContactIntelligencePanel
+        status={status?.intelligence}
+        busy={busy}
+        mutate={mutate}
+      />
       <div className="contact-summary">
         <div>
           <Users />
@@ -686,7 +697,9 @@ export default function ContactsView({
             >
               {SEGMENTS.filter((s) => !segment || s === segment).map(
                 (state) => {
-                  const people = records.filter((c) => c.state === state);
+                  const people = (data.map_records || records).filter(
+                    (c) => c.state === state,
+                  );
                   return (
                     <section
                       key={state}
@@ -717,7 +730,12 @@ export default function ContactsView({
                               (person.reconnected ? ' reconnected' : '')
                             }
                             onClick={() => open(person.id)}
-                            aria-label={person.name + ', ' + state}
+                            aria-label={
+                              person.name +
+                              ', ' +
+                              state +
+                              (person.basis?.estimated ? ', estimated' : '')
+                            }
                             title={
                               person.name +
                               (person.organization
@@ -742,7 +760,9 @@ export default function ContactsView({
                         {!people.length && (
                           <span className="region-empty">
                             {!counts[state]
-                              ? 'No contacts here yet'
+                              ? state === 'Paused'
+                                ? 'No paused contacts. Pause or snooze someone from their profile.'
+                                : 'No contacts here yet'
                               : 'More contacts on another page'}
                           </span>
                         )}
@@ -770,8 +790,9 @@ export default function ContactsView({
                 due
               </span>
               <span>
-                Cadence comes from each person’s preferences. Select someone to
-                see the evidence.
+                States use recorded exchanges and each person’s cadence. Older
+                states are estimates when history is incomplete. Select someone
+                to see the evidence.
               </span>
             </div>
           </>
@@ -812,6 +833,11 @@ export default function ContactsView({
                       <StatusBadge tone={tone[person.state]}>
                         {person.state}
                       </StatusBadge>
+                      {person.basis?.estimated && (
+                        <small className="contact-hint">
+                          Estimated · partial history
+                        </small>
+                      )}
                       {person.reconnected && (
                         <small className="contact-hint">Reconnected</small>
                       )}
@@ -827,7 +853,19 @@ export default function ContactsView({
                         {person.cadence_days}-day cadence
                       </small>
                     </td>
-                    <td>{person.tags.join(', ') || '—'}</td>
+                    <td>
+                      {(person.purpose_tags || person.tags).join(', ') ||
+                        (['unknown', 'dismissed'].includes(
+                          person.purpose_origin,
+                        )
+                          ? 'Not enough context'
+                          : 'Awaiting analysis')}
+                      {person.purpose_origin === 'agent' && (
+                        <small className="contact-hint">
+                          Inferred · view evidence
+                        </small>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -874,6 +912,7 @@ export default function ContactsView({
                 variant="outline"
                 disabled={
                   busy ||
+                  status?.intelligence?.running ||
                   status?.auto_match?.running ||
                   status?.auto_match?.enabled === false
                 }
@@ -1284,6 +1323,26 @@ export default function ContactsView({
                   Log interaction
                 </Button>
                 <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || c.do_not_contact}
+                  onClick={() =>
+                    mutate(
+                      'contacts',
+                      {
+                        ...c,
+                        paused: !(c.paused || c.snoozed_until),
+                        snoozed_until: null,
+                      },
+                      () => open(c.id),
+                    )
+                  }
+                >
+                  {c.paused || c.snoozed_until
+                    ? 'Resume relationship'
+                    : 'Pause relationship'}
+                </Button>
+                <Button
                   variant="ghost"
                   size="sm"
                   disabled={busy}
@@ -1296,6 +1355,13 @@ export default function ContactsView({
                   {c.archived ? 'Restore' : 'Archive'}
                 </Button>
               </div>
+              <ContactInsight
+                contact={c}
+                busy={busy}
+                mutate={mutate}
+                refresh={() => open(c.id)}
+                openSource={openSource}
+              />
               {!c.confirmed && (
                 <Notice>
                   <div className="contact-confirm">
