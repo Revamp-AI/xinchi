@@ -1318,7 +1318,40 @@ export default function ContactsView({
                     {i.address && i.display_name !== i.address
                       ? ' · ' + i.address
                       : ''}{' '}
-                    {i.address ? '' : '· identity needs review'}
+                    {i.address || i.profile_url
+                      ? ''
+                      : '· identity needs review'}
+                    {i.provider === 'linkedin' && (
+                      <>
+                        {i.profile_url && (
+                          <a
+                            href={i.profile_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            LinkedIn profile{' '}
+                            <ArrowUpRight className="inline size-3" />
+                          </a>
+                        )}
+                        {i.connected_on && (
+                          <small>
+                            Connected on LinkedIn {formatDate(i.connected_on)} ·
+                            connection date only
+                          </small>
+                        )}
+                        {i.source_id && (
+                          <Button
+                            variant="link"
+                            size="sm"
+                            onClick={() =>
+                              openSource(i.source_id, '', i.source_version_id)
+                            }
+                          >
+                            View imported connection
+                          </Button>
+                        )}
+                      </>
+                    )}
                   </p>
                 ))}
                 {c.history.map((h) => (
