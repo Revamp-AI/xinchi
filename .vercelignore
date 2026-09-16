@@ -1,4 +1,8 @@
 .git
+.next
+.swc
+*.tsbuildinfo
+.well-known/workflow
 .workflow-data
 .env*
 data

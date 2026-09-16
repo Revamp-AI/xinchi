@@ -1,6 +1,6 @@
 import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.mjs';
 import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.mjs';
-import {mergePreview,mergeContacts,undoMerge,keepSeparate} from '../../../lib/contact-identity.mjs';
+import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,mergeReviewGroup,bulkKeepSeparate} from '../../../lib/contact-identity.mjs';
 import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.mjs';
 import {dashboard,searchSources,readSource,readSourceVersion,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.mjs';
 import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.mjs';
@@ -83,6 +83,9 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='contacts/link')return json(await linkContactItem(data));
  if(path==='contacts/draft')return json(await saveDraft(data));
  if(path==='contacts/merge')return json(await mergeContacts(data));
+ if(path==='contacts/bulk-merge-preview')return json(await bulkMergePreview(data));
+ if(path==='contacts/bulk-merge')return json(await mergeReviewGroup(data));
+ if(path==='contacts/bulk-separate')return json(await bulkKeepSeparate(data));
  if(path==='contacts/undo-merge')return json(await undoMerge(data.id));
  if(path==='contacts/separate')return json(await keepSeparate(data.id));
  if(path==='items')return json((await saveItem(data)));

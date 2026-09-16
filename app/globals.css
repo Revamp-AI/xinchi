@@ -2393,6 +2393,15 @@ small.contact-hint { display: block; }
 .contact-review-list h2:first-child { margin-top: 0; }
 .contact-review-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .9rem 0; border-bottom: 1px solid var(--focus-divider); }
 .contact-review-row strong { font-size: .82rem; font-weight: 550; }
+.contact-review-selection { display: flex; align-items: flex-start; gap: .8rem; min-width: 0; }
+.contact-review-selection > [data-slot=checkbox] { margin-top: .2rem; }
+.contact-review-selection > div { min-width: 0; }
+.contact-bulk-toolbar { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; padding: 1rem; margin: .7rem 0; border: 1px solid var(--focus-divider); border-radius: .65rem; }
+.contact-bulk-select { display: flex; align-items: center; gap: .6rem; font-size: .8rem; cursor: pointer; }
+.contact-bulk-group { padding: 1rem; gap: 1rem; min-width: 0; }
+.contact-bulk-group [data-slot=select-trigger] { width: 100%; min-width: 0; }
+.contact-bulk-profile { min-width: 0; overflow-wrap: anywhere; border: 1px solid var(--focus-divider); border-radius: .6rem; }
+.contact-bulk-profile small,.contact-bulk-profile summary { font-size: .75rem; }
 .contact-review-row p,.contact-review-row small { font-size: .75rem; color: var(--focus-muted); line-height: 1.5; margin-top: .2rem; overflow-wrap: anywhere; }
 .contact-footer,.contact-pagination { display: flex; justify-content: space-between; gap: .8rem; align-items: center; padding: 1rem .2rem; color: var(--focus-muted); font-size: .72rem; }
 .contact-pagination { padding: 1rem 1.35rem; border-top: 1px solid var(--focus-border); }

@@ -31,6 +31,7 @@ import {
   formatDate,
 } from './shared';
 import { SEGMENTS } from '../../lib/relationship-rules.mjs';
+import { ReviewSelection, BulkMergeReview } from './contact-bulk-review';
 
 const descriptions = {
   New: 'A new connection, still taking shape',
@@ -335,6 +336,9 @@ export default function ContactsView({
     [linkId, setLinkId] = useState(''),
     [mergeId, setMergeId] = useState(''),
     [aliases, setAliases] = useState('');
+  const [selectedReviews, setSelectedReviews] = useState([]);
+  const [selectedRecordings, setSelectedRecordings] = useState([]);
+  const [bulkProgress, setBulkProgress] = useState('');
   const csvInput = useRef(null);
   const query = new URLSearchParams({
     q,
@@ -420,6 +424,112 @@ export default function ContactsView({
       setError(e.message);
     }
   };
+  const toggleSelection = (setter, id, checked) =>
+    setter((ids) =>
+      checked
+        ? [...new Set([...ids, id])]
+        : ids.filter((value) => value !== id),
+    );
+  const previewBulkMerge = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const preview = await api('contacts/bulk-merge-preview', {
+        ids: reviews
+          .filter((r) => selectedReviews.includes(r.id))
+          .map((r) => r.id),
+      });
+      setModal({ type: 'bulk-merge', preview });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const runBulkMerge = async (groups) => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    let merged = 0,
+      completed = [];
+    const failures = [];
+    for (const [index, group] of groups.entries()) {
+      setBulkProgress(`Merging group ${index + 1} of ${groups.length}…`);
+      try {
+        const result = await api('contacts/bulk-merge', group);
+        merged += result.merged;
+        completed.push(...group.review_ids);
+      } catch (e) {
+        failures.push(`${group.label || `Group ${index + 1}`}: ${e.message}`);
+      }
+    }
+    setSelectedReviews((ids) => ids.filter((id) => !completed.includes(id)));
+    setModal(null);
+    setBulkProgress('');
+    setNotice(
+      `${merged} ${merged === 1 ? 'profile' : 'profiles'} merged. Each completed group is available in Recent merges.`,
+    );
+    try {
+      await load();
+    } catch (e) {
+      failures.push(`Could not refresh the list: ${e.message}`);
+    }
+    if (failures.length)
+      setError(
+        `Some results could not be confirmed. Refresh or preview the remaining matches. ${failures.join(' ')}`,
+      );
+    setBusy(false);
+  };
+  const separateSelected = async () => {
+    const ids = reviews
+      .filter((r) => selectedReviews.includes(r.id))
+      .map((r) => r.id);
+    await mutate('contacts/bulk-separate', { ids }, (result) => {
+      setSelectedReviews([]);
+      setNotice(
+        `${result.completed.length} ${result.completed.length === 1 ? 'match' : 'matches'} marked as different people.${result.skipped.length ? ` ${result.skipped.length} already changed and were skipped.` : ''}`,
+      );
+    });
+  };
+  const reviewSelectedRecordings = async (action) => {
+    const selected = duplicates.filter((d) =>
+        selectedRecordings.includes(d.id),
+      ),
+      completed = [],
+      failures = [];
+    setBusy(true);
+    setError('');
+    for (const [index, d] of selected.entries()) {
+      setBulkProgress(
+        `Reviewing recording ${index + 1} of ${selected.length}…`,
+      );
+      try {
+        await api('contacts/interaction-review', {
+          id: d.id,
+          version: d.version,
+          action,
+        });
+        completed.push(d.id);
+      } catch (e) {
+        failures.push(`${d.title}: ${e.message}`);
+      }
+    }
+    setSelectedRecordings((ids) => ids.filter((id) => !completed.includes(id)));
+    setBulkProgress('');
+    setNotice(
+      `${completed.length} recording ${completed.length === 1 ? 'match' : 'matches'} marked as ${action === 'duplicate' ? 'the same meeting' : 'separate meetings'}.`,
+    );
+    try {
+      await load();
+    } catch (e) {
+      failures.push(`Could not refresh the list: ${e.message}`);
+    }
+    if (failures.length)
+      setError(
+        `Some decisions could not be confirmed. Refresh before retrying. ${failures.join(' ')}`,
+      );
+    setBusy(false);
+  };
   const filter = (value) => {
     setSegment(value);
     setOffset(0);
@@ -428,6 +538,12 @@ export default function ContactsView({
     counts = data?.counts || {},
     reviews = status?.reviews || [],
     duplicates = status?.duplicates || [];
+  const selectedReviewCount = reviews.filter((r) =>
+    selectedReviews.includes(r.id),
+  ).length;
+  const selectedRecordingCount = duplicates.filter((d) =>
+    selectedRecordings.includes(d.id),
+  ).length;
   const due = records.filter((c) => c.promises_due > 0),
     tags = [...new Set(records.flatMap((c) => c.tags))].sort();
   const c = modal?.contact;
@@ -475,7 +591,10 @@ export default function ContactsView({
         </button>
         <button onClick={() => setMode('review')}>
           <CircleHelp />
-          <strong>{reviews.length + duplicates.length}</strong>
+          <strong>
+            {(status?.review_total ?? reviews.length) +
+              (status?.duplicate_total ?? duplicates.length)}
+          </strong>
           <span>matches to review</span>
         </button>
       </div>
@@ -748,23 +867,66 @@ export default function ContactsView({
               </p>
             )}
             <h2>Could these be the same person?</h2>
+            <ReviewSelection
+              label="Bulk identity review"
+              total={status?.review_total ?? reviews.length}
+              visible={reviews.length}
+              selected={selectedReviewCount}
+              busy={busy}
+              onSelectAll={(checked) =>
+                setSelectedReviews(checked ? reviews.map((r) => r.id) : [])
+              }
+            >
+              <Button
+                variant="outline"
+                disabled={busy || !selectedReviewCount}
+                onClick={previewBulkMerge}
+              >
+                Review selected merges
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy || !selectedReviewCount}
+                onClick={separateSelected}
+              >
+                Mark selected as different people
+              </Button>
+            </ReviewSelection>
+            {reviews.length > 0 && (
+              <p className="contact-hint">
+                Showing {reviews.length} of{' '}
+                {status?.review_total ?? reviews.length} pending matches. New
+                matches appear after you finish this batch.
+              </p>
+            )}
             {!reviews.length && (
               <p className="contact-hint">No unresolved identity matches.</p>
             )}
             {reviews.map((r) => (
               <div className="contact-review-row" key={r.id}>
-                <div>
-                  <strong>
-                    {r.left_name} ↔ {r.right_name}
-                  </strong>
-                  <p>{r.reason}</p>
-                  <small>
-                    {r.left_email} · {r.right_email}
-                  </small>
+                <div className="contact-review-selection">
+                  <Checkbox
+                    aria-label={`Select match: ${r.left_name} and ${r.right_name}`}
+                    disabled={busy}
+                    checked={selectedReviews.includes(r.id)}
+                    onCheckedChange={(checked) =>
+                      toggleSelection(setSelectedReviews, r.id, checked)
+                    }
+                  />
+                  <div>
+                    <strong>
+                      {r.left_name} ↔ {r.right_name}
+                    </strong>
+                    <p>{r.reason}</p>
+                    <small>
+                      {r.left_email} · {r.right_email}
+                    </small>
+                  </div>
                 </div>
                 <div className="contact-inline-actions">
                   <Button
                     variant="outline"
+                    disabled={busy}
                     onClick={() => previewMerge(r.left_id, r.right_id)}
                   >
                     Compare
@@ -780,6 +942,36 @@ export default function ContactsView({
               </div>
             ))}
             <h2>Possible duplicate recordings</h2>
+            <ReviewSelection
+              label="Bulk recording review"
+              total={status?.duplicate_total ?? duplicates.length}
+              visible={duplicates.length}
+              selected={selectedRecordingCount}
+              busy={busy}
+              onSelectAll={(checked) =>
+                setSelectedRecordings(
+                  checked ? duplicates.map((d) => d.id) : [],
+                )
+              }
+            >
+              <Button
+                variant="outline"
+                disabled={busy || !selectedRecordingCount}
+                onClick={() => reviewSelectedRecordings('duplicate')}
+              >
+                Mark selected as same meeting
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={busy || !selectedRecordingCount}
+                onClick={() => reviewSelectedRecordings('separate')}
+              >
+                Mark selected as separate meetings
+              </Button>
+            </ReviewSelection>
+            {bulkProgress && modal?.type !== 'bulk-merge' && (
+              <p role="status">{bulkProgress}</p>
+            )}
             {!duplicates.length && (
               <p className="contact-hint">
                 No duplicate recordings need a decision.
@@ -787,26 +979,36 @@ export default function ContactsView({
             )}
             {duplicates.map((d) => (
               <div className="contact-review-row" key={d.id}>
-                <div>
-                  <strong>{d.title}</strong>
-                  <p>
-                    {formatDate(d.occurred_at)} · {d.source_id.split(':')[0]}{' '}
-                    and {d.other_source_id.split(':')[0]}
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => openSource(d.source_id)}
-                  >
-                    First source
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => openSource(d.other_source_id)}
-                  >
-                    Other source
-                  </Button>
+                <div className="contact-review-selection">
+                  <Checkbox
+                    aria-label={`Select recording: ${d.title}`}
+                    disabled={busy}
+                    checked={selectedRecordings.includes(d.id)}
+                    onCheckedChange={(checked) =>
+                      toggleSelection(setSelectedRecordings, d.id, checked)
+                    }
+                  />
+                  <div>
+                    <strong>{d.title}</strong>
+                    <p>
+                      {formatDate(d.occurred_at)} · {d.source_id.split(':')[0]}{' '}
+                      and {d.other_source_id.split(':')[0]}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openSource(d.source_id)}
+                    >
+                      First source
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openSource(d.other_source_id)}
+                    >
+                      Other source
+                    </Button>
+                  </div>
                 </div>
                 <div className="contact-inline-actions">
                   <Button
@@ -848,16 +1050,24 @@ export default function ContactsView({
               <div className="contact-review-row" key={d.id}>
                 <div>
                   <strong>
-                    {d.right_name} → {d.left_name}
+                    {d.merged_count > 1
+                      ? `${d.merged_count} profiles`
+                      : d.right_name}{' '}
+                    → {d.left_name}
                   </strong>
                   <p>Merged {formatDate(d.created_at)}</p>
+                  {d.merged_count > 1 && (
+                    <small>Undo restores the whole group.</small>
+                  )}
                 </div>
                 <Button
                   variant="outline"
                   disabled={busy}
                   onClick={() =>
                     mutate('contacts/undo-merge', { id: d.id }, () =>
-                      setNotice('Merge undone. Both profiles were restored.'),
+                      setNotice(
+                        'Merge undone. The original profiles were restored.',
+                      ),
                     )
                   }
                 >
@@ -867,7 +1077,7 @@ export default function ContactsView({
             ))}
           </div>
         )}
-        {data?.total > 500 && (
+        {mode !== 'review' && data?.total > 500 && (
           <div className="contact-pagination">
             <span>
               Showing {offset + 1}–{Math.min(offset + 500, data.total)} of{' '}
@@ -902,7 +1112,7 @@ export default function ContactsView({
       </div>
       {modal && (
         <Modal
-          wide={['detail', 'edit'].includes(modal.type)}
+          wide={['detail', 'edit', 'bulk-merge'].includes(modal.type)}
           title={
             modal.type === 'detail'
               ? c.name
@@ -914,11 +1124,13 @@ export default function ContactsView({
                   ? 'Log an interaction'
                   : modal.type === 'draft'
                     ? 'Message draft'
-                    : modal.type === 'merge'
-                      ? 'Review this merge'
-                      : modal.type === 'affiliation'
-                        ? 'Edit affiliation'
-                        : 'Bring your people into Focus'
+                    : modal.type === 'bulk-merge'
+                      ? 'Review selected merges'
+                      : modal.type === 'merge'
+                        ? 'Review this merge'
+                        : modal.type === 'affiliation'
+                          ? 'Edit affiliation'
+                          : 'Bring your people into Focus'
           }
           description={
             modal.type === 'detail'
@@ -926,11 +1138,21 @@ export default function ContactsView({
               : undefined
           }
           onClose={() => {
+            if (busy && modal.type === 'bulk-merge') return;
             setModal(null);
             setError('');
           }}
         >
           {error && <Notice error>{error}</Notice>}
+          {modal.type === 'bulk-merge' && (
+            <BulkMergeReview
+              preview={modal.preview}
+              busy={busy}
+              progress={bulkProgress}
+              onMerge={runBulkMerge}
+              onCancel={() => setModal(null)}
+            />
+          )}
           {modal.type === 'edit' && (
             <ContactForm
               value={c}
