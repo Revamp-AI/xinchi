@@ -19,6 +19,8 @@ incremental sync. Active imports cannot be replaced by a history rescan.
 
 Fireflies date filters operate on transcript creation dates, not a complete feed
 of every later edit. Older edits, delayed historical uploads, and newly shared
-historical transcripts can require **Rescan history**. Refresh intentionally does
-not re-download the entire archive to detect them. Stored source IDs and content
+historical transcripts are also checked by the hosted scheduler's daily history
+rescan. Recent checks run after five idle minutes. **Rescan history** starts an
+immediate full check. See [automatic meeting imports](meeting-sync.md).
+Stored source IDs and content
 hashes continue to prevent identical duplicate records and repeated extraction.

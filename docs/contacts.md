@@ -50,4 +50,4 @@ The map/list page holds 500 contacts at a time; segment counts cover the full fi
 
 Cross-provider meeting matching uses normalized titles and nearby timestamps to suggest duplicates. Suggestions are excluded from warmth until reviewed; they are not independent corroboration. Participant schemas vary across source archives. Missing owner attendance or email identity is shown as uncertain, and speaker names never silently identify a person across recordings.
 
-Provider import, contact extraction, and agent review status are separate. There is no automatic mail sending, calendar connector, sales pipeline, shared CRM, hosted worker service, or periodic provider scheduler. Those are outside this release.
+Provider import, contact extraction, and agent review status are separate. Hosted Granola and Fireflies connections [sync automatically](meeting-sync.md); changed imports flow through contact extraction and cloud review. There is no automatic mail sending, calendar connector, sales pipeline, or shared CRM.

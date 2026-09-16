@@ -478,7 +478,7 @@ export function ConnectionDialog({
             <p>
               {provider === 'fireflies'
                 ? 'Create an API key in your Fireflies settings. Imports use the participant email configured for your workspace.'
-                : 'Use a Granola Personal API key from Settings → Connectors → API keys. Availability depends on your workspace plan.'}
+                : 'Use a Granola API key from Settings → Connectors → API keys. Personal scope includes notes shared with you; Public scope includes workspace notes. Notes become available after Granola generates their summary and transcript.'}
             </p>
             <FormField
               label="API key"

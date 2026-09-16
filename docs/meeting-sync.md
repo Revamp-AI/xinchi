@@ -1,0 +1,13 @@
+# Automatic meeting imports
+
+The authenticated production cron at `/api/internal/jobs` runs every minute. It queues configured Granola and Fireflies connections when they have been idle for five minutes, then dispatches their durable workflows. Scheduling does not require an open browser. A provider's active import prevents another import for that provider, without blocking the other connection. Concurrent cron invocations and manual refreshes share the database workspace lock.
+
+Granola lists **all accessible note IDs on every fresh sync**, without `updated_after`. A meeting shared later or made available after processing can retain an old timestamp. An already stored full transcript with the same provider update time and title skips detail downloads. Missing version metadata, incomplete coverage, and new/changed notes are fetched. Once a day, automatic Rescan history re-fetches all bodies, including changes without a provider timestamp. Notes removed or still processing between listing and detail/transcript retrieval (404) are deferred; the next inventory finds them again if available. No partial transcript replaces a complete source.
+
+Fireflies checks a fixed snapshot window with seven days of overlap. A daily automatic history rescan also catches older recordings that became accessible late. Its existing participant filter remains the configured workspace owner (`XIN_FIREFLIES_PARTICIPANT_EMAIL` or `XIN_ALLOWED_EMAIL`). A shared team recording without that participant is outside this connection's scope.
+
+Existing page checkpoints and failed durable cursors resume unchanged. Temporary provider failures retry within the workflow. If those retries are exhausted, the scheduler resumes the same run after an hour; permanent provider failures are retried at most daily and remain visible for reconnection or correction. Active history checks finish before the next recent check; five minutes is the idle polling interval, not a maximum delivery latency. Successful changed sources trigger contact extraction and then the existing cloud review.
+
+Refresh remains available for an immediate check. Rescan history in Connections or `refresh_connection` with `rescan: true` (Granola/Fireflies) forces a full check without replacing active work. A completed older retry cannot rewind the saved sync watermark.
+
+Granola's API only returns notes once both an AI summary and transcript are generated, and only within the configured key's access scopes. Personal scope includes directly shared notes; public scope includes workspace/Team space notes. Focus can discover a meeting only once the provider exposes it to that key. See [Granola API access and availability](https://docs.granola.ai/introduction).
