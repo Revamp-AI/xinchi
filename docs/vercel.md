@@ -30,7 +30,7 @@ FOCUS_E2E_DURABLE=1 npm run test:e2e -- workflow.spec.ts --project=desktop-chrom
 
 It exercises upload → Workflow steps → sources → contact extraction → queued review and verifies staging cleanup, without calling a model or live provider.
 
-Deploy source with `vercel deploy --prod` from the linked checkout. `.vercelignore` excludes local credentials, archives, backups, and fixtures. Do not copy production credentials into preview environments. A preview needs its own database and exact HTTPS origin before it can be used.
+Commit and push the tested changes to GitHub before deploying to Vercel. Verify the deployment corresponds to that pushed commit. Deploy source with `vercel deploy --prod` from the linked checkout. `.vercelignore` excludes local credentials, archives, backups, and fixtures. Do not copy production credentials into preview environments. A preview needs its own database and exact HTTPS origin before it can be used.
 
 ## Background work
 

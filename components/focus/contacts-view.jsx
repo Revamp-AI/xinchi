@@ -374,9 +374,9 @@ export default function ContactsView({
       clearTimeout(timer);
     };
   }, [api, query]);
-  const running = status?.runs.some((r) =>
-    ['queued', 'running'].includes(r.state),
-  );
+  const running =
+    status?.auto_match?.running ||
+    status?.runs.some((r) => ['queued', 'running'].includes(r.state));
   useEffect(() => {
     if (!running) return;
     const timer = setInterval(
@@ -845,6 +845,61 @@ export default function ContactsView({
           </div>
         ) : (
           <div className="contact-review-list">
+            <h2>Automatic LinkedIn matching</h2>
+            <p className="contact-hint">
+              Match the same full name with the employer in your LinkedIn export
+              and a verified company email domain. Ambiguous matches stay here
+              for review. Automatic merges can be undone below.
+            </p>
+            <div
+              className="contact-bulk-toolbar"
+              role="group"
+              aria-label="Automatic LinkedIn matching"
+            >
+              <label
+                className="contact-bulk-select"
+                htmlFor="contact-auto-match-enabled"
+              >
+                <Checkbox
+                  id="contact-auto-match-enabled"
+                  checked={status?.auto_match?.enabled !== false}
+                  disabled={busy}
+                  onCheckedChange={(enabled) =>
+                    mutate('contacts/auto-match/settings', { enabled })
+                  }
+                />
+                Match automatically
+              </label>
+              <Button
+                variant="outline"
+                disabled={
+                  busy ||
+                  status?.auto_match?.running ||
+                  status?.auto_match?.enabled === false
+                }
+                onClick={() =>
+                  mutate('contacts/auto-match', {}, (result) =>
+                    setNotice(
+                      result.skipped
+                        ? 'Automatic matching is already running or paused.'
+                        : `${result.merged} ${result.merged === 1 ? 'profile' : 'profiles'} matched automatically.${result.deferred ? ' More company checks will continue automatically.' : ''}`,
+                    ),
+                  )
+                }
+              >
+                {status?.auto_match?.running
+                  ? 'Checking matches…'
+                  : 'Match now'}
+              </Button>
+              <span className="contact-hint" role="status">
+                {status?.auto_match?.last_run
+                  ? `${status.auto_match.total_merged || 0} matched automatically · last checked ${formatDate(status.auto_match.last_run)}`
+                  : 'Checks new and existing contacts automatically.'}
+              </span>
+            </div>
+            {status?.auto_match?.error && (
+              <Notice error>{status.auto_match.error}</Notice>
+            )}
             <h2>Commitments to revisit</h2>
             {due.length ? (
               due.map((person) => (
@@ -1056,6 +1111,28 @@ export default function ContactsView({
                     → {d.left_name}
                   </strong>
                   <p>Merged {formatDate(d.created_at)}</p>
+                  {d.automatic_match && (
+                    <p className="contact-hint">
+                      Automatically matched: same name,{' '}
+                      {d.automatic_match.company}, and{' '}
+                      {d.automatic_match.domain}.{' '}
+                      <a
+                        href={d.automatic_match.profile_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        LinkedIn evidence
+                      </a>
+                      {' · '}
+                      <a
+                        href={d.automatic_match.website.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Company website
+                      </a>
+                    </p>
+                  )}
                   {d.merged_count > 1 && (
                     <small>Undo restores the whole group.</small>
                   )}
@@ -1224,8 +1301,8 @@ export default function ContactsView({
                   <div className="contact-confirm">
                     This identity was found in your sources. Classification
                     already uses its verified activity. You can confirm the
-                    identity separately; matching profiles are reviewed before
-                    merging.
+                    identity separately. Clear employer matches can merge
+                    automatically; uncertain matches stay in Review.
                     <Button
                       size="sm"
                       disabled={busy}
@@ -1239,6 +1316,22 @@ export default function ContactsView({
                     </Button>
                   </div>
                 </Notice>
+              )}
+              {c.identities.some(
+                (i) => i.provider === 'apple' && i.address,
+              ) && (
+                <section>
+                  <h3>Apple contact details</h3>
+                  {[
+                    ...new Set(
+                      c.identities
+                        .filter((i) => i.provider === 'apple' && i.address)
+                        .map((i) => i.address),
+                    ),
+                  ].map((address) => (
+                    <p key={address}>{address}</p>
+                  ))}
+                </section>
               )}
               <div className="relationship-explanation">
                 <h3>Why this state?</h3>
@@ -1574,6 +1667,20 @@ export default function ContactsView({
                         )}
                       </>
                     )}
+                    {i.provider === 'apple' &&
+                      i.source_id &&
+                      !i.external_key.includes(':email:') &&
+                      !i.external_key.includes(':phone:') && (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          onClick={() =>
+                            openSource(i.source_id, '', i.source_version_id)
+                          }
+                        >
+                          View imported contact
+                        </Button>
+                      )}
                   </p>
                 ))}
                 {c.history.map((h) => (

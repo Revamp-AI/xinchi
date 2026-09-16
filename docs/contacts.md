@@ -42,6 +42,20 @@ The importer commits 100 connections at a time and can safely resume by rerunnin
 
 Profile identity details link to LinkedIn and the imported source, including the connection date. Connections never create interactions or warm the relationship map. New profiles remain unconfirmed and untracked until you choose otherwise. LinkedIn uploads currently use this resumable CLI; the in-app CSV picker accepts the generic contact format described above.
 
+## Automatic employer matching
+
+Contacts → Review includes **Match automatically** and **Match now**. On Vercel, a bounded pass runs through the existing cron every ten minutes; each pass checks at most five new company websites and merges at most thirty pairs. Website failures are cached for a day, successful evidence for thirty days, and deferred checks resume in later passes. Pausing takes effect before the next merge, including during an in-flight website check.
+
+Eligibility requires exactly two active profiles with the same normalized full name, exactly one LinkedIn profile URL, a matching latest LinkedIn export name and employer imported within ninety days, an active matching affiliation, and one non-shared corporate email domain. The domain's brand must exactly match the employer after basic punctuation/legal-suffix normalization, and its HTTPS website must identify that employer in site metadata, structured organization data, or a full branded title segment. Public mail providers, lookalike domains, conflicting affiliations, distinct LinkedIn profiles, ambiguous names, archived contacts, conflicting maintained fields and explicit separations remain for manual review. This uses the imported LinkedIn snapshot; it does not scrape private LinkedIn pages or claim live employment verification.
+
+Website reads are limited to public IPv4 addresses pinned to the TLS request, same-domain HTTPS redirects, one MiB, and eight seconds total. No contact names, email addresses or private profile content are sent to the website. Every automatic decision records the profile URL, source version and company website evidence. Undo restores both profiles and records a separation so the matching pass cannot immediately repeat it. Matching preserves notes, restrictions, chosen cadence and evidence, and does not enable follow-up tracking.
+
+## Apple Contacts archives
+
+Run `node --env-file=.env.local scripts/import-apple-contacts.mjs '/path/to/Contacts.abbu'` to preview an Apple Contacts archive, then append `--apply` to import. The CLI reads a temporary copy of the archive's databases and write-ahead logs; it never restores or modifies the Mac address book. It extracts names, all emails and phone numbers, organizations, roles and website/social URLs. Photos, postal addresses, birthdays and private address-book notes are excluded. The hosted CSV picker still accepts CSV; `.abbu` is handled locally by this CLI.
+
+Imports use fifty-card transactions and stable Apple card identifiers. Identical reimports are unchanged; updated cards preserve previous source versions. Exact personal emails and known LinkedIn URLs reuse existing profiles. An unambiguous international phone number can enrich the same recorded name or an unconfirmed phone-number placeholder; local numbers are retained without guessing a country. Conflicting identifiers are skipped, existing preferences and notes survive, and new cards do not create conversations or warm the relationship map. Phone numbers appear in profile details and contact search.
+
 ## Boundaries
 
 For profiles created by the old Beeper outgoing-sender fallback, run `node scripts/repair-beeper-contacts.mjs` with the intended database environment to preview the repair, then add `--apply` to save it. The repair corrects untouched imported labels, archives proven owner-only profiles, and retires obsolete name-match suggestions. It preserves source evidence, contact identities, and user-edited profiles, and never merges people.

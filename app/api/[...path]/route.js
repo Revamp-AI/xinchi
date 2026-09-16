@@ -2,6 +2,7 @@ import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv
 import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.mjs';
 import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,mergeReviewGroup,bulkKeepSeparate} from '../../../lib/contact-identity.mjs';
 import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.mjs';
+import {autoMatchStatus,runAutoContactMatching,setAutoMatchEnabled} from '../../../lib/contact-auto-match.mjs';
 import {dashboard,searchSources,readSource,readSourceVersion,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.mjs';
 import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.mjs';
 import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.mjs';
@@ -44,7 +45,7 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
  }
  if(path==='settings/reviews')return json(await reviewSettings());
  if(path==='contacts')return json(await listContacts(Object.fromEntries(u.searchParams)));
- if(path==='contacts/status'){await recoverContactRuns();return json(await contactStatus());}
+ if(path==='contacts/status'){await recoverContactRuns();return json({...await contactStatus(),auto_match:await autoMatchStatus()});}
  if(path==='contacts/merge-preview')return json(await mergePreview(u.searchParams.get('target_id'),u.searchParams.get('source_id')));
  if(path.startsWith('contacts/'))return json(await contactDetail(path.slice(9)));
 
@@ -86,6 +87,8 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='contacts/bulk-merge-preview')return json(await bulkMergePreview(data));
  if(path==='contacts/bulk-merge')return json(await mergeReviewGroup(data));
  if(path==='contacts/bulk-separate')return json(await bulkKeepSeparate(data));
+ if(path==='contacts/auto-match')return json(await runAutoContactMatching({force:true}));
+ if(path==='contacts/auto-match/settings')return json(await setAutoMatchEnabled(data.enabled));
  if(path==='contacts/undo-merge')return json(await undoMerge(data.id));
  if(path==='contacts/separate')return json(await keepSeparate(data.id));
  if(path==='items')return json((await saveItem(data)));
