@@ -39,7 +39,7 @@ test('completed legacy durable imports seed incremental sync, while unfinished o
  await run("UPDATE sync_runs SET state='failed' WHERE id='old-full'");assert.equal((await firefliesWindow()).since,null);
  await run("UPDATE sync_runs SET state='complete' WHERE id='old-full'");process.env.XIN_FIREFLIES_PARTICIPANT_EMAIL='different@example.com';assert.equal((await firefliesWindow()).since,null);
 });
-test('explicit history rescan retains the completed marker, cannot replace active work, and is restricted to Fireflies',async()=>{
+test('explicit history rescan retains the completed marker, cannot replace active work, and rejects Gmail',async()=>{
  await setSetting('fireflies_sync',marker);await setSetting('fireflies_page',{...await firefliesWindow(),skip:12});
  const started=await startSync('fireflies',{rescan:true});const full=await getSetting('fireflies_page');assert.equal(full.skip,0);assert.equal(full.since,null);assert.deepEqual(await getSetting('fireflies_sync'),marker);
  await assert.rejects(startSync('fireflies',{rescan:true}),/already running/);assert.deepEqual(await getSetting('fireflies_page'),full);

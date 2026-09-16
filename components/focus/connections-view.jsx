@@ -234,23 +234,27 @@ export default function ConnectionsView({
                   </Button>
                 </div>
               </div>
-              {provider === 'fireflies' && connection.configured && (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <p className="max-w-lg text-xs leading-relaxed text-muted-foreground">
-                    After the first import, Refresh checks new transcripts with
-                    a seven-day overlap. Rescan history also checks older
-                    transcripts.
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy || importing}
-                    onClick={() => sync('fireflies', undefined, true)}
-                  >
-                    Rescan history
-                  </Button>
-                </div>
-              )}
+              {['fireflies', 'granola'].includes(provider) &&
+                connection.configured && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="max-w-lg text-xs leading-relaxed text-muted-foreground">
+                      {state.worker?.mode === 'cloud'
+                        ? 'Automatically checks every five minutes, with a full history check daily. '
+                        : 'Refresh checks for new and changed meetings. '}
+                      {provider === 'fireflies'
+                        ? 'Recent checks use a seven-day overlap.'
+                        : 'Each check looks for all accessible notes, including older meetings shared with you. Notes appear after Granola finishes processing.'}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy || importing}
+                      onClick={() => sync(provider, undefined, true)}
+                    >
+                      Rescan history
+                    </Button>
+                  </div>
+                )}
               {connection.issue && !importing && (
                 <Notice error>
                   {connection.issue.message}

@@ -32,6 +32,14 @@ Cadence defaults to 30 days and applies whether or not follow-up tracking is ena
 
 Coverage requires complete recent provider imports and no outstanding extraction for those providers. A filtered Gmail query is partial coverage. Beeper's locally available history also needs a coverage check before inferring silence. For a manually maintained timeline, the owner can explicitly confirm that it is complete through today; that confirmation remains fresh for 48 hours. This checks completeness of history, independently of identity confirmation. State evaluation is versioned, recorded in history, and refreshed when contacts/events change, the rules change, or the view's evaluation becomes stale.
 
+## LinkedIn connection exports
+
+Run `node --env-file=.env.local scripts/import-linkedin.mjs /path/to/Connections.csv` to preview a native LinkedIn export, then append `--apply` to import. Use the intended database environment. Only Connections.csv is read; messages, advertising data, account history and other archive files are not imported. The native export's Notes preamble, quoted fields and missing emails are supported. Rows without a name and stable profile URL or personal email are skipped and counted.
+
+The importer commits 100 connections at a time and can safely resume by rerunning the same file. LinkedIn profile URLs are stable identity bindings; exact personal emails reuse existing profiles. Names (including reversed two-part names) only suggest a merge in Review. Conflicting identifiers are counted and left for review. Existing names, notes, contact restrictions, archive status and follow-up preferences stay unchanged. Imported company and position become affiliations without inferred start/end dates. Changed exports preserve previous source snapshots and affiliations. Names, roles, companies and aliases are searchable.
+
+Profile identity details link to LinkedIn and the imported source, including the connection date. Connections never create interactions or warm the relationship map. New profiles remain unconfirmed and untracked until you choose otherwise. LinkedIn uploads currently use this resumable CLI; the in-app CSV picker accepts the generic contact format described above.
+
 ## Boundaries
 
 For profiles created by the old Beeper outgoing-sender fallback, run `node scripts/repair-beeper-contacts.mjs` with the intended database environment to preview the repair, then add `--apply` to save it. The repair corrects untouched imported labels, archives proven owner-only profiles, and retires obsolete name-match suggestions. It preserves source evidence, contact identities, and user-edited profiles, and never merges people.
@@ -42,4 +50,4 @@ The map/list page holds 500 contacts at a time; segment counts cover the full fi
 
 Cross-provider meeting matching uses normalized titles and nearby timestamps to suggest duplicates. Suggestions are excluded from warmth until reviewed; they are not independent corroboration. Participant schemas vary across source archives. Missing owner attendance or email identity is shown as uncertain, and speaker names never silently identify a person across recordings.
 
-Provider import, contact extraction, and agent review status are separate. There is no automatic mail sending, calendar connector, sales pipeline, shared CRM, hosted worker service, or periodic provider scheduler. Those are outside this release.
+Provider import, contact extraction, and agent review status are separate. Hosted Granola and Fireflies connections [sync automatically](meeting-sync.md); changed imports flow through contact extraction and cloud review. There is no automatic mail sending, calendar connector, sales pipeline, or shared CRM.

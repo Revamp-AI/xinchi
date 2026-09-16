@@ -45,6 +45,8 @@ Every write tool requires an `idempotency_key`. Use a fresh UUID for each intend
 
 Imports, extraction, and cloud reviews return job IDs immediately. Poll the matching read tools for progress. Source ingestion uses the existing durable workflows and checkpoints; MCP does not keep a request open for an entire import. Beeper still requires its paired local companion. `focus_submit_review` saves Codex's structured review without calling a cloud model and leaves suggestions pending.
 
+Granola and Fireflies sync automatically in production. `refresh_connection` starts an immediate check; pass `rescan: true` to force either provider to recheck full history. Active imports must finish first.
+
 ## Access and deployment
 
 Focus **Settings → Connect Codex** lists clients, scopes, last use, and successful MCP actions. Revoking access disables the grant and all of its tokens immediately. Signing out of the website does not revoke an existing MCP connection.
