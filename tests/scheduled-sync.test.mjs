@@ -50,3 +50,8 @@ test('successive scheduled cycles automatically ingest a late shared meeting and
  const first=await tick();assert.equal(await one("SELECT id FROM sources WHERE id='granola:automatic-late'"),undefined);
  await run("UPDATE sync_runs SET finished_at=(now()-interval '6 minutes')::text WHERE id=?",first);ready=true;await tick();assert.equal((await one("SELECT coverage FROM sources WHERE id='granola:automatic-late'")).coverage,'transcript');assert.ok(await one('SELECT id FROM contact_runs WHERE review_requested=true'));
 });
+
+test('a named Granola workspace schedules automatically without a legacy key',async()=>{
+ await saveSecrets({granola_workspaces:[{id:'team',label:'Team',key:'fictional-team-key'}]});
+ const rows=await scheduleProviderSyncs();assert.deepEqual(rows.map(r=>r.provider),['granola']);assert.equal((await getSetting('granola_page')).workspaceId,'team');
+});

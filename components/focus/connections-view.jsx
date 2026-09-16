@@ -188,6 +188,14 @@ export default function ConnectionsView({
                   </h2>
                   <p>{descriptions[provider]}</p>
                   {connection.email && <span>{connection.email}</span>}
+                  {provider === 'granola' &&
+                    connection.workspaces?.length > 0 && (
+                      <span>
+                        {connection.workspaces
+                          .map((workspace) => workspace.label)
+                          .join(' · ')}
+                      </span>
+                    )}
                 </div>
                 <div className="connection-total">
                   <strong>{count.toLocaleString()}</strong>
