@@ -423,8 +423,11 @@ export function ConnectionDialog({
   reconnect,
 }) {
   const [key, setKey] = useState(''),
-    [query, setQuery] = useState(state.connections.gmail.query);
+    [query, setQuery] = useState(state.connections.gmail.query),
+    [workspaceId, setWorkspaceId] = useState('new'),
+    [workspaceLabel, setWorkspaceLabel] = useState('');
   const gmail = provider === 'gmail';
+  const workspaces = state.connections.granola.workspaces || [];
   return (
     <Modal
       title={gmail ? 'Gmail settings' : `Connect ${providerNames[provider]}`}
@@ -439,7 +442,19 @@ export function ConnectionDialog({
         className="connection-form"
         onSubmit={(event) => {
           event.preventDefault();
-          save(gmail ? { gmail_query: query } : { [provider + '_key']: key });
+          save(
+            gmail
+              ? { gmail_query: query }
+              : provider === 'granola'
+                ? {
+                    granola_workspace: {
+                      ...(workspaceId === 'new' ? {} : { id: workspaceId }),
+                      label: workspaceLabel,
+                      key,
+                    },
+                  }
+                : { [provider + '_key']: key },
+          );
         }}
       >
         {gmail ? (
@@ -478,8 +493,42 @@ export function ConnectionDialog({
             <p>
               {provider === 'fireflies'
                 ? 'Create an API key in your Fireflies settings. Imports use the participant email configured for your workspace.'
-                : 'Use a Granola API key from Settings → Connectors → API keys. Personal scope includes notes shared with you; Public scope includes workspace notes. Notes become available after Granola generates their summary and transcript.'}
+                : 'Granola API keys apply to one workspace. Add a key from each workspace whose notes you want to sync, using Settings → Connectors → API keys in Granola. Personal scope includes notes shared with you; Public scope includes workspace notes.'}
             </p>
+            {provider === 'granola' && (
+              <>
+                {workspaces.length > 0 && (
+                  <FormField label="Workspace connection">
+                    <Choice
+                      label="Workspace connection"
+                      value={workspaceId}
+                      options={{
+                        new: 'Add another workspace',
+                        ...Object.fromEntries(
+                          workspaces.map((w) => [w.id, w.label]),
+                        ),
+                      }}
+                      onChange={(id) => {
+                        setWorkspaceId(id);
+                        setWorkspaceLabel(
+                          workspaces.find((w) => w.id === id)?.label || '',
+                        );
+                        setKey('');
+                      }}
+                    />
+                  </FormField>
+                )}
+                <FormField
+                  label="Workspace name"
+                  required
+                  maxLength={120}
+                  value={workspaceLabel}
+                  onChange={(event) => setWorkspaceLabel(event.target.value)}
+                  placeholder="For example, Revamp"
+                  description="Every connected workspace is checked automatically."
+                />
+              </>
+            )}
             <FormField
               label="API key"
               type="password"
