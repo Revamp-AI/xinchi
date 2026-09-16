@@ -2,11 +2,11 @@ import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {all,one,run,upsertSource,saveItem,uid} from '../lib/db.mjs';
+import {all,one,run,upsertSource,saveItem,uid,setSetting,stamp} from '../lib/db.mjs';
 import {saveContact,contactDetail,listContacts,importContactsCsv,linkContactItem} from '../lib/contacts.mjs';
 import {projectSource,extractInteraction,logInteraction,reviewInteraction,mailboxes} from '../lib/contact-extraction.mjs';
 import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.mjs';
-import {relationshipState} from '../lib/relationship-rules.mjs';
+import {relationshipState,RULE_VERSION} from '../lib/relationship-rules.mjs';
 process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 const now=new Date('2026-09-15T12:00:00Z'),ago=n=>new Date(+now-n*86400000).toISOString();
 const person={confirmed:true,tracked:true,cadence_days:30};
@@ -17,9 +17,40 @@ test('cadence rules use event time, reciprocal exchanges, real coverage and deli
  assert.equal(state(person,[event(30)]),'Active');assert.equal(state(person,[event(31)]),'Cooling');assert.equal(state(person,[event(91)]),'Dormant');
  assert.equal(state(person,[event(31)],false),'Unclassified');assert.equal(state(person,[event(80,'outbound')]),'Unclassified');
  assert.equal(state(person,[event(80),event(0,'outbound')]),'Cooling');assert.equal(state({...person,paused:true},[event(2)]),'Paused');
- assert.equal(state({...person,do_not_contact:true},[event(2)]),'Paused');assert.equal(state({...person,tracked:false},[event(2)]),'Unclassified');
+ assert.equal(state({...person,do_not_contact:true},[event(2)]),'Paused');assert.equal(state({...person,tracked:false},[event(2)]),'New');
  assert.equal(state(person,[{...event(0),duplicate_status:'review',duplicate_of:'x'}]),'Unclassified');
  assert.equal(state(person,[event(-1)]),'Unclassified');
+});
+test('classification is independent of identity confirmation and follow-up tracking',()=>{
+ for(const confirmed of [false,true])for(const tracked of [false,true]){
+  const c={...person,confirmed,tracked},state=(events,fresh=true)=>relationshipState(c,events,{now,coverage:{fresh}}).state;
+  assert.equal(state([event(5)]),'New');
+  assert.equal(state([event(5),event(6,'outbound')]),'Active');
+  assert.equal(state([event(31)]),'Cooling');
+  assert.equal(state([event(91)]),'Dormant');
+  assert.equal(state([event(31)],false),'Unclassified');
+  assert.equal(state([]),'Unclassified');
+  assert.equal(state([{...event(5),qualified:false}]),'Unclassified');
+  assert.equal(state([{...event(5),exclusion:'Automated account'}]),'Unclassified');
+  assert.equal(state([{...event(5),duplicate_of:'duplicate'}]),'Unclassified');
+  assert.equal(relationshipState({...c,paused:true},[event(5)],{now}).state,'Paused');
+  assert.equal(relationshipState({...c,do_not_contact:true},[event(5)],{now}).state,'Paused');
+ }
+});
+test('a rules upgrade refreshes cached states without confirming identities or enabling follow-ups',async()=>{
+ const c=await saveContact({name:'Rules Upgrade Fixture',confirmed:false,tracked:false});
+ await logInteraction({contact_id:c.id,kind:'meeting',direction:'mutual',meaningful:true,occurred_at:new Date(Date.now()-86400000).toISOString(),body:'Discussed the fictional release plan.'});
+ await run("UPDATE contact_states SET state='Unclassified',rule_version=?,basis=jsonb_set(basis,'{reason}','\"Confirm this extracted identity.\"'::jsonb) WHERE contact_id=?",RULE_VERSION-1,c.id);
+ await setSetting('contacts_last_evaluation',stamp());
+ const result=await listContacts({q:c.name});
+ assert.equal(result.records[0].state,'Active');assert.equal(result.records[0].confirmed,false);assert.equal(result.records[0].tracked,false);
+ assert.equal((await one('SELECT rule_version FROM contact_states WHERE contact_id=?',c.id)).rule_version,RULE_VERSION);
+ const history=await one('SELECT * FROM contact_state_history WHERE contact_id=? ORDER BY changed_at DESC LIMIT 1',c.id);
+ assert.equal(history.from_state,'Unclassified');assert.equal(history.to_state,'Active');assert.equal(history.rule_version,RULE_VERSION);
+ const evaluated=(await one('SELECT evaluated_at FROM contact_states WHERE contact_id=?',c.id)).evaluated_at;
+ await listContacts({q:c.name});assert.equal((await one('SELECT evaluated_at FROM contact_states WHERE contact_id=?',c.id)).evaluated_at,evaluated);
+ const confirmed=await saveContact({...await contactDetail(c.id),confirmed:true});assert.equal(confirmed.tracked,false);
+ assert.equal((await contactDetail(c.id)).relationship.state,'Active');
 });
 test('manual contacts support dated affiliations, optimistic edits, archive and exact CSV quoting',async()=>{
  const c=await saveContact({name:'Avery Chen',email:'avery@example.com',organization:'North Studio',role:'Founder',started_on:'2020-02-01',ended_on:'2025-01-01',tracked:true});
@@ -45,7 +76,7 @@ test('source projection is idempotent and attaches exact email evidence to the m
  const source=await email('mail-1','Avery Chen <avery@example.com>','Owner <owner@example.com>');
  const count=(await one('SELECT count(*) AS n FROM contacts')).n;await projectSource(source);assert.equal((await one('SELECT count(*) AS n FROM contacts')).n,count);
  const identity=await one("SELECT * FROM contact_identities WHERE provider='gmail' AND address='avery@example.com'");const detail=await contactDetail(identity.contact_id);
- assert.equal(detail.confirmed,true);assert.equal(detail.tracked,true);assert.equal(detail.role,'Advisor');assert.equal(detail.interactions.length,1);assert.ok(detail.interactions[0].citations[0].source_version_id);
+ assert.equal(detail.confirmed,true);assert.equal(detail.tracked,true);assert.equal(detail.role,'Advisor');assert.equal(detail.relationship.state,'New');assert.equal(detail.interactions.length,1);assert.ok(detail.interactions[0].citations[0].source_version_id);
  assert.equal((await one("SELECT count(*) AS n FROM contacts WHERE email='avery@example.com' AND merged_into IS NULL")).n,1);
  assert.equal((await one('SELECT state FROM contact_queue WHERE source_id=?',source)).state,'complete');
 });

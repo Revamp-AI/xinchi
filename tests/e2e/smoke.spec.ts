@@ -194,7 +194,8 @@ test('other connections remain available while Gmail and another provider import
   const row={...sync[0],id:provider+'-busy-fixture',provider,state:'queued',imported:0,changed:0};sync=[row,...sync];
   await route.fulfill({status:202,json:{id:row.id}});
  });
- await page.goto('/');await open(page,'Connections');
+ // This checks concurrent imports; navigate directly after installing the state fixture.
+ await page.goto('/#connections');await expect(heading(page,views.Connections)).toBeVisible();
  const connection=(name:string)=>page.locator('.connection-row').filter({has:page.getByRole('heading',{name:new RegExp('^'+name)})});
  await expect(connection('Gmail').getByRole('button',{name:/Importing$/})).toBeDisabled();
  await expect(connection('Fireflies').getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();

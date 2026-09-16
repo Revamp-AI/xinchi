@@ -149,8 +149,10 @@ export default function BeeperConnection({ state, api, refresh }) {
                 </pre>
               </li>
               <li>
-                Approve read-only access in Beeper, then select conversations in
-                Terminal. Focus imports up to 90 days of available message text.
+                In Beeper’s authorization window, turn off “Allow sensitive
+                actions” before clicking Approve. All direct conversations are
+                selected automatically. Focus imports up to 90 days of available
+                message text.
               </li>
               <li>
                 Generate a pairing code here when the companion asks for it.

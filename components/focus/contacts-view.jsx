@@ -38,7 +38,7 @@ const descriptions = {
   Cooling: 'Past the cadence you chose',
   Dormant: 'More than three cadence periods',
   Paused: 'Space you deliberately made',
-  Unclassified: 'A little more context is needed',
+  Unclassified: 'More verified activity or history is needed',
 };
 const tone = {
   New: 'info',
@@ -121,7 +121,7 @@ function ContactForm({ value, busy, onSave, onCancel }) {
       {field('notes', 'Private notes', { multiline: true, rows: 4 })}
       <div className="contact-policy">
         <Toggle
-          label="Track this relationship"
+          label="Track for follow-ups"
           checked={form.tracked}
           onChange={(v) => update('tracked', v)}
         />
@@ -145,6 +145,10 @@ function ContactForm({ value, busy, onSave, onCancel }) {
           onChange={(v) => update('do_not_contact', v)}
         />
       </div>
+      <p className="contact-hint">
+        Relationship classification uses verified activity automatically.
+        Identity confirmation and follow-up tracking are separate preferences.
+      </p>
       <div className="contact-actions">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
@@ -701,9 +705,7 @@ export default function ContactsView({
                         ? formatDate(person.basis.last_meaningful_at)
                         : 'Not established'}
                       <small className="contact-hint">
-                        {person.tracked
-                          ? person.cadence_days + '-day cadence'
-                          : 'Not tracked'}
+                        {person.cadence_days}-day cadence
                       </small>
                     </td>
                     <td>{person.tags.join(', ') || '—'}</td>
@@ -998,16 +1000,16 @@ export default function ContactsView({
               {!c.confirmed && (
                 <Notice>
                   <div className="contact-confirm">
-                    This identity was found in your sources. Confirm it before
-                    tracking.
+                    This identity was found in your sources. Classification
+                    already uses its verified activity. You can confirm the
+                    identity separately; matching profiles are reviewed before
+                    merging.
                     <Button
                       size="sm"
                       disabled={busy}
                       onClick={() =>
-                        mutate(
-                          'contacts',
-                          { ...c, confirmed: true, tracked: true },
-                          () => open(c.id),
+                        mutate('contacts', { ...c, confirmed: true }, () =>
+                          open(c.id),
                         )
                       }
                     >
@@ -1020,8 +1022,8 @@ export default function ContactsView({
                 <h3>Why this state?</h3>
                 <p>{c.relationship?.basis.reason}</p>
                 <small>
-                  {c.relationship?.basis.coverage.reason}{' '}
-                  {c.tracked && `Preferred cadence: ${c.cadence_days} days.`}
+                  {c.relationship?.basis.coverage.reason} Preferred cadence:{' '}
+                  {c.cadence_days} days.
                 </small>
                 {!c.relationship?.basis.coverage.fresh && (
                   <Button

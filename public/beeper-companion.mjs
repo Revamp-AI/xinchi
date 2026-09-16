@@ -16,34 +16,51 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function readJson(path,fallback){try{return JSON.parse(await readFile(path,'utf8'));}catch(e){if(e.code==='ENOENT')return fallback;throw e;}}
 export async function savePrivate(path,value){await mkdir(dirname(path),{recursive:true,mode:0o700});const temp=path+'.'+randomUUID()+'.tmp';await writeFile(temp,JSON.stringify(value),{mode:0o600});await rename(temp,path);await chmod(path,0o600);}
 export function focusOrigin(value){const u=new URL(value);if(u.username||u.password||u.pathname!=='/'||u.search||u.hash||!(u.protocol==='https:'||u.origin==='http://127.0.0.1:3210'))throw Error('Use your Focus HTTPS address.');return u.origin;}
-export async function requestJson(url,{token,method='GET',body,form}={}){
+export async function requestJson(url,{token,method='GET',body,form,allowEmpty=false}={}){
  const headers={};if(token)headers.Authorization='Bearer '+token;
  if(body)headers['Content-Type']='application/json';if(form)headers['Content-Type']='application/x-www-form-urlencoded';
  const r=await fetch(url,{method,headers,body:form?new URLSearchParams(form):body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(20000),redirect:'error'});
  const reader=r.body?.getReader();let size=0,chunks=[];if(reader)for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>8*1024*1024){await reader.cancel();throw Error('Response exceeded the import size limit.');}chunks.push(value);}
+ if(r.ok&&allowEmpty&&!size)return null;
  let data;try{data=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw Error('The service returned an unreadable response.');}
  if(!r.ok){const error=Error(new URL(url).origin===base?'Beeper request failed ('+r.status+').':data.error||'Focus request failed ('+r.status+').');error.status=r.status;error.service=new URL(url).origin===base?'beeper':'focus';throw error;}return data;
 }
 const cloud=(config,action,body={})=>requestJson(config.origin+'/api/beeper/device/'+action,{method:'POST',token:config.token,body});
 const local=(config,path)=>requestJson(base+path,{token:config.beeperToken});
-export async function authorizeBeeper(){
+function openAuthorization(url){const opened=spawnSync(process.platform==='darwin'?'open':'xdg-open',[url],{stdio:'ignore'});if(opened.status!==0)console.log('Open this address on this Mac: '+url);}
+export async function authorizeBeeper({request=requestJson,open=openAuthorization}={}){
  const state=randomBytes(32).toString('base64url'),verifier=randomBytes(48).toString('base64url');let receive,reject;
  const callback=new Promise((yes,no)=>{receive=yes;reject=no;});callback.catch(()=>{});
  const server=createServer((req,res)=>{const u=new URL(req.url,'http://127.0.0.1');if(u.pathname!=='/callback'||u.searchParams.get('state')!==state){res.writeHead(400);res.end('Invalid authorization callback.');return;}res.writeHead(200,{'Content-Type':'text/plain','Cache-Control':'no-store','Referrer-Policy':'no-referrer'});res.end('Beeper authorization received. Return to the Focus companion.');if(u.searchParams.get('code'))receive(u.searchParams.get('code'));else reject(Error('Beeper authorization was cancelled.'));});
  await new Promise((yes,no)=>server.once('error',no).listen(0,'127.0.0.1',yes));
  const redirect='http://127.0.0.1:'+server.address().port+'/callback';const timeout=setTimeout(()=>reject(Error('Beeper authorization expired. Run setup again.')),180000);
  try{
-  const client=await requestJson(base+'/oauth/register',{method:'POST',body:{client_name:'Focus Beeper (read only)',redirect_uris:[redirect],token_endpoint_auth_method:'none',grant_types:['authorization_code'],response_types:['code'],scope:'read'}});
+  const client=await request(base+'/oauth/register',{method:'POST',body:{client_name:'Focus Beeper (read only)',redirect_uris:[redirect],token_endpoint_auth_method:'none',grant_types:['authorization_code'],response_types:['code'],scope:'read'}});
   if(typeof client.client_id!=='string')throw Error('Beeper did not register the companion.');
   const u=new URL(base+'/oauth/authorize');for(const[k,v]of Object.entries({client_id:client.client_id,redirect_uri:redirect,response_type:'code',scope:'read',state,code_challenge:createHash('sha256').update(verifier).digest('base64url'),code_challenge_method:'S256'}))u.searchParams.set(k,v);
-  console.log('Approve read-only access in the Beeper authorization window.');
-  const opened=spawnSync(process.platform==='darwin'?'open':'xdg-open',[u.href],{stdio:'ignore'});if(opened.status!==0)console.log('Open this address on this Mac: '+u.href);
+  console.log('In the Beeper authorization window, turn OFF "Allow sensitive actions", then click Approve.');
+  console.log('After authorization, all direct conversations are selected by default. You will enter your Focus pairing code here.');
+  await open(u.href);
   const code=await callback;
-  const grant=await requestJson(base+'/oauth/token',{method:'POST',form:{grant_type:'authorization_code',client_id:client.client_id,redirect_uri:redirect,code,code_verifier:verifier}});
+  const grant=await request(base+'/oauth/token',{method:'POST',form:{grant_type:'authorization_code',client_id:client.client_id,redirect_uri:redirect,code,code_verifier:verifier}});
   if(typeof grant.access_token!=='string'||!grant.access_token)throw Error('Beeper did not return access.');
-  if(grant.scope&&grant.scope.split(' ').includes('write'))throw Error('Beeper granted write access unexpectedly. Revoke it in Beeper and reconnect with read access.');
+  if(grant.scope&&grant.scope.split(/\s+/).includes('write')){
+   let revoked=false;
+   try{await request(base+'/oauth/revoke',{method:'POST',form:{token:grant.access_token,token_type_hint:'access_token'},allowEmpty:true});revoked=true;}catch{}
+   const error=Error('Beeper granted write access. Turn OFF "Allow sensitive actions" in the Beeper authorization window before clicking Approve. '+(revoked?'The rejected credential has been revoked.':'Revoke the rejected "Focus Beeper (read only)" connection in Beeper → Settings → Integrations → Approved connections before retrying.'));
+   error.code='BEEPER_WRITE_ACCESS';throw error;
+  }
   return grant.access_token;
  }finally{clearTimeout(timeout);server.closeAllConnections();await new Promise(r=>server.close(r));}
+}
+export async function authorizeBeeperWithRetry(question,{authorize=authorizeBeeper,log=console.log}={}){
+ for(;;){
+  try{return await authorize();}catch(error){
+   if(error.code!=='BEEPER_WRITE_ACCESS')throw error;
+   log(error.message);
+   if((await question('Retry Beeper authorization with "Allow sensitive actions" off? [yes/no]: ')).trim().toLowerCase()!=='yes')throw Error('Setup cancelled before pairing.');
+  }
+ }
 }
 export function cleanChat(c){return{id:c.id,accountID:c.accountID,network:String(c.network||'Beeper').slice(0,100),title:String(c.title||'Direct conversation').slice(0,300),type:c.type,participants:{hasMore:c.participants?.hasMore===true,items:(c.participants?.items||[]).map(p=>({id:p.id,fullName:String(p.fullName||'').slice(0,300),email:String(p.email||'').slice(0,300),isSelf:p.isSelf===true,isNetworkBot:p.isNetworkBot===true}))}};}
 export function cleanMessage(m){return{id:m.id,accountID:m.accountID,chatID:m.chatID,senderID:m.senderID,senderName:String(m.senderName||'').slice(0,300),timestamp:m.timestamp,isSender:m.isSender,text:m.text||'',type:m.type||'',isDeleted:m.isDeleted===true,isHidden:m.isHidden===true,linkedMessageID:m.linkedMessageID||''};}
@@ -54,7 +71,17 @@ export async function listDirectChats(config){
   if(!result.hasMore)return rows;if(!result.oldestCursor||result.oldestCursor===cursor)throw Error('Beeper conversation pagination did not advance.');cursor=result.oldestCursor;
  }throw Error('Conversation list is too large. Contact Focus support.');
 }
-export function chooseChats(input,chats){const numbers=[...new Set(input.split(',').map(s=>Number(s.trim())))];if(!numbers.length||numbers.length>250||numbers.some(n=>!Number.isInteger(n)||n<1||n>chats.length))throw Error('Enter comma-separated conversation numbers, up to 250.');return numbers.map(n=>chats[n-1]);}
+export function chooseChats(input,chats){
+ if(!chats.length)throw Error('No direct conversations are available in Beeper.');
+ if(!input.trim()||input.trim().toLowerCase()==='all')return chats;
+ const numbers=[...new Set(input.split(',').map(s=>Number(s.trim())))];if(numbers.some(n=>!Number.isInteger(n)||n<1||n>chats.length))throw Error('Enter all or comma-separated conversation numbers.');return numbers.map(n=>chats[n-1]);
+}
+export async function selectChats(chats,{choose=false,question,log=console.log}={}){
+ if(!choose){const selected=chooseChats('',chats);log(`\nAll ${selected.length} direct conversations selected.`);return selected;}
+ log('\nChoose conversations on this Mac. Their messages have not been uploaded.');
+ chats.forEach((c,i)=>log(`${i+1}. ${c.network}: ${c.title}`));
+ return chooseChats(await question('\nConversation numbers, separated by commas [all]: '),chats);
+}
 export function splitRecords(records){const batches=[];let batch=[],bytes=2;for(const r of records){const n=Buffer.byteLength(JSON.stringify(r))+1;if(n>240000)throw Error('A message is too large to import without truncation.');if(batch.length&&(batch.length===25||bytes+n>240000)){batches.push(batch);batch=[];bytes=2;}batch.push(r);bytes+=n;}if(batch.length)batches.push(batch);return batches;}
 export function pageProgress(page,previousCursor,cutoff){
  if(!Array.isArray(page.items))throw Error('Beeper did not return a message list.');
@@ -105,15 +132,13 @@ export async function installMac(){
  const result=spawnSync('launchctl',['bootstrap','gui/'+process.getuid(),plist],{stdio:'pipe'});if(result.status!==0)throw Error('Could not enable startup. Run the companion with the run command.');
  console.log('Focus Beeper is running and will start when you sign in to this Mac.');
 }
-async function setup(){
+async function setup({choose=false}={}){
  const rl=createInterface({input:process.stdin,output:process.stdout});
  try{
-  console.log('Focus Beeper — selected direct conversations, read-only access, last 90 days.');
+  console.log('Focus Beeper — all direct conversations by default, read-only access, last 90 days.');
   const origin=focusOrigin((await rl.question('Focus address [https://focus-revamp.vercel.app]: ')).trim()||'https://focus-revamp.vercel.app');
-  const beeperToken=await authorizeBeeper();const chats=await listDirectChats({beeperToken});
-  console.log('\nChoose conversations on this Mac. Their messages have not been uploaded.');
-  chats.forEach((c,i)=>console.log(`${i+1}. ${c.network}: ${c.title}`));
-  const selected=chooseChats(await rl.question('\nConversation numbers, separated by commas: '),chats),selection=selected.map(({id,accountID,title,network})=>({id,accountID,title,network}));
+  const beeperToken=await authorizeBeeperWithRetry(prompt=>rl.question(prompt));const chats=await listDirectChats({beeperToken});
+  const selected=await selectChats(chats,{choose,question:prompt=>rl.question(prompt)}),selection=selected.map(({id,accountID,title,network})=>({id,accountID,title,network}));
   console.log(`\nFocus will store messages from these ${selection.length} conversations in your cloud archive and use them for contacts and cloud reviews.`);
   if((await rl.question('Continue with this selection? [yes/no]: ')).trim().toLowerCase()!=='yes')throw Error('Setup cancelled before uploading.');
   const code=(await rl.question('Pairing code from Focus → Connections → Beeper: ')).trim();
@@ -140,11 +165,11 @@ async function runLoop(once=false){
 }
 export async function main(command=process.argv[2]){
  if(Number(process.versions.node.split('.')[0])<24)throw Error('Install Node.js 24 or newer first.');
- if(command==='setup')return setup();
+ if(command==='setup')return setup({choose:process.argv.slice(3).includes('--choose')});
  if(command==='install')return installMac();
  if(command==='run'||command==='once')return runLoop(command==='once');
  if(command==='uninstall'){spawnSync('launchctl',['bootout','gui/'+process.getuid(),plist],{stdio:'ignore'});await unlink(plist).catch(e=>{if(e.code!=='ENOENT')throw e;});console.log('Automatic syncing stopped. Revoke this Mac in Focus → Connections → Beeper to remove cloud access.');return;}
  if(command==='status'){const c=await readJson(configPath),s=await readJson(statePath,{});console.log(JSON.stringify({paired:!!c,conversations:c?.selection?.length||0,last_success:s.lastSuccess||null,uploading:!!s.run},null,2));return;}
- console.log('Usage: node beeper-companion.mjs setup | run | once | install | status | uninstall');
+ console.log('Usage: node beeper-companion.mjs setup [--choose] | run | once | install | status | uninstall');
 }
 if(process.argv[1]&&resolve(process.argv[1])===scriptPath)main().catch(e=>{console.error(e.message);process.exitCode=1;});

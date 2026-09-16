@@ -1,7 +1,8 @@
 # Beeper companion
 
-Focus ingests selected direct conversations through a companion on the same Mac
-as Beeper Desktop. The companion requests the `read` OAuth scope using PKCE.
+Focus ingests direct conversations through a companion on the same Mac as Beeper
+Desktop. Setup selects all currently available direct conversations by default.
+The companion requests the `read` OAuth scope using PKCE.
 It only calls local chat/message GET endpoints. No remote access, tunnel, or
 inbound connection from Vercel is needed.
 
@@ -16,8 +17,10 @@ inbound connection from Vercel is needed.
    node ~/Downloads/beeper-companion.mjs setup
    ```
 
-4. Approve Beeper's read-only authorization. In Terminal, choose the numbered
-   direct conversations to import. Only these conversations are sent to Focus.
+4. In Beeper's authorization window, turn **off “Allow sensitive actions”** before
+   clicking **Approve**. This keeps the credential read-only. Setup automatically
+   selects all direct conversations and shows their count. Confirm the selection
+   in Terminal to continue.
 5. Generate a one-time pairing code in Focus and enter it in Terminal when asked.
    It expires after ten minutes; completing a new pairing revokes the previous
    companion's Focus credential.
@@ -25,7 +28,12 @@ inbound connection from Vercel is needed.
    Both the Mac and Beeper Desktop need to be available to fetch new messages.
 
 The cloud connection may be deployed before a Mac is paired. No real conversation
-is uploaded until the user selects conversations and completes pairing.
+is uploaded until the user confirms the conversation selection and completes pairing.
+
+To select only some conversations, run `node ~/Downloads/beeper-companion.mjs setup
+--choose`. This optional mode shows a numbered list; enter comma-separated numbers,
+or press Enter to keep all conversations selected. The saved selection includes
+the conversations available during setup; rerun setup to include new conversations.
 
 ## Import behavior
 
@@ -35,8 +43,9 @@ is uploaded until the user selects conversations and completes pairing.
   overlap. A daily scan revisits the 90-day window to detect older edits and any
   deletion markers Beeper exposes. Disappearing records without deletion markers
   cannot be reliably detected; imported snapshots remain in the archive.
-- The initial version supports 1–250 selected conversations and at most 100,000
-  messages per import. Choose fewer conversations if the limit is reached.
+- Pairing supports the full conversation list, subject to a 4 MiB limit on its
+  metadata. Each import supports at most 100,000 messages. Use `setup --choose`
+  to select fewer conversations if either limit is reached.
 - Each upload contains at most 25 messages and is saved in Postgres before it is
   acknowledged. The private local outbox survives process restarts. Staging is
   retained while the Mac is asleep. Once all pages arrive, a Vercel Workflow
@@ -68,6 +77,22 @@ If Beeper authorization expires, run setup again. If cloud processing fails, use
 Retry import in Focus. Refresh requests wait for the Mac and are fetched by its
 outbound polling connection.
 
+### Setup stops before asking for a pairing code
+
+Beeper authorization and confirmation of the selection happen before the Focus pairing
+code prompt. If setup reports that Beeper granted write access, turn **off
+“Allow sensitive actions”** in Beeper's authorization window before approving.
+Requesting the `read` scope does not prevent that toggle from granting write access.
+
+The companion rejects the credential, attempts to revoke it, and offers to retry
+authorization in the same setup. If automatic revocation fails, it tells you to
+remove the rejected “Focus Beeper (read only)” entry under Beeper → Settings →
+Integrations → Approved connections. If an older companion exits immediately,
+run setup again with the toggle off, or download the updated companion.
+
+After authorization succeeds, all direct conversations are selected automatically.
+Confirm the selection, then generate the Focus pairing code when Terminal asks for it.
+
 ## Implementation
 
 - `public/beeper-companion.mjs`: standalone downloadable Mac companion.
@@ -76,6 +101,7 @@ outbound polling connection.
 - `lib/durable-ingestion.mjs`: reuse of the existing durable ingestion loop.
 - `migrations/008_beeper_companion.sql`: device records, staging metadata, message interactions.
 - `tests/beeper.test.mjs`: authorization, scope, replay, restart, extraction, revocation.
+- `tests/beeper-companion.test.mjs`: read-only OAuth, write-grant revocation and retry, cancellation.
 
 Reference: [Beeper API](https://developers.beeper.com/desktop-api/),
 [authentication](https://developers.beeper.com/desktop-api/auth/),
