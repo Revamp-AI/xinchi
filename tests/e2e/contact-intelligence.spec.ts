@@ -61,7 +61,10 @@ test('relationship context explains purpose, estimated cooling, evidence and del
     .filter({ hasText: name });
   await expect(row).toContainText('Customer');
   await expect(row).toContainText('Estimated · partial history');
-  await row.getByRole('button').click();
+  await row
+    .getByRole('button')
+    .filter({ has: page.getByText(name, { exact: true }) })
+    .click();
   const dialog = page.getByRole('dialog', { name, exact: true });
   await expect(
     dialog.getByRole('region', { name: 'Relationship context' }),

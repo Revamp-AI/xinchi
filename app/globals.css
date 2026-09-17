@@ -2369,6 +2369,11 @@
 .contact-node:focus-visible,.region-heading button:focus-visible,.contact-summary button:focus-visible,.contact-person-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; border-radius: .4rem; }
 .contact-node-name { max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--focus-copy); font-size: .65rem; }
 .contact-node-attention { position: absolute; right: 5px; top: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--focus-warning-text); border: 2px solid var(--region-bg); }
+.contact-node-priority { position: absolute; left: 0; top: 0; width: 15px; height: 15px; color: var(--focus-warning-text); fill: currentColor; }
+.contact-priority-icon { display: inline; width: 13px; height: 13px; color: var(--focus-warning-text); fill: currentColor; vertical-align: -2px; }
+.contact-person-cell { display: flex; align-items: center; gap: .4rem; }
+.contact-priority-toggle { flex-shrink: 0; color: var(--focus-muted); }
+.contact-priority-toggle[aria-pressed="true"] { color: var(--focus-warning-text); }
 .contact-node.reconnected .contact-node-avatar { outline: 2px solid var(--focus-success-border); outline-offset: 3px; }
 .region-empty { font-size: .74rem; color: var(--focus-muted); }
 .map-caption { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: .9rem 1.35rem; border-top: 1px solid var(--focus-border); color: var(--focus-muted); font-size: .7rem; }

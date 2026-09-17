@@ -4,6 +4,7 @@ Contacts is the fifth Focus destination. It combines a searchable people list, a
 
 ## Daily use
 
+- Star a person from the list, profile, or **Priority contact** option in the editor. Priority contacts appear first in the list and each map region, and **Priority only** filters the current search and segment. The relationship agent analyzes changed priority profiles before other queued contacts, and reviews can search your priority contacts. This is your explicit preference: it does not change warmth, cadence, follow-up tracking, pauses or do-not-contact settings. Imports retain it, merges preserve a star from either profile, and undo restores each original preference.
 - Add a contact manually or import a CSV with `name,email,company,role,notes,tags`. Quoted commas and multiline fields work; separate tags with semicolons. Reimporting an identical row is idempotent. Exact personal-email matches reuse the existing profile and preserve its chosen name and preferences. CSV notes and tags are combined; imported names remain searchable identity aliases.
 - Stored Gmail, Beeper, Fireflies and Granola history is queued for contact extraction automatically, including sources older than ninety days. New and changed sources enter the queue automatically. The manual import controls can also request recent or all history.
 - Relationship classification happens automatically from verified activity. Identity confirmation and follow-up tracking do not block classification. Set a cadence and add purpose tags independently.

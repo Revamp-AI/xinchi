@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Star,
   Upload,
   Users,
 } from 'lucide-react';
@@ -80,6 +81,7 @@ function Toggle({ label, checked, onChange }) {
 function ContactForm({ value, busy, onSave, onCancel }) {
   const [form, setForm] = useState({
     tracked: true,
+    priority: false,
     cadence_days: 30,
     tags: [],
     ...value,
@@ -125,6 +127,11 @@ function ContactForm({ value, busy, onSave, onCancel }) {
       />
       {field('notes', 'Private notes', { multiline: true, rows: 4 })}
       <div className="contact-policy">
+        <Toggle
+          label="Priority contact"
+          checked={form.priority}
+          onChange={(v) => update('priority', v)}
+        />
         <Toggle
           label="Track for follow-ups"
           checked={form.tracked}
@@ -330,6 +337,7 @@ export default function ContactsView({
     [q, setQ] = useState(''),
     [segment, setSegment] = useState(''),
     [tag, setTag] = useState(''),
+    [priorityOnly, setPriorityOnly] = useState(false),
     [archived, setArchived] = useState(false),
     [offset, setOffset] = useState(0),
     [mode, setMode] = useState('map');
@@ -348,6 +356,7 @@ export default function ContactsView({
     q,
     segment,
     tag,
+    priority: String(priorityOnly),
     archived: String(archived),
     offset: String(offset),
   }).toString();
@@ -647,6 +656,18 @@ export default function ContactsView({
           </div>
         </div>
         <div className="contact-filters">
+          <Button
+            variant={priorityOnly ? 'secondary' : 'ghost'}
+            size="sm"
+            aria-pressed={priorityOnly}
+            onClick={() => {
+              setPriorityOnly(!priorityOnly);
+              setOffset(0);
+            }}
+          >
+            <Star fill={priorityOnly ? 'currentColor' : 'none'} />
+            Priority only
+          </Button>
           <Choice
             label="Relationship segment"
             value={segment}
@@ -734,6 +755,7 @@ export default function ContactsView({
                               person.name +
                               ', ' +
                               state +
+                              (person.priority ? ', priority' : '') +
                               (person.basis?.estimated ? ', estimated' : '')
                             }
                             title={
@@ -746,6 +768,12 @@ export default function ContactsView({
                             <span className="contact-node-avatar">
                               {initials(person.name)}
                             </span>
+                            {person.priority && (
+                              <Star
+                                className="contact-node-priority"
+                                aria-hidden="true"
+                              />
+                            )}
                             <span className="contact-node-name">
                               {person.name.split(' ')[0]}
                             </span>
@@ -786,8 +814,9 @@ export default function ContactsView({
             </div>
             <div className="map-caption">
               <span>
-                <span className="contact-dot attention" /> Commitment checkpoint
-                due
+                <Star className="contact-priority-icon" aria-hidden="true" />{' '}
+                Priority · <span className="contact-dot attention" /> Commitment
+                checkpoint due
               </span>
               <span>
                 States use recorded exchanges and each person’s cadence. Older
@@ -811,23 +840,49 @@ export default function ContactsView({
                 {records.map((person) => (
                   <tr key={person.id}>
                     <td>
-                      <button
-                        className="contact-person-button"
-                        onClick={() => open(person.id)}
-                      >
-                        <span className="contact-list-avatar">
-                          {initials(person.name)}
-                        </span>
-                        <span>
-                          <strong>{person.name}</strong>
-                          <small>
-                            {person.organization ||
-                              person.email ||
-                              person.role ||
-                              'Add context'}
-                          </small>
-                        </span>
-                      </button>
+                      <div className="contact-person-cell">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="contact-priority-toggle"
+                          disabled={busy}
+                          aria-pressed={person.priority}
+                          aria-label={`${person.priority ? 'Remove priority from' : 'Prioritize'} ${person.name}`}
+                          title={
+                            person.priority
+                              ? 'Remove priority'
+                              : 'Prioritize contact'
+                          }
+                          onClick={() =>
+                            mutate('contacts', {
+                              id: person.id,
+                              version: person.version,
+                              priority: !person.priority,
+                            })
+                          }
+                        >
+                          <Star
+                            fill={person.priority ? 'currentColor' : 'none'}
+                          />
+                        </Button>
+                        <button
+                          className="contact-person-button"
+                          onClick={() => open(person.id)}
+                        >
+                          <span className="contact-list-avatar">
+                            {initials(person.name)}
+                          </span>
+                          <span>
+                            <strong>{person.name}</strong>
+                            <small>
+                              {person.organization ||
+                                person.email ||
+                                person.role ||
+                                'Add context'}
+                            </small>
+                          </span>
+                        </button>
+                      </div>
                     </td>
                     <td>
                       <StatusBadge tone={tone[person.state]}>
@@ -875,8 +930,9 @@ export default function ContactsView({
                 <Users />
                 <h2>No contacts in this view</h2>
                 <p>
-                  Add someone or bring in contacts from your stored
-                  conversations.
+                  {priorityOnly
+                    ? 'Star someone from their profile or the full list to see them here.'
+                    : 'Add someone or bring in contacts from your stored conversations.'}
                 </p>
               </div>
             )}
@@ -1307,6 +1363,22 @@ export default function ContactsView({
                 <StatusBadge tone={tone[c.relationship?.state]}>
                   {c.relationship?.state || 'Unclassified'}
                 </StatusBadge>
+                <Button
+                  variant={c.priority ? 'secondary' : 'outline'}
+                  size="sm"
+                  disabled={busy}
+                  aria-pressed={c.priority}
+                  onClick={() =>
+                    mutate(
+                      'contacts',
+                      { id: c.id, version: c.version, priority: !c.priority },
+                      () => open(c.id),
+                    )
+                  }
+                >
+                  <Star fill={c.priority ? 'currentColor' : 'none'} />
+                  {c.priority ? 'Remove priority' : 'Prioritize contact'}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"

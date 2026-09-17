@@ -13,7 +13,8 @@ export function ContactIntelligencePanel({ status, busy, mutate }) {
           <h2>Relationship agent</h2>
           <p className="contact-hint">
             Reads your conversations to understand each relationship and suggest
-            a next step. Uses the model selected in review settings.
+            a next step. Starred contacts are analyzed first. Uses the model
+            selected in review settings.
           </p>
         </div>
         <Button

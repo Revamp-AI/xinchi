@@ -70,3 +70,10 @@ test('failed batches back off and cannot block other profiles indefinitely',asyn
  const failed=await runContactIntelligence({force:true,generate:async()=>{throw Error('Unavailable');}});assert.ok(failed.error);assert.equal((await runContactIntelligence({generate})).skipped,true);
  const b=await fixture('Next Person');const next=await runContactIntelligence({force:true,generate});assert.equal(next.reviewed,1);assert.equal((await contactDetail(a.id)).insight,undefined);assert.ok((await contactDetail(b.id)).insight);
 });
+test('priority contacts lead bounded analysis without changing outreach restrictions',async()=>{
+ await reset();for(let n=0;n<8;n++)await fixture('Ordinary tracked '+n,{tracked:true});
+ const c=await fixture('Priority first',{priority:true,paused:true});let first;
+ await runContactIntelligence({force:true,generate:async packets=>{first=packets[0];assert.equal(packets.length,8);return generate(packets);}});
+ assert.equal(first.contact_id,c.id);assert.equal(first.priority,true);
+ const detail=await contactDetail(c.id);assert.equal(detail.insight.result.next_action,'');assert.equal(detail.priority,true);assert.equal(detail.paused,true);
+});
