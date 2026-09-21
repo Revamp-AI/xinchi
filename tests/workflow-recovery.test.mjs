@@ -19,20 +19,20 @@ async function fixture({kind='sync',state='running',completed=false,workflowId,o
 }
 async function saved(row){return{parent:await one('SELECT * FROM '+row.table+' WHERE id=?',row.id),durable:await one('SELECT * FROM durable_runs WHERE kind=? AND run_id=?',row.kind,row.id)};}
 
-for(const status of ['failed','cancelled','completed'])test('confirmed '+status+' workflows become resumable failures without clearing their checkpoint',async()=>{
+for(const status of ['failed','cancelled','completed'])test('confirmed '+status+' workflows automatically requeue without clearing their checkpoint',async()=>{
  const row=await fixture({kind:status==='cancelled'?'contacts':'sync'});let inspections=0;
  assert.equal(await reconcileWorkflows(async id=>{inspections++;assert.equal(id,row.wf);return status;}),1);
- const result=await saved(row);assert.equal(result.parent.state,'failed');assert.equal(result.durable.completed,true);assert.deepEqual(result.durable.cursor,{privateCheckpoint:'fictional preserved cursor'});assert.equal(result.durable.revision,7);assert.equal(result.durable.workflow_id,row.wf);assert.equal(result.durable.outcome.failed,true);assert.equal(inspections,1);
+ const result=await saved(row);assert.equal(result.parent.state,'queued');assert.equal(result.durable.completed,false);assert.deepEqual(result.durable.cursor,{privateCheckpoint:'fictional preserved cursor'});assert.equal(result.durable.revision,7);assert.equal(result.durable.workflow_id,'');assert.equal(inspections,1);
  assert.equal(await reconcileWorkflows(async()=>{throw Error('Completed app rows must not be inspected');}),0);
 });
 
-test('pending, running, sleeping and unknown workflow statuses stay active regardless of age',async()=>{
- const row=await fixture({old:true}),before=await saved(row);
+test('pending, running, sleeping and unknown workflow statuses stay active while progress is recent',async()=>{
+ const row=await fixture(),before=await saved(row);
  for(const status of ['pending','running','sleeping','workflow_suspended','not_found','unknown',undefined]){assert.equal(await reconcileWorkflows(async()=>status),1);assert.deepEqual(await saved(row),before);}
 });
 
 test('lookup failures including not found leave the run and private checkpoint unchanged',async()=>{
- const row=await fixture({old:true}),before=await saved(row);
+ const row=await fixture(),before=await saved(row);
  for(const error of [Error('Network error with fictional-secret'),Object.assign(Error('Unknown Workflow'),{status:404})]){await reconcileWorkflows(async()=>{throw error;});assert.deepEqual(await saved(row),before);}
  // Synchronous connector failures are isolated too.
  await reconcileWorkflows(()=>{throw Error('Unavailable status connector');});assert.deepEqual(await saved(row),before);
@@ -59,3 +59,17 @@ test('reconciliation excludes undispatched and finished work and bounds status l
 });
 
 test.after(()=>rmSync(privateDir,{recursive:true,force:true}));
+
+test('stale active workflows recover even when status lookups fail, and retain their exact cursor',async()=>{
+ const row=await fixture({old:true});await reconcileWorkflows(async()=>{throw Error('Status unavailable');});
+ const result=await saved(row);assert.equal(result.parent.state,'queued');assert.equal(result.durable.workflow_id,'');assert.equal(result.durable.revision,7);assert.deepEqual(result.durable.cursor,{privateCheckpoint:'fictional preserved cursor'});
+});
+test('watchdog respects a provider retry delay and an active unit reservation',async()=>{
+ const row=await fixture();await run("UPDATE durable_runs SET updated_at=now()-interval '2 hours',outcome=?::jsonb WHERE run_id=?",JSON.stringify({waitMs:86400000}),row.id);
+ await reconcileWorkflows(async()=>'running');assert.equal((await saved(row)).parent.state,'running');
+ await run("UPDATE durable_runs SET outcome='{}',unit_until=now()+interval '1 minute' WHERE run_id=?",row.id);
+ await reconcileWorkflows(async()=>'failed');assert.equal((await saved(row)).parent.state,'running');
+});
+test('new progress racing the watchdog fences recovery of the earlier revision',async()=>{
+ const row=await fixture({old:true});await reconcileWorkflows(async()=>{await run('UPDATE durable_runs SET revision=8 WHERE run_id=?',row.id);return 'running';});assert.equal((await saved(row)).parent.state,'running');
+});

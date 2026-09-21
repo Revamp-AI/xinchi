@@ -42,7 +42,8 @@ test('cancelJob records cancellation without killing an unrelated host PID and r
 });
 test('cancelling a review drains a pending import review into a new job',async()=>{
  const id=(await agent.createJob('Review while imports arrive'));
- (await agent.queueImportReview());assert.ok((await m.getSetting('pending_import_review')));
+ await m.upsertSource({provider:'granola',external_id:'pending-review-fixture',title:'Recent fictional meeting',body:'A current fictional decision to review.',occurred_at:m.stamp()});
+ (await agent.queueImportReview());assert.ok(await m.one("SELECT source_id FROM review_queue WHERE completed=false AND job_id IS NULL"));
  (await agent.cancelJob(id));
  const next=(await m.one("SELECT * FROM jobs WHERE kind='import_review' ORDER BY created_at DESC LIMIT 1"));
  assert.ok(next);spawned.push(next.id);assert.equal((await m.getSetting('pending_import_review')),null);

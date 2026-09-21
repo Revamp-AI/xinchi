@@ -110,8 +110,8 @@ export default function ConnectionsView({
       {state.worker?.mode === 'cloud' && (
         <Notice>
           Each connection imports independently. Imports save progress as they
-          go and retry temporary interruptions automatically. Contact extraction
-          follows, then your cloud review.
+          go and retry temporary interruptions automatically. Contact extraction and
+          reviews of recent changes run independently.
         </Notice>
       )}
       <div className="connection-list">

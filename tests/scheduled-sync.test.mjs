@@ -55,3 +55,8 @@ test('a named Granola workspace schedules automatically without a legacy key',as
  await saveSecrets({granola_workspaces:[{id:'team',label:'Team',key:'fictional-team-key'}]});
  const rows=await scheduleProviderSyncs();assert.deepEqual(rows.map(r=>r.provider),['granola']);assert.equal((await getSetting('granola_page')).workspaceId,'team');
 });
+
+test('Gmail schedules automatically when connected and retains its history checkpoint',async()=>{
+ await saveSecrets({gmail_tokens:{refresh_token:'fictional-refresh'}});await setSetting('gmail_history','keep-history');
+ const rows=await scheduleProviderSyncs();assert.equal(rows.length,1);assert.equal(rows[0].provider,'gmail');assert.equal(rows[0].rescan,false);assert.equal(await getSetting('gmail_history'),'keep-history');
+});

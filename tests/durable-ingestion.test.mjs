@@ -79,7 +79,7 @@ test('contact completion rechecks newly queued sources and late review requests 
   assert.equal((await one('SELECT review_requested FROM contact_runs WHERE id=?',finalRow.id)).review_requested,false);
   await run('UPDATE contact_runs SET review_requested=true WHERE id=?',finalRow.id);return{cursor:{},records:[],complete:true};
  }});
- assert.equal(final.done,true);assert.match(await getSetting('pending_import_review'),/Review all material added or updated/);assert.equal((await one('SELECT status FROM jobs WHERE id=?',activeJob)).status,'running');
+ assert.equal(final.done,true);assert.ok(await one('SELECT source_id FROM review_queue WHERE source_id=? AND completed=false',lateSource.id));assert.equal((await one('SELECT status FROM jobs WHERE id=?',activeJob)).status,'running');
  assert.equal((await one("SELECT count(*) AS n FROM jobs WHERE status IN ('queued','running')")).n,1);
 });
 test('projection savepoints roll back tentative contact writes while preserving the failed queue entry',async()=>{

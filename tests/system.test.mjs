@@ -71,9 +71,10 @@ test('Google Gmail grants refuse to mix mailboxes',async()=>{
 });
 test('imports arriving during a review become one durable follow-up',async()=>{
  const active=(await agent.createJob('Current review','test'));
+ await m.upsertSource({provider:'granola',external_id:'pending-review-fixture',title:'Recent fictional meeting',body:'A current fictional decision to review.',occurred_at:m.stamp()});
  (await agent.queueImportReview());(await agent.queueImportReview());
  assert.equal((await m.one("SELECT count(*) AS n FROM jobs WHERE status IN ('queued','running')")).n,1);
- assert.ok((await m.getSetting('pending_import_review')));
+ assert.ok(await m.one("SELECT source_id FROM review_queue WHERE completed=false AND job_id IS NULL"));
  (await m.run("UPDATE jobs SET status='complete' WHERE id=?",active));
  const next=(await agent.takePendingImportReview());assert.ok(next);assert.equal((await m.one('SELECT kind FROM jobs WHERE id=?',next)).kind,'import_review');
  assert.equal((await m.getSetting('pending_import_review')),null);assert.equal((await agent.takePendingImportReview()),null);

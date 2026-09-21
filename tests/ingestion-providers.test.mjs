@@ -9,9 +9,11 @@ const privateDir=mkdtempSync(join(tmpdir(),'focus-ingestion-providers-'));proces
 delete process.env.VERCEL;delete process.env.XIN_SECRET_STORAGE;
 process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 process.env.GOOGLE_CLIENT_ID='fixture-client.apps.googleusercontent.com';process.env.GOOGLE_CLIENT_SECRET='fixture-client-secret';
-const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.mjs');
+const {initialProviderCursor:initialWithFreshness,advanceProvider}=await import('../lib/ingestion-providers.mjs');
 const {saveSecrets,secrets,updateSecrets}=await import('../lib/secret-store.mjs');
 const {getSetting,setSetting,transaction,upsertSource,one}=await import('../lib/db.mjs');
+// Core checkpoint tests start after the independently tested recent-mail pass.
+async function initialProviderCursor(provider){const cursor=await initialWithFreshness(provider);delete cursor.freshness;cursor.lastFreshAt=new Date().toISOString();return cursor;}
 const fixtureTokens={access_token:'fixture-access-secret',refresh_token:'fixture-refresh-secret',expires_at:Date.now()+3600000};
 const message=id=>({id,threadId:'thread-'+id,internalDate:'1760000000000',labelIds:['INBOX'],payload:{mimeType:'text/plain',headers:[{name:'Subject',value:'Fictional subject '+id}],body:{data:Buffer.from('Fictional content for '+id).toString('base64url')}}});
 test.beforeEach(async()=>{for(const key of ['gmail_query','gmail_page','gmail_history','gmail_email','granola_page','granola_since','fireflies_page','fireflies_sync'])await setSetting(key,null);await setSetting('gmail_query','-in:spam -in:trash');await saveSecrets({gmail_tokens:{...fixtureTokens},granola_key:'fixture-granola-secret',fireflies_key:'fixture-fireflies-secret'});});
@@ -119,3 +121,16 @@ test('network errors and OAuth response details are sanitized before reaching Wo
 });
 
 test.after(()=>rmSync(privateDir,{recursive:true,force:true}));
+
+test('recent Gmail is ingested before the old backlog without moving either saved watermark',async t=>{
+ const saved={query:'-in:spam -in:trash',historyId:'old',pageToken:'old-page'};await setSetting('gmail_page',saved);await setSetting('gmail_history','history-old');
+ t.mock.method(global,'fetch',async url=>{const u=new URL(url);if(u.pathname.endsWith('/messages')){assert.match(u.searchParams.get('q'),/newer_than:7d/);assert.equal(u.searchParams.get('pageToken'),null);return Response.json({messages:[{id:'fresh-first'}]});}return Response.json(message('fresh-first'));});
+ let cursor=await initialWithFreshness('gmail');({cursor}=await saveAdvance('gmail',cursor));
+ const fresh=await saveAdvance('gmail',cursor);assert.equal(fresh.records[0].doc.external_id,'fresh-first');assert.equal(fresh.complete,false);assert.equal(fresh.cursor.freshness,undefined);assert.equal(fresh.cursor.pageToken,'old-page');assert.equal(await getSetting('gmail_history'),'history-old');assert.deepEqual(await getSetting('gmail_page'),saved);
+});
+
+test('long-running Gmail history periodically checks new arrivals and preserves its current page',async t=>{
+ await setSetting('gmail_history','history-anchor');const cursor=await initialProviderCursor('gmail');cursor.lastFreshAt='2020-01-01';cursor.pendingIds=['old-pending'];cursor.phase='message';
+ t.mock.method(global,'fetch',async url=>{const u=new URL(url);assert.ok(u.pathname.endsWith('/messages'));assert.match(u.searchParams.get('q'),/newer_than:7d/);return Response.json({messages:[]});});
+ const result=await advanceProvider('gmail',cursor);assert.equal(result.complete,false);assert.deepEqual(result.cursor.pendingIds,['old-pending']);assert.equal(result.cursor.historyId,'history-anchor');assert.ok(Date.parse(result.cursor.lastFreshAt)>Date.parse(cursor.lastFreshAt));assert.deepEqual(result.settings,{});
+});
