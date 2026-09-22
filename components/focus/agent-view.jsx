@@ -38,6 +38,7 @@ import {
 } from './shared';
 import { ReviewHistory, isFollowUp, promptSnippet } from './review-history';
 import { ReviewAnswers } from './review-answers';
+import { PrioritiesOverview } from './priorities-view';
 import { ProposalQueue } from './proposal-queue';
 
 const prompts = [
@@ -80,6 +81,7 @@ export default function AgentView({
   setSelectedJobId,
   cancel,
   answer,
+  openPriority,
 }) {
   const now = state.items.filter((item) => item.status === 'now');
   const candidates = state.items.filter((item) => item.status === 'candidate');
@@ -126,6 +128,7 @@ export default function AgentView({
           <strong>{now.length} of 3</strong>active outcomes
         </span>
       </div>
+      <PrioritiesOverview priorities={state.priorities} onOpen={openPriority} />
       <div className="overview-grid">
         <section className="agent-column" aria-label="Your agent">
           <Card className="agent-composer">

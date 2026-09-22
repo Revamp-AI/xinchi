@@ -45,6 +45,7 @@ import { ThemeToggle } from './theme';
 
 const views = [
   ['agent', Sparkles, 'Overview'],
+  ['priorities', Layers3, 'Priorities'],
   ['board', CheckCheck, 'Commitments'],
   ['contacts', Users, 'Contacts'],
   ['library', BookOpen, 'Context library'],

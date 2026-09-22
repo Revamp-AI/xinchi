@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import AppShell from '@/components/focus/app-shell';
+import PrioritiesView from '@/components/focus/priorities-view';
 import AgentView from '@/components/focus/agent-view';
 import BoardView from '@/components/focus/board-view';
 import LibraryView from '@/components/focus/library-view';
@@ -55,6 +56,7 @@ export default function Workspace() {
     [trace, setTrace] = useState(null),
     [events, setEvents] = useState(null);
   const [selectedJobId, setSelectedJobId] = useState(null);
+  const [selectedPriorityId, setSelectedPriorityId] = useState(null);
   const [q, setQ] = useState(''),
     [provider, setProvider] = useState(''),
     [offset, setOffset] = useState(0),
@@ -76,6 +78,7 @@ export default function Workspace() {
       if (
         [
           'agent',
+          'priorities',
           'board',
           'contacts',
           'library',
@@ -374,8 +377,20 @@ export default function Workspace() {
             cancel,
             answer,
           }}
+          openPriority={(id) => {
+            setSelectedPriorityId(id);
+            navigate('priorities');
+          }}
           dismiss={(id) => act(() => api('proposals/dismiss', { id }))}
           showTrace={(id) => inspect('jobs/' + id, setTrace)}
+        />
+      )}
+      {view === 'priorities' && (
+        <PrioritiesView
+          {...{ state, api, refresh, openSource }}
+          editCommitment={edit}
+          selectedId={selectedPriorityId}
+          setSelectedId={setSelectedPriorityId}
         />
       )}
       {view === 'board' && (
@@ -394,6 +409,10 @@ export default function Workspace() {
             openDraft,
             openSource,
             selectProposal,
+          }}
+          openPriority={(id) => {
+            setSelectedPriorityId(id);
+            navigate('priorities');
           }}
           dismiss={(id) => act(() => api('proposals/dismiss', { id }))}
           saveFocus={() =>

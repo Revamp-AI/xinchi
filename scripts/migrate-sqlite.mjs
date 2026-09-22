@@ -27,7 +27,8 @@ export async function migrateSqlite({sourceDir,backupDir,apply=false,writersStop
   await migrateDatabase();
   await transaction(async()=>{
    await lockWorkspace();
-   for(const table of [...exportTables,'focus_auth.owner','focus_auth.auth_events','focus_auth.sessions','focus_auth.oauth_attempts'])if((await one('SELECT count(*) AS n FROM '+table)).n)throw Error('Destination must be empty. Use a fresh database or restore into a new branch.');
+   for(const table of [...exportTables.filter(t=>!['priority_stacks','priority_order'].includes(t)),'focus_auth.owner','focus_auth.auth_events','focus_auth.sessions','focus_auth.oauth_attempts'])if((await one('SELECT count(*) AS n FROM '+table)).n)throw Error('Destination must be empty. Use a fresh database or restore into a new branch.');
+   if((await one('SELECT version FROM priority_order WHERE id=1')).version!==1)throw Error('Destination must be empty. Priority ordering was already changed.');
    for(const [table,rows] of Object.entries(tables)){
     const [schema,name]=table.includes('.')?table.split('.'):['public',table];
     const columns=new Set((await all('SELECT column_name FROM information_schema.columns WHERE table_schema=? AND table_name=?',schema,name)).map(r=>r.column_name));

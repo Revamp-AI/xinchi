@@ -4,6 +4,7 @@ import { candidate, sources } from './global-setup';
 // Sidebar label -> the h1 each view renders.
 const views = {
   Overview: 'Your next move, clearer.',
+  Priorities: 'Priorities',
   Commitments: 'Your commitments',
   'Context library': 'Context library',
   Connections: 'Your connections',
@@ -48,7 +49,7 @@ test('the overview loads signed in', async ({ page, isMobile }) => {
   }
 });
 
-test('navigation reaches all six views', async ({ page }) => {
+test('navigation reaches all seven views', async ({ page }) => {
   for (const view of Object.keys(views) as (keyof typeof views)[]) {
     await open(page, view);
     await expect(page.locator('.breadcrumb strong')).toHaveText(view);
@@ -159,7 +160,7 @@ test('contact profile, timeline, map and list work together', async ({ page }, t
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'List', exact: true }).click();
   const table = page.getByRole('table', { name: 'Contacts', exact: true });
-  await expect(table.getByRole('button', { name: new RegExp(name) })).toBeVisible();
+  await expect(table.locator('.contact-person-button').filter({hasText:name})).toBeVisible();
   await expect(table.getByRole('row').filter({ hasText: name })).toContainText('Active');
 });
 

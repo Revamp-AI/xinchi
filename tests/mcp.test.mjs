@@ -141,3 +141,14 @@ test('contact and source pagination preserve access to the full history',async()
  const next=await executeMcpTool('focus_list_interactions',{id:contact.id,limit:2,offset:2},f.access);assert.equal(next.records.length,1);assert.equal(next.next_offset,null);
 });
 test.after(async()=>{await db.db.close();rmSync(temp,{recursive:true,force:true});});
+test('Codex can manage priority stacks and source-backed updates with scope checks and safe retries',async()=>{
+ const f=await grant();let dispatched=0;const options={schedule(){dispatched++;}};
+ const args={idempotency_key:key(),priority:{title:'MCP priority fixture',stack_id:'product',owner:'Alex'}};
+ const created=await executeMcpTool('focus_save_priority',args,f.access,options);
+ assert.equal((await executeMcpTool('focus_save_priority',args,f.access,options)).id,created.id);
+ const state=await executeMcpTool('focus_list_priorities',{},f.access);assert.ok(state.items.some(p=>p.id===created.id));
+ await executeMcpTool('focus_reorder_priorities',{idempotency_key:key(),version:state.order_version,ids:['product','deal-flow','go-to-market']},f.access);
+ await executeMcpTool('focus_add_priority_update',{idempotency_key:key(),id:created.id,body:'A fictional release has a new acceptance criterion.'},f.access,options);
+ const detail=await executeMcpTool('focus_get_priority',{id:created.id},f.access);assert.equal(detail.updates.length,1);assert.ok(detail.updates[0].citations[0].source_version_id);assert.equal(dispatched,3);
+ const readonly=await grant('focus:read');await assert.rejects(executeMcpTool('focus_save_priority',{...args,idempotency_key:key()},readonly.access),/permission/);
+});
