@@ -1,7 +1,52 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {authorizeBeeper,authorizeBeeperWithRetry,requestJson,selectChats,chooseChats} from '../public/beeper-companion.mjs';
+import {mkdtemp,readFile,writeFile,utimes,unlink,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {acquireCompanionLock,authorizeBeeper,authorizeBeeperWithRetry,requestJson,selectChats,chooseChats} from '../public/beeper-companion.mjs';
+
+async function lockHome(t){const directory=await mkdtemp(join(tmpdir(),'focus-beeper-lock-'));t.after(()=>rm(directory,{recursive:true,force:true}));return directory;}
+
+test('a PID reused after a restart cannot block the companion or erase its pairing and checkpoint',async t=>{
+ const directory=await lockHome(t),path=join(directory,'companion.pid');
+ const config='{"token":"fictional-token"}',state='{"run":{"id":"fictional-run","part":33,"chatIndex":36}}';
+ await writeFile(join(directory,'config.json'),config);await writeFile(join(directory,'state.json'),state);
+ await writeFile(path,String(process.pid));await utimes(path,new Date('2000-01-01'),new Date('2000-01-01'));
+ const release=await acquireCompanionLock(directory);t.after(release);
+ assert.equal(JSON.parse(await readFile(path,'utf8')).version,2);
+ assert.equal(await readFile(join(directory,'config.json'),'utf8'),config);
+ assert.equal(await readFile(join(directory,'state.json'),'utf8'),state);
+ process.kill(process.pid,0);
+});
+
+test('a live legacy companion keeps its lock and failed acquisition releases the socket',async t=>{
+ const directory=await lockHome(t),path=join(directory,'companion.pid');await writeFile(path,String(process.pid));
+ await assert.rejects(acquireCompanionLock(directory),/already running/);
+ assert.equal(await readFile(path,'utf8'),String(process.pid));await unlink(path);
+ const release=await acquireCompanionLock(directory);await release();
+});
+
+test('only one companion owns a home directory even when callers start concurrently',async t=>{
+ const directory=await lockHome(t),results=await Promise.allSettled([acquireCompanionLock(directory),acquireCompanionLock(directory)]);
+ const owners=results.filter(r=>r.status==='fulfilled');for(const owner of owners)t.after(owner.value);
+ assert.equal(owners.length,1);assert.match(results.find(r=>r.status==='rejected').reason.message,/already running/);
+ await owners[0].value();const release=await acquireCompanionLock(directory);await release();await release();
+});
+
+test('a killed companion releases its lock automatically despite a surviving PID marker',async t=>{
+ const directory=await lockHome(t),moduleUrl=new URL('../public/beeper-companion.mjs',import.meta.url).href;
+ const child=spawn(process.execPath,['--input-type=module','-e',`const {acquireCompanionLock}=await import(${JSON.stringify(moduleUrl)});await acquireCompanionLock(process.env.FOCUS_BEEPER_HOME);process.send('ready');`],{env:{...process.env,FOCUS_BEEPER_HOME:directory},stdio:['ignore','ignore','pipe','ipc']});
+ const exited=once(child,'exit');t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');await exited;});
+ await Promise.race([once(child,'message'),exited.then(()=>{throw Error('Companion exited before acquiring its lock.');})]);
+ await assert.rejects(acquireCompanionLock(directory),/already running/);
+ child.kill('SIGKILL');await exited;
+ const path=join(directory,'companion.pid'),marker=JSON.parse(await readFile(path,'utf8'));
+ marker.pid=process.pid;await writeFile(path,JSON.stringify(marker));
+ const release=await acquireCompanionLock(directory);await release();
+});
 
 test('setup automatically selects all 1,732 conversations without a selection prompt or printing their titles',async()=>{
  const chats=Array.from({length:1732},(_,i)=>({id:'chat-'+i,accountID:'account-1',title:'Fictional conversation '+i,network:'Example'})),logs=[];

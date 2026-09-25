@@ -77,6 +77,24 @@ If Beeper authorization expires, run setup again. If cloud processing fails, use
 Retry import in Focus. Refresh requests wait for the Mac and are fetched by its
 outbound polling connection.
 
+### Sync stops after restarting the Mac
+
+Older companions used a saved process ID as a lock. After a restart, macOS could
+assign that ID to an unrelated process, leaving the companion stuck on “The
+companion is already running.” The current companion uses an exclusive loopback
+listener that the operating system releases automatically when the process exits.
+It accepts no commands or data and is never exposed to the network.
+
+Download the current companion from Focus → Connections → Beeper, then run:
+
+```sh
+node ~/Downloads/beeper-companion.mjs install
+```
+
+This updates and restarts the login service while preserving the existing pairing,
+conversation selection, and pending upload. Setup and a new pairing code are not
+needed. The companion resumes from its saved checkpoint.
+
 ### Setup stops before asking for a pairing code
 
 Beeper authorization and confirmation of the selection happen before the Focus pairing
@@ -101,7 +119,7 @@ Confirm the selection, then generate the Focus pairing code when Terminal asks f
 - `lib/durable-ingestion.mjs`: reuse of the existing durable ingestion loop.
 - `migrations/008_beeper_companion.sql`: device records, staging metadata, message interactions.
 - `tests/beeper.test.mjs`: authorization, scope, replay, restart, extraction, revocation.
-- `tests/beeper-companion.test.mjs`: read-only OAuth, write-grant revocation and retry, cancellation.
+- `tests/beeper-companion.test.mjs`: read-only OAuth, write-grant revocation and retry, cancellation, exclusive locking and restart recovery.
 
 Reference: [Beeper API](https://developers.beeper.com/desktop-api/),
 [authentication](https://developers.beeper.com/desktop-api/auth/),
