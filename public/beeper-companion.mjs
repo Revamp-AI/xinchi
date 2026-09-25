@@ -90,12 +90,25 @@ export async function authorizeBeeperWithRetry(question,{authorize=authorizeBeep
 }
 export function cleanChat(c){return{id:c.id,accountID:c.accountID,network:String(c.network||'Beeper').slice(0,100),title:String(c.title||'Direct conversation').slice(0,300),type:c.type,participants:{hasMore:c.participants?.hasMore===true,items:(c.participants?.items||[]).map(p=>({id:p.id,fullName:String(p.fullName||'').slice(0,300),email:String(p.email||'').slice(0,300),isSelf:p.isSelf===true,isNetworkBot:p.isNetworkBot===true}))}};}
 export function cleanMessage(m){return{id:m.id,accountID:m.accountID,chatID:m.chatID,senderID:m.senderID,senderName:String(m.senderName||'').slice(0,300),timestamp:m.timestamp,isSender:m.isSender,text:m.text||'',type:m.type||'',isDeleted:m.isDeleted===true,isHidden:m.isHidden===true,linkedMessageID:m.linkedMessageID||''};}
-export async function listDirectChats(config){
+export async function listDirectChats(config,{requestLocal=local}={}){
  let cursor,rows=[],seen=new Set();for(let page=0;page<1000;page++){
-  const result=await local(config,'/v1/chats'+(cursor?'?cursor='+encodeURIComponent(cursor)+'&direction=before':''));if(!Array.isArray(result.items))throw Error('Beeper did not return a conversation list.');
+  const result=await requestLocal(config,'/v1/chats'+(cursor?'?cursor='+encodeURIComponent(cursor)+'&direction=before':''));if(!Array.isArray(result.items))throw Error('Beeper did not return a conversation list.');
   for(const c of result.items)if(c.type==='single'&&!seen.has(c.id)){seen.add(c.id);rows.push(cleanChat(c));}
   if(!result.hasMore)return rows;if(!result.oldestCursor||result.oldestCursor===cursor)throw Error('Beeper conversation pagination did not advance.');cursor=result.oldestCursor;
- }throw Error('Conversation list is too large. Contact Focus support.');
+}throw Error('Conversation list is too large. Contact Focus support.');
+}
+async function readSelected(config,selected,path,requestLocal){
+ try{return await requestLocal(config,path);}catch(error){
+  // Beeper can return 500 (not 404) for a conversation removed since pairing.
+  // Only advance after a complete, successful enumeration confirms it is absent.
+  if(error.service==='beeper'&&[404,410,500].includes(error.status)&&!(await listDirectChats(config,{requestLocal})).some(c=>c.id===selected.id))return null;
+  throw error;
+ }
+}
+function advanceChat(config,state,unavailable=false){
+ const r=state.run,id=config.selection[r.chatIndex].id,missing=new Set(state.unavailableChats||[]);
+ if(unavailable)missing.add(id);else missing.delete(id);state.unavailableChats=[...missing];
+ r.chatIndex++;r.cursor=null;r.chat=null;
 }
 export function chooseChats(input,chats){
  if(!chats.length)throw Error('No direct conversations are available in Beeper.');
@@ -135,15 +148,18 @@ export async function syncTick(config,state,{requestCloud=cloud,requestLocal=loc
  if(!r.started_at){const started=await requestCloud(config,'start',{request_id:r.id});if(started.state!=='uploading')throw Error('Cloud import state changed. Check Focus.');r.started_at=started.started_at;r.part=started.part_count;r.cutoff=Math.max(Date.parse(r.started_at)-90*day,r.full?0:Date.parse(state.lastSuccess||0)-2*day);await save(state);}
  if(r.pending){
   await requestCloud(config,'batch',{run_id:r.id,part:r.part,records:r.pending.batches[0]});r.part++;r.pending.batches.shift();
-  if(!r.pending.batches.length){r.cursor=r.pending.cursor;if(r.pending.done){r.chatIndex++;r.cursor=null;r.chat=null;}r.pending=null;}await save(state);return 'Batch saved';
+  if(!r.pending.batches.length){r.cursor=r.pending.cursor;if(r.pending.done)advanceChat(config,state);r.pending=null;}await save(state);return 'Batch saved';
  }
  if(r.chatIndex>=config.selection.length){await requestCloud(config,'finish',{run_id:r.id,parts:r.part});r.sealed=true;await save(state);return 'Upload complete';}
  const selected=config.selection[r.chatIndex];
- if(!r.chat){r.chat=cleanChat(await requestLocal(config,'/v1/chats/'+encodeURIComponent(selected.id)));if(r.chat.id!==selected.id||r.chat.accountID!==selected.accountID||r.chat.type!=='single')throw Error('Selected conversation changed. Run setup again.');await save(state);return 'Conversation ready';}
- const page=await requestLocal(config,'/v1/chats/'+encodeURIComponent(selected.id)+'/messages'+(r.cursor?'?cursor='+encodeURIComponent(r.cursor)+'&direction=before':''));
- const progress=pageProgress(page,r.cursor,r.cutoff),records=page.items.filter(m=>Date.parse(m.timestamp)>=r.cutoff&&Date.parse(m.timestamp)<=Date.parse(r.started_at)+300000).map(m=>({chat:r.chat,message:cleanMessage(m)}));
+ if(!r.chat){const chat=await readSelected(config,selected,'/v1/chats/'+encodeURIComponent(selected.id),requestLocal);if(!chat){advanceChat(config,state,true);await save(state);return 'Conversation unavailable in Beeper; continuing sync';}r.chat=cleanChat(chat);if(r.chat.id!==selected.id||r.chat.accountID!==selected.accountID||r.chat.type!=='single')throw Error('Selected conversation changed. Run setup again.');await save(state);return 'Conversation ready';}
+ const page=await readSelected(config,selected,'/v1/chats/'+encodeURIComponent(selected.id)+'/messages'+(r.cursor?'?cursor='+encodeURIComponent(r.cursor)+'&direction=before':''),requestLocal);
+ if(!page){advanceChat(config,state,true);await save(state);return 'Conversation unavailable in Beeper; continuing sync';}
+ // A returning conversation needs its full available history, even on an incremental scan.
+ const cutoff=state.unavailableChats?.includes(selected.id)?Date.parse(r.started_at)-90*day:r.cutoff;
+ const progress=pageProgress(page,r.cursor,cutoff),records=page.items.filter(m=>Date.parse(m.timestamp)>=cutoff&&Date.parse(m.timestamp)<=Date.parse(r.started_at)+300000).map(m=>({chat:r.chat,message:cleanMessage(m)}));
  const batches=splitRecords(records);
- if(batches.length)r.pending={batches,...progress};else{r.cursor=progress.cursor;if(progress.done){r.chatIndex++;r.chat=null;}}
+ if(batches.length)r.pending={batches,...progress};else{r.cursor=progress.cursor;if(progress.done)advanceChat(config,state);}
  await save(state);return 'Page saved locally';
 }
 const xml=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&apos;');
@@ -181,7 +197,7 @@ async function runLoop(once=false){
  const release=await acquireCompanionLock();
  try{let previous='',state=await readJson(statePath,{});do{
   let wait=250;
-  try{const result=await syncTick(config,state);if(result!==previous&&['Import complete','Upload complete','Up to date'].includes(result))console.log(new Date().toISOString()+' '+result);previous=result;if(['Up to date','Cloud processing'].includes(result))wait=30000;}
+  try{const result=await syncTick(config,state);if(result!==previous&&['Import complete','Upload complete','Up to date','Conversation unavailable in Beeper; continuing sync'].includes(result))console.log(new Date().toISOString()+' '+result);previous=result;if(['Up to date','Cloud processing'].includes(result))wait=30000;}
   catch(e){state=await readJson(statePath,{});const issue=e.service==='beeper'&&e.status===401?'auth':e.cause?.code==='ECONNREFUSED'?'offline':'sync';try{await cloud(config,'heartbeat',{issue});}catch{}const message=e.service==='focus'&&e.status===401?'Pairing was revoked. Run setup again.':issue==='auth'?'Beeper access expired. Run setup again.':issue==='offline'?'Waiting for Beeper Desktop.':e.message;if(message!==previous)console.error(new Date().toISOString()+' '+message);previous=message;wait=30000;}
   if(!once)await delay(wait);
  }while(!once);}finally{await release();}
@@ -192,7 +208,7 @@ export async function main(command=process.argv[2]){
  if(command==='install')return installMac();
  if(command==='run'||command==='once')return runLoop(command==='once');
  if(command==='uninstall'){spawnSync('launchctl',['bootout','gui/'+process.getuid(),plist],{stdio:'ignore'});await unlink(plist).catch(e=>{if(e.code!=='ENOENT')throw e;});console.log('Automatic syncing stopped. Revoke this Mac in Focus → Connections → Beeper to remove cloud access.');return;}
- if(command==='status'){const c=await readJson(configPath),s=await readJson(statePath,{});console.log(JSON.stringify({paired:!!c,conversations:c?.selection?.length||0,last_success:s.lastSuccess||null,uploading:!!s.run},null,2));return;}
+ if(command==='status'){const c=await readJson(configPath),s=await readJson(statePath,{});console.log(JSON.stringify({paired:!!c,conversations:c?.selection?.length||0,unavailable_conversations:s.unavailableChats?.length||0,last_success:s.lastSuccess||null,uploading:!!s.run},null,2));return;}
  console.log('Usage: node beeper-companion.mjs setup [--choose] | run | once | install | status | uninstall');
 }
 if(process.argv[1]&&resolve(process.argv[1])===scriptPath)main().catch(e=>{console.error(e.message);process.exitCode=1;});
