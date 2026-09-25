@@ -4,7 +4,7 @@ test('manual upload runs through compiled Workflow steps, then extraction, with 
  test.setTimeout(120000);
  await page.goto('/');
  await page.getByRole('button',{name:'Context library',exact:true}).click();
- const records=Array.from({length:3},(_,i)=>({provider:'manual',external_id:'workflow-e2e-'+i,title:'Workflow fixture '+i,body:'Fictional import evidence '+i,coverage:'document'}));
+ const records=Array.from({length:3},(_,i)=>({provider:'manual',external_id:'workflow-e2e-'+i,title:'Workflow fixture '+i,occurred_at:new Date().toISOString(),body:'Fictional import evidence '+i,coverage:'document'}));
  await page.locator('input[type=file]').setInputFiles({name:'workflow-fixtures.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(records))});
  await expect(page.getByRole('heading',{name:'Your connections',exact:true})).toBeVisible();
  let imported:any;
@@ -20,6 +20,7 @@ test('manual upload runs through compiled Workflow steps, then extraction, with 
   expect((await db.query("SELECT count(*) AS n FROM sources WHERE external_id LIKE 'workflow-e2e-%'")).rows[0].n).toBe('3');
   expect((await db.query('SELECT count(*) AS n FROM import_chunks')).rows[0].n).toBe('0');
   expect((await db.query('SELECT count(*) AS n FROM jobs')).rows[0].n).toBe('1');
-  expect((await db.query("SELECT value FROM settings WHERE key='pending_import_review'")).rows[0]?.value).toBeTruthy();
+  expect((await db.query("SELECT count(*) AS n FROM review_queue WHERE source_id LIKE 'manual:workflow-e2e-%' AND completed=false AND job_id IS NULL")).rows[0].n).toBe('3');
+  expect((await db.query('SELECT count(*) AS n FROM contact_analysis_runs')).rows[0].n).toBe('0');
  }finally{await db.end();}
 });

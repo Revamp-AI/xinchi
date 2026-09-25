@@ -34,7 +34,7 @@ test('activity classifies an unconfirmed contact and confirmation leaves trackin
     .getByRole('row')
     .filter({ hasText: name });
   await expect(row).toContainText('Active');
-  await row.getByRole('button', { name: new RegExp(name) }).click();
+  await row.getByRole('button').filter({ hasText: name }).click();
   const dialog = page.getByRole('dialog', { name, exact: true });
   await expect(dialog).toContainText(
     'Classification already uses its verified activity.',
