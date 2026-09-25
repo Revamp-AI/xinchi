@@ -40,7 +40,7 @@ test('an exact-email match appears once and source names remain visible and sear
   await page.getByPlaceholder('Find a person, role, or organization').fill(email);
   const table = page.getByRole('table', { name: 'Contacts', exact: true });
   await expect(table.getByRole('row')).toHaveCount(2);
-  await table.getByRole('button', { name: new RegExp(name) }).click();
+  await table.getByRole('button').filter({ hasText: name }).click();
   const dialog = page.getByRole('dialog', { name, exact: true });
   await dialog
     .getByText('Identity bindings and relationship history', { exact: true })
@@ -55,7 +55,7 @@ test('an exact-email match appears once and source names remain visible and sear
   await page.getByPlaceholder('Find a person, role, or organization').fill(alias);
   await expect(table.getByRole('row')).toHaveCount(2);
   await expect(
-    table.getByRole('button', { name: new RegExp(name) }),
+    table.getByRole('button').filter({ hasText: name }),
   ).toBeVisible();
   const status = await (await request.get('/api/contacts/status')).json();
   expect(

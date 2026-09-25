@@ -20,7 +20,7 @@ test('LinkedIn imports expose profile and source evidence without inventing acti
   await page.getByPlaceholder('Find a person, role, or organization').fill(url);
   const table = page.getByRole('table', { name: 'Contacts', exact: true });
   await expect(table.getByRole('row')).toHaveCount(2);
-  await table.getByRole('button', { name: new RegExp(name) }).click();
+  await table.getByRole('button').filter({ hasText: name }).click();
   const dialog = page.getByRole('dialog', { name, exact: true });
   await expect(
     dialog.getByText('Unclassified', { exact: true }).first(),

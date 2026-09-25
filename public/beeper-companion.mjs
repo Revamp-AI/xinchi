@@ -2,7 +2,8 @@
 // Standalone Focus companion. Node 24+. No npm installation or inbound cloud access.
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {createServer} from 'node:http';
-import {mkdir,readFile,writeFile,rename,chmod,copyFile,unlink} from 'node:fs/promises';
+import {createServer as createLockServer} from 'node:net';
+import {mkdir,readFile,writeFile,rename,chmod,copyFile,unlink,stat,realpath} from 'node:fs/promises';
 import {homedir,hostname} from 'node:os';
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -15,6 +16,31 @@ const configPath=join(home,'config.json'),statePath=join(home,'state.json'),scri
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function readJson(path,fallback){try{return JSON.parse(await readFile(path,'utf8'));}catch(e){if(e.code==='ENOENT')return fallback;throw e;}}
 export async function savePrivate(path,value){await mkdir(dirname(path),{recursive:true,mode:0o700});const temp=path+'.'+randomUUID()+'.tmp';await writeFile(temp,JSON.stringify(value),{mode:0o600});await rename(temp,path);await chmod(path,0o600);}
+export async function acquireCompanionLock(directory=home){
+ await mkdir(directory,{recursive:true,mode:0o700});directory=await realpath(directory);
+ // The OS releases this exclusive loopback listener on exit, including crashes and restarts.
+ // PID files alone are unsafe: macOS can reuse a saved PID for an unrelated process.
+ const port=49152+createHash('sha256').update(directory).digest().readUInt16BE(0)%16384;
+ const server=createLockServer(socket=>socket.destroy()),lockPath=join(directory,'companion.pid'),token=randomUUID();
+ try{await new Promise((yes,no)=>server.once('error',no).listen({host:'127.0.0.1',port,exclusive:true},yes));}
+ catch(error){if(error.code==='EADDRINUSE')throw Error('The companion is already running, or its local lock port is in use.');throw error;}
+ const close=()=>new Promise(yes=>server.close(yes));
+ try{
+  const legacy=await readJson(lockPath);
+  if(Number.isSafeInteger(legacy)&&legacy>0){
+   let alive=true;try{process.kill(legacy,0);}catch(error){if(error.code==='ESRCH')alive=false;else if(error.code!=='EPERM')throw error;}
+   if(alive){
+    // Allow migration from the old PID lock only when that PID has demonstrably been reused.
+    const info=await stat(lockPath),started=spawnSync('ps',['-p',String(legacy),'-o','lstart='],{encoding:'utf8',timeout:3000,env:{...process.env,LC_ALL:'C'}});
+    const start=started.status===0?Date.parse(started.stdout.trim()):NaN;
+    if(!Number.isFinite(start)||start<=info.mtimeMs+1000)throw Error('The companion is already running.');
+   }
+  }
+  await savePrivate(lockPath,{version:2,pid:process.pid,port,token});
+ }catch(error){await close();throw error;}
+ let released=false;
+ return async()=>{if(released)return;released=true;try{if((await readJson(lockPath))?.token===token)await unlink(lockPath);}finally{await close();}};
+}
 export function focusOrigin(value){const u=new URL(value);if(u.username||u.password||u.pathname!=='/'||u.search||u.hash||!(u.protocol==='https:'||u.origin==='http://127.0.0.1:3210'))throw Error('Use your Focus HTTPS address.');return u.origin;}
 export async function requestJson(url,{token,method='GET',body,form,allowEmpty=false}={}){
  const headers={};if(token)headers.Authorization='Bearer '+token;
@@ -152,16 +178,13 @@ async function setup({choose=false}={}){
 }
 async function runLoop(once=false){
  const config=await readJson(configPath);if(!config)throw Error('Run setup first.');focusOrigin(config.origin);
- const lockPath=join(home,'companion.pid');let lock;
- for(let attempt=0;attempt<2;attempt++){try{await writeFile(lockPath,String(process.pid),{flag:'wx',mode:0o600});lock=true;break;}catch(e){if(e.code!=='EEXIST')throw e;const pid=Number(await readFile(lockPath,'utf8'));try{process.kill(pid,0);throw Error('The companion is already running.');}catch(error){if(error.code!=='ESRCH')throw error;await unlink(lockPath);}}}
- if(!lock)throw Error('Could not acquire the companion lock.');
- let previous='',state=await readJson(statePath,{});
- try{do{
+ const release=await acquireCompanionLock();
+ try{let previous='',state=await readJson(statePath,{});do{
   let wait=250;
   try{const result=await syncTick(config,state);if(result!==previous&&['Import complete','Upload complete','Up to date'].includes(result))console.log(new Date().toISOString()+' '+result);previous=result;if(['Up to date','Cloud processing'].includes(result))wait=30000;}
   catch(e){state=await readJson(statePath,{});const issue=e.service==='beeper'&&e.status===401?'auth':e.cause?.code==='ECONNREFUSED'?'offline':'sync';try{await cloud(config,'heartbeat',{issue});}catch{}const message=e.service==='focus'&&e.status===401?'Pairing was revoked. Run setup again.':issue==='auth'?'Beeper access expired. Run setup again.':issue==='offline'?'Waiting for Beeper Desktop.':e.message;if(message!==previous)console.error(new Date().toISOString()+' '+message);previous=message;wait=30000;}
   if(!once)await delay(wait);
- }while(!once);}finally{await unlink(lockPath).catch(()=>{});}
+ }while(!once);}finally{await release();}
 }
 export async function main(command=process.argv[2]){
  if(Number(process.versions.node.split('.')[0])<24)throw Error('Install Node.js 24 or newer first.');

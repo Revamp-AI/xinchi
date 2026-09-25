@@ -45,7 +45,8 @@ test('the overview loads signed in', async ({ page, isMobile }) => {
   if (isMobile) {
     await expect(page.getByText('sources in context')).toBeVisible();
   } else {
-    await expect(page.getByText('Ready when you are')).toBeVisible();
+    // Other fixtures can hold a review while this shared workspace is open.
+    await expect(page.getByText(/^(Ready when you are|Agent working)$/)).toBeVisible();
   }
 });
 
@@ -209,7 +210,7 @@ test('other connections remain available while Gmail and another provider import
  expect(requested).toEqual(['fireflies','granola']);
 });
 test('Beeper setup provides a downloadable companion and owner-only pairing on desktop and mobile',async({page,request},testInfo)=>{
- await page.goto('/');await open(page,'Connections');
+ await open(page,'Connections');
  await page.getByRole('button',{name:'Connect Beeper',exact:true}).click();
  await expect(page.getByRole('dialog')).toBeVisible();
  await expect(page.getByRole('link',{name:'Download the Focus companion'})).toHaveAttribute('href','/beeper-companion.mjs');
