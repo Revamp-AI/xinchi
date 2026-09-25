@@ -6,7 +6,55 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {acquireCompanionLock,authorizeBeeper,authorizeBeeperWithRetry,requestJson,selectChats,chooseChats} from '../public/beeper-companion.mjs';
+import {acquireCompanionLock,authorizeBeeper,authorizeBeeperWithRetry,requestJson,selectChats,chooseChats,syncTick} from '../public/beeper-companion.mjs';
+
+const fictionalChat=id=>({id,accountID:'example-account',type:'single',participants:{items:[]}});
+const beeperError=status=>Object.assign(Error('Beeper unavailable'),{service:'beeper',status});
+function uploadState(){return{run:{id:'fictional-run',started_at:new Date().toISOString(),cutoff:Date.now()-2*86400000,chatIndex:0,part:7,cursor:null}};}
+
+test('a disappeared conversation returning 500 does not block later conversations and remains selected for retry',async()=>{
+ const config={selection:[fictionalChat('missing'),fictionalChat('available')]},state=uploadState(),paths=[];
+ const options={requestCloud:async()=>({}),save:async()=>{},requestLocal:async(_config,path)=>{
+  paths.push(path);if(path==='/v1/chats/missing')throw beeperError(500);
+  if(path==='/v1/chats')return{items:[fictionalChat('available')],hasMore:true,oldestCursor:'next-page'};
+  if(path==='/v1/chats?cursor=next-page&direction=before')return{items:[],hasMore:false};
+  if(path==='/v1/chats/available')return fictionalChat('available');assert.fail(path);
+ }};
+ assert.match(await syncTick(config,state,options),/unavailable/);
+ assert.equal(state.run.chatIndex,1);assert.equal(state.run.part,7);assert.deepEqual(state.unavailableChats,['missing']);assert.equal(config.selection.length,2);
+ assert.ok(paths.includes('/v1/chats?cursor=next-page&direction=before'));
+ assert.equal(await syncTick(config,state,options),'Conversation ready');assert.equal(state.run.chat.id,'available');
+});
+
+test('a returning conversation retries 90 days and clears its unavailable marker only after its batch is saved',async()=>{
+ const chat=fictionalChat('returned'),config={selection:[chat]},state={...uploadState(),unavailableChats:[chat.id]};let saved;
+ const message={id:'older-message',timestamp:new Date(Date.now()-14*86400000).toISOString(),text:'Fictional earlier message'};
+ const options={requestCloud:async(_config,action,body)=>{if(action==='batch')saved=body;return{};},save:async()=>{},requestLocal:async(_config,path)=>path.endsWith('/messages')?{items:[message],hasMore:false}:chat};
+ await syncTick(config,state,options);await syncTick(config,state,options);
+ assert.deepEqual(state.unavailableChats,[chat.id]);assert.equal(state.run.pending.batches[0][0].message.id,message.id);
+ const restarted=structuredClone(state);await syncTick(config,restarted,options);
+ assert.equal(saved.part,7);assert.equal(saved.records[0].message.id,message.id);assert.deepEqual(restarted.unavailableChats,[]);assert.equal(restarted.run.chatIndex,1);
+});
+
+test('listed conversations, failed enumeration, and authorization errors cannot be silently skipped',async()=>{
+ const chat=fictionalChat('selected'),config={selection:[chat]};
+ for(const scenario of ['listed','list-failed','auth']){
+  const state=uploadState(),before=structuredClone(state),paths=[];
+  await assert.rejects(syncTick(config,state,{requestCloud:async()=>({}),save:()=>assert.fail('Must retain checkpoint'),requestLocal:async(_config,path)=>{
+   paths.push(path);if(path!=='/v1/chats')throw beeperError(scenario==='auth'?401:500);
+   if(scenario==='list-failed')throw beeperError(500);return{items:[chat],hasMore:false};
+  }}),/Beeper unavailable/);
+  assert.deepEqual(state,before);if(scenario==='auth')assert.equal(paths.length,1);
+ }
+});
+
+test('a conversation disappearing during pagination preserves already uploaded batches',async()=>{
+ const chat=fictionalChat('missing'),config={selection:[chat]},state=uploadState();state.run.chat=chat;state.run.cursor='saved-cursor';
+ await syncTick(config,state,{requestCloud:async()=>({}),save:async()=>{},requestLocal:async(_config,path)=>{
+  if(path.startsWith('/v1/chats/missing/messages'))throw beeperError(404);return{items:[],hasMore:false};
+ }});
+ assert.equal(state.run.part,7);assert.equal(state.run.chatIndex,1);assert.equal(state.run.cursor,null);assert.equal(state.run.chat,null);assert.deepEqual(state.unavailableChats,['missing']);
+});
 
 async function lockHome(t){const directory=await mkdtemp(join(tmpdir(),'focus-beeper-lock-'));t.after(()=>rm(directory,{recursive:true,force:true}));return directory;}
 

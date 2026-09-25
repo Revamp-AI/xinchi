@@ -50,6 +50,11 @@ the conversations available during setup; rerun setup to include new conversatio
   acknowledged. The private local outbox survives process restarts. Staging is
   retained while the Mac is asleep. Once all pages arrive, a Vercel Workflow
   imports one source per step, then queues contact extraction and cloud review.
+- If a selected conversation disappears from Beeper, the companion verifies its
+  absence through the full conversation list and continues with the rest. Existing
+  archive snapshots remain. The status command reports unavailable conversations;
+  they stay selected and retry on later scans, with the full 90-day window if they
+  return. Errors for conversations still listed in Beeper pause syncing for retry.
 - Credentials are hashed in the restricted `focus_auth` schema and excluded from
   exports. The Beeper OAuth token is stored only on the Mac, never sent to Focus.
 - Network/account/chat/message IDs determine source identities. Contacts use
