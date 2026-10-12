@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { and, desc, eq, exists, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, exists, inArray, ne, or, sql } from 'drizzle-orm';
 import { calendarGranted } from './calendar.ts';
 import { secrets } from './secret-store.ts';
 import {
@@ -17,6 +17,7 @@ import {
 import { db } from './postgres.ts';
 import {
   jobs,
+  proposal_events,
   proposal_review_batches,
   proposals,
   source_versions,
@@ -168,19 +169,19 @@ export async function proposalEvent(
   detail: object = {},
   jobId: string | null = null,
 ) {
-  await run(
-    'INSERT INTO proposal_events(id,proposal_id,job_id,action,reason,detail) VALUES(?,?,?,?,?,?::jsonb)',
-    uid(),
-    id,
-    jobId,
+  await db.insert(proposal_events).values({
+    id: uid(),
+    proposal_id: id,
+    job_id: jobId,
     action,
     reason,
-    JSON.stringify(detail),
-  );
+    detail,
+  });
 }
 export async function rebalanceProposals() {
-  const rows = await all(`SELECT * FROM proposals WHERE status IN ${open}`);
-  for (const row of rows) row.score = proposalScore(JSON.parse(row.payload));
+  const rows = (await db.select().from(proposals).where(isOpen())).map(
+    (row) => ({ ...row, score: proposalScore(JSON.parse(row.payload)) }),
+  );
   rows.sort(
     (a, b) =>
       b.score - a.score ||
@@ -189,17 +190,15 @@ export async function rebalanceProposals() {
   );
   for (const [i, row] of rows.entries()) {
     const status = i < SHORTLIST_LIMIT ? 'pending' : 'deferred';
-    await run(
-      'UPDATE proposals SET priority_score=? WHERE id=?',
-      row.score,
-      row.id,
-    );
+    await db
+      .update(proposals)
+      .set({ priority_score: row.score })
+      .where(eq(proposals.id, row.id));
     if (status !== row.status) {
-      await run(
-        'UPDATE proposals SET status=?,version=version+1 WHERE id=?',
-        status,
-        row.id,
-      );
+      await db
+        .update(proposals)
+        .set({ status, version: sql`${proposals.version} + 1` })
+        .where(eq(proposals.id, row.id));
       await proposalEvent(row.id, status, 'shortlist', {
         from: row.status,
         to: status,
@@ -209,11 +208,11 @@ export async function rebalanceProposals() {
 }
 export async function saveProposals(
   jobId: string,
-  proposals: Proposal[],
+  incoming: Proposal[],
   { automatic = false }: { automatic?: boolean } = {},
 ) {
   const saved: Proposal[] = [];
-  for (const p of proposals) {
+  for (const p of incoming) {
     // Old/manual clients remain compatible; automatic discovery must qualify ownership.
     if (automatic && !p.qualification) continue;
     const key = p.qualification?.deliverable_key.trim().toLowerCase() || '';
@@ -222,17 +221,27 @@ export async function saveProposals(
       source: p.citations[0]!.source_id,
       item: p.existing_item_id,
     });
-    const old = p.existing_proposal_id
-      ? await one('SELECT * FROM proposals WHERE id=?', p.existing_proposal_id)
-      : await one(
-          "SELECT * FROM proposals WHERE fingerprint=? OR (deliverable_key<>? AND deliverable_key=?) OR (?<>'' AND payload::jsonb->'qualification'->>'commitment_quote'=? AND payload::jsonb->'citations' @> jsonb_build_array(jsonb_build_object('source_id',?::text))) ORDER BY created_at LIMIT 1",
-          fingerprint,
-          '',
-          key,
-          p.qualification?.commitment_quote || '',
-          p.qualification?.commitment_quote || '',
-          p.citations[0]!.source_id,
-        );
+    const quote = p.qualification?.commitment_quote || '';
+    const [old] = p.existing_proposal_id
+      ? await db
+          .select()
+          .from(proposals)
+          .where(eq(proposals.id, p.existing_proposal_id))
+      : await db
+          .select()
+          .from(proposals)
+          .where(
+            or(
+              eq(proposals.fingerprint, fingerprint),
+              and(
+                ne(proposals.deliverable_key, ''),
+                eq(proposals.deliverable_key, key),
+              ),
+              sql`(${quote} <> '' AND ${proposals.payload}::jsonb->'qualification'->>'commitment_quote' = ${quote} AND ${proposals.payload}::jsonb->'citations' @> jsonb_build_array(jsonb_build_object('source_id', ${p.citations[0]!.source_id}::text)))`,
+            ),
+          )
+          .orderBy(proposals.created_at)
+          .limit(1);
     if (old) {
       if (!['pending', 'deferred'].includes(old.status)) continue;
       // Updating an existing suggestion requires the version the reviewer actually read.
@@ -243,19 +252,25 @@ export async function saveProposals(
         continue;
       if (
         key &&
-        (await one(
-          'SELECT id FROM proposals WHERE deliverable_key=? AND id<>?',
-          key,
-          old.id,
-        ))
+        (
+          await db
+            .select({ id: proposals.id })
+            .from(proposals)
+            .where(
+              and(eq(proposals.deliverable_key, key), ne(proposals.id, old.id)),
+            )
+        ).length
       )
         continue;
-      await run(
-        'UPDATE proposals SET payload=?,deliverable_key=?,version=version+1,reviewed_at=now() WHERE id=?',
-        JSON.stringify(p),
-        key || old.deliverable_key,
-        old.id,
-      );
+      await db
+        .update(proposals)
+        .set({
+          payload: JSON.stringify(p),
+          deliverable_key: key || old.deliverable_key,
+          version: sql`${proposals.version} + 1`,
+          reviewed_at: sql`now()`,
+        })
+        .where(eq(proposals.id, old.id));
       await proposalEvent(
         old.id,
         'updated',
@@ -268,17 +283,16 @@ export async function saveProposals(
     }
     if (p.existing_proposal_id) continue;
     const id = uid();
-    await run(
-      'INSERT INTO proposals(id,job_id,fingerprint,status,payload,created_at,deliverable_key,priority_score) VALUES(?,?,?,?,?,?,?,?)',
+    await db.insert(proposals).values({
       id,
-      jobId,
+      job_id: jobId,
       fingerprint,
-      'pending',
-      JSON.stringify(p),
-      stamp(),
-      key,
-      proposalScore(p),
-    );
+      status: 'pending',
+      payload: JSON.stringify(p),
+      created_at: stamp(),
+      deliverable_key: key,
+      priority_score: proposalScore(p),
+    });
     await proposalEvent(
       id,
       'created',
@@ -296,26 +310,37 @@ export async function reconcileProposals(
 ) {
   const applied: Reconciliation[] = [];
   for (const r of reconciliations) {
-    const before = await one(
-      `SELECT * FROM proposals WHERE id=? AND version=? AND status IN ${open}`,
-      r.proposal_id,
-      r.version,
-    );
+    const [before] = await db
+      .select()
+      .from(proposals)
+      .where(
+        and(
+          eq(proposals.id, r.proposal_id),
+          eq(proposals.version, r.version),
+          isOpen(),
+        ),
+      );
     if (!before) continue;
     if (
       r.reason === 'duplicate' &&
       (!r.related_proposal_id ||
         r.related_proposal_id === r.proposal_id ||
-        !(await one(
-          'SELECT id FROM proposals WHERE id=?',
-          r.related_proposal_id,
-        )))
+        !(
+          await db
+            .select({ id: proposals.id })
+            .from(proposals)
+            .where(eq(proposals.id, r.related_proposal_id))
+        ).length)
     )
       throw Error('Duplicate cleanup needs the retained proposal.');
-    await run(
-      "UPDATE proposals SET status='dismissed',version=version+1,reviewed_at=now() WHERE id=?",
-      r.proposal_id,
-    );
+    await db
+      .update(proposals)
+      .set({
+        status: 'dismissed',
+        version: sql`${proposals.version} + 1`,
+        reviewed_at: sql`now()`,
+      })
+      .where(eq(proposals.id, r.proposal_id));
     await proposalEvent(
       r.proposal_id,
       'dismissed',
