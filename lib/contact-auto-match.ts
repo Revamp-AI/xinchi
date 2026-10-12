@@ -1,7 +1,5 @@
+import { and, eq, getColumns, isNull, sql } from 'drizzle-orm';
 import {
-  all,
-  one,
-  run,
   getSetting as readSetting,
   setSetting,
   transaction,
@@ -10,6 +8,7 @@ import {
   uid,
   stamp,
 } from './db.mjs';
+import { db } from './postgres.ts';
 import { mergeVerifiedEmployerContacts } from './contact-identity.mjs';
 import {
   companyKey,
@@ -18,10 +17,14 @@ import {
   verifyEmployerDomain,
 } from './company-domain.mjs';
 import { linkedinProfileUrl } from './linkedin-import.ts';
-import type {
+import {
   affiliations,
   contact_identities,
   contacts,
+  identity_reviews,
+  organizations,
+  source_versions,
+  sources,
 } from './schema/index.ts';
 
 // db.mjs is untyped: its getSetting infers the fallback as null. A setting
@@ -96,19 +99,54 @@ export async function setAutoMatchEnabled(enabled: unknown) {
   });
 }
 async function inputs(): Promise<MatchInputs> {
-  const contacts = await all<Contact>(
-    'SELECT * FROM contacts WHERE merged_into IS NULL AND archived=false',
-  );
-  const identities = await all<Identity>(
-    "SELECT i.*,v.id AS source_version_id,v.fetched_at AS profile_fetched_at,v.raw_json::jsonb->'linkedin_connection' AS profile FROM contact_identities i JOIN contacts c ON c.id=i.contact_id LEFT JOIN sources s ON s.id=i.source_id AND i.provider='linkedin' LEFT JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE c.merged_into IS NULL AND c.archived=false",
-  );
-  const affiliations = await all<Affiliation>(
-    'SELECT a.*,o.name AS company FROM affiliations a JOIN organizations o ON o.id=a.organization_id',
-  );
-  const separate = await all<MatchInputs['separate'][number]>(
-    "SELECT left_id,right_id FROM identity_reviews WHERE status='separate'",
-  );
-  return { contacts, identities, affiliations, separate };
+  const contactRows = await db
+    .select()
+    .from(contacts)
+    .where(and(isNull(contacts.merged_into), eq(contacts.archived, false)));
+  const identities = await db
+    .select({
+      ...getColumns(contact_identities),
+      source_version_id: source_versions.id,
+      profile_fetched_at: source_versions.fetched_at,
+      profile: sql<LinkedinProfile | null>`${source_versions.raw_json}::jsonb->'linkedin_connection'`,
+    })
+    .from(contact_identities)
+    .innerJoin(contacts, eq(contacts.id, contact_identities.contact_id))
+    .leftJoin(
+      sources,
+      and(
+        eq(sources.id, contact_identities.source_id),
+        eq(contact_identities.provider, 'linkedin'),
+      ),
+    )
+    .leftJoin(
+      source_versions,
+      and(
+        eq(source_versions.source_id, sources.id),
+        eq(source_versions.content_hash, sources.content_hash),
+      ),
+    )
+    .where(and(isNull(contacts.merged_into), eq(contacts.archived, false)));
+  const affiliationRows = await db
+    .select({ ...getColumns(affiliations), company: organizations.name })
+    .from(affiliations)
+    .innerJoin(
+      organizations,
+      eq(organizations.id, affiliations.organization_id),
+    );
+  const separate = await db
+    .select({
+      left_id: identity_reviews.left_id,
+      right_id: identity_reviews.right_id,
+    })
+    .from(identity_reviews)
+    .where(eq(identity_reviews.status, 'separate'));
+  return {
+    contacts: contactRows,
+    identities,
+    affiliations: affiliationRows,
+    separate,
+  };
 }
 export function employerCandidates(
   { contacts, identities, affiliations, separate }: MatchInputs,
