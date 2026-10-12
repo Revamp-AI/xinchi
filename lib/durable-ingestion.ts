@@ -1,14 +1,12 @@
+import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { db, lockWorkspace, transaction as dbTransaction } from './postgres.ts';
+import { one, run, stamp, uid, setSetting, upsertSource } from './db.mjs';
 import {
-  all,
-  one,
-  run,
-  transaction as dbTransaction,
-  lockWorkspace,
-  stamp,
-  uid,
-  setSetting,
-  upsertSource,
-} from './db.mjs';
+  contact_runs,
+  durable_runs,
+  import_uploads,
+  sync_runs,
+} from './schema/index.ts';
 import { projectSource } from './contact-extraction.mjs';
 import { startContactProjection } from './contact-jobs.mjs';
 import { queueImportReview } from './agent.mjs';
@@ -52,12 +50,17 @@ const tables: Record<string, string> = {
   sync: 'sync_runs',
   contacts: 'contact_runs',
 };
+// The run table each durable kind tracks, in dispatch order.
+const parents = { sync: sync_runs, contacts: contact_runs };
 const transaction = <T>(fn: () => Promise<T>) =>
   dbTransaction(async () => {
-    await run("SET LOCAL statement_timeout='75s'");
-    await run("SET LOCAL lock_timeout='10s'");
+    await db.execute(sql`SET LOCAL statement_timeout='75s'`);
+    await db.execute(sql`SET LOCAL lock_timeout='10s'`);
     return fn();
   });
+// The durable_runs row for one run.
+const durableRun = (kind: string, id: string) =>
+  and(eq(durable_runs.kind, kind), eq(durable_runs.run_id, id));
 function tableFor(kind: string) {
   if (!tables[kind]) throw Error('Unknown ingestion queue.');
   return tables[kind];
@@ -74,30 +77,70 @@ const summary = (row: {
 export async function prepareDispatches() {
   return transaction(async () => {
     await lockWorkspace();
-    await run(
-      "UPDATE sync_runs SET state='failed',message='Upload expired; choose the file again',finished_at=?,updated_at=? WHERE provider='manual' AND state='uploading' AND updated_at::timestamptz<now()-interval '24 hours'",
-      stamp(),
-      stamp(),
-    );
-    await run(
-      "DELETE FROM import_uploads WHERE run_id IN (SELECT id FROM sync_runs WHERE state='failed') AND created_at<now()-interval '24 hours'",
-    );
-    for (const [kind, table] of Object.entries(tables))
-      await run(
-        `INSERT INTO durable_runs(kind,run_id) SELECT ?,id FROM ${table} WHERE state='queued' AND lease_owner='' ON CONFLICT DO NOTHING`,
-        kind,
+    await db
+      .update(sync_runs)
+      .set({
+        state: 'failed',
+        message: 'Upload expired; choose the file again',
+        finished_at: stamp(),
+        updated_at: stamp(),
+      })
+      .where(
+        and(
+          eq(sync_runs.provider, 'manual'),
+          eq(sync_runs.state, 'uploading'),
+          sql`${sync_runs.updated_at}::timestamptz < now() - interval '24 hours'`,
+        ),
       );
-    const pending = await all(
-      "SELECT * FROM durable_runs WHERE completed=false AND workflow_id='' AND (dispatch_until IS NULL OR dispatch_until<now()) ORDER BY updated_at LIMIT 4 FOR UPDATE",
-    );
+    await db
+      .delete(import_uploads)
+      .where(
+        and(
+          inArray(
+            import_uploads.run_id,
+            db
+              .select({ id: sync_runs.id })
+              .from(sync_runs)
+              .where(eq(sync_runs.state, 'failed')),
+          ),
+          lt(import_uploads.created_at, sql`now() - interval '24 hours'`),
+        ),
+      );
+    for (const [kind, table] of Object.entries(parents))
+      await db
+        .insert(durable_runs)
+        .select((qb) =>
+          qb
+            .select({ kind: sql<string>`${kind}`.as('kind'), run_id: table.id })
+            .from(table)
+            .where(and(eq(table.state, 'queued'), eq(table.lease_owner, ''))),
+        )
+        .onConflictDoNothing();
+    const pending = await db
+      .select()
+      .from(durable_runs)
+      .where(
+        and(
+          eq(durable_runs.completed, false),
+          eq(durable_runs.workflow_id, ''),
+          or(
+            isNull(durable_runs.dispatch_until),
+            lt(durable_runs.dispatch_until, sql`now()`),
+          ),
+        ),
+      )
+      .orderBy(durable_runs.updated_at)
+      .limit(4)
+      .for('update');
     for (const row of pending) {
       row.dispatch_token ||= uid();
-      await run(
-        "UPDATE durable_runs SET dispatch_token=?,dispatch_until=now()+interval '2 minutes' WHERE kind=? AND run_id=?",
-        row.dispatch_token,
-        row.kind,
-        row.run_id,
-      );
+      await db
+        .update(durable_runs)
+        .set({
+          dispatch_token: row.dispatch_token,
+          dispatch_until: sql`now() + interval '2 minutes'`,
+        })
+        .where(durableRun(row.kind, row.run_id));
     }
     return pending.map((r) => ({
       kind: r.kind,
@@ -112,21 +155,28 @@ export async function acknowledgeDispatch(
   token: string,
   workflowId: string,
 ) {
-  await run(
-    "UPDATE durable_runs SET workflow_id=?,updated_at=now() WHERE kind=? AND run_id=? AND dispatch_token=? AND workflow_id=''",
-    workflowId,
-    kind,
-    id,
-    token,
-  );
+  await db
+    .update(durable_runs)
+    .set({ workflow_id: workflowId, updated_at: sql`now()` })
+    .where(
+      and(
+        durableRun(kind, id),
+        eq(durable_runs.dispatch_token, token),
+        eq(durable_runs.workflow_id, ''),
+      ),
+    );
 }
 export async function releaseDispatch(kind: string, id: string, token: string) {
-  await run(
-    "UPDATE durable_runs SET dispatch_until=now() WHERE kind=? AND run_id=? AND dispatch_token=? AND workflow_id=''",
-    kind,
-    id,
-    token,
-  );
+  await db
+    .update(durable_runs)
+    .set({ dispatch_until: sql`now()` })
+    .where(
+      and(
+        durableRun(kind, id),
+        eq(durable_runs.dispatch_token, token),
+        eq(durable_runs.workflow_id, ''),
+      ),
+    );
 }
 export async function resumeDurable(
   kind: string,
