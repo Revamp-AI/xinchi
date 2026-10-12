@@ -1,4 +1,7 @@
-import { all, getSetting } from './db.mjs';
+import { and, eq, gte, lte, sql } from 'drizzle-orm';
+import { getSetting } from './db.mjs';
+import { db } from './postgres.ts';
+import { source_versions, sources } from './schema/index.ts';
 import { secrets } from './secret-store.mjs';
 
 type CalendarTime = { dateTime?: string; date?: string; timeZone?: string };
@@ -98,17 +101,36 @@ export async function readCalendar({
     connected = calendarGranted(grant);
   const since = new Date(Date.now() - 30 * 86400000).toISOString(),
     until = new Date(Date.now() + 90 * 86400000).toISOString();
-  const rows = await all(
-    "SELECT s.id source_id,v.id source_version_id,s.title,s.body,s.occurred_at,s.updated_at FROM sources s JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE s.provider='calendar' AND s.occurred_at>=? AND s.occurred_at<=?" +
-      (query
-        ? " AND to_tsvector('simple',s.title||' '||s.body) @@ plainto_tsquery('simple',?)"
-        : '') +
-      ' ORDER BY s.occurred_at,s.id LIMIT 11 OFFSET ?',
-    since,
-    until,
-    ...(query ? [query] : []),
-    Math.max(0, Number(offset) || 0),
-  );
+  const rows = await db
+    .select({
+      source_id: sources.id,
+      source_version_id: source_versions.id,
+      title: sources.title,
+      body: sources.body,
+      occurred_at: sources.occurred_at,
+      updated_at: sources.updated_at,
+    })
+    .from(sources)
+    .innerJoin(
+      source_versions,
+      and(
+        eq(source_versions.source_id, sources.id),
+        eq(source_versions.content_hash, sources.content_hash),
+      ),
+    )
+    .where(
+      and(
+        eq(sources.provider, 'calendar'),
+        gte(sources.occurred_at, since),
+        lte(sources.occurred_at, until),
+        query
+          ? sql`to_tsvector('simple', ${sources.title} || ' ' || ${sources.body}) @@ plainto_tsquery('simple', ${query})`
+          : undefined,
+      ),
+    )
+    .orderBy(sources.occurred_at, sources.id)
+    .limit(11)
+    .offset(Math.max(0, Number(offset) || 0));
   return {
     connected,
     last_synced_at: synced?.at || null,
