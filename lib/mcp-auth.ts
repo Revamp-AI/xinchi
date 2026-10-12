@@ -13,7 +13,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { db, transaction } from './postgres.ts';
-import { uid } from './db.mjs';
+import { uid } from './db.ts';
 import {
   mcp_clients,
   mcp_codes,

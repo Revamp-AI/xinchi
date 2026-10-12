@@ -10,7 +10,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {migrateSqlite} from '../scripts/migrate-sqlite.mjs';
-import {one,exportData,hash} from '../lib/db.mjs';
+import {one,exportData,hash} from '../lib/db.ts';
 const dir=mkdtempSync(join(tmpdir(),'focus-migration-'));
 test('SQLite cutover preserves exact IDs, source text, raw snapshots and pinned owner, invalidates sessions, and refuses overwrites',async()=>{
  const old=new DatabaseSync(join(dir,'xin.sqlite3'));

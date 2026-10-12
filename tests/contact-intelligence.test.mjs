@@ -3,7 +3,7 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {MockLanguageModelV4} from 'ai/test';
-import {run,one,setSetting,upsertSource} from '../lib/db.mjs';
+import {run,one,setSetting,upsertSource} from '../lib/db.ts';
 import {saveContact,contactDetail,listContacts} from '../lib/contacts.ts';
 import {logInteraction} from '../lib/contact-extraction.ts';
 import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.ts';

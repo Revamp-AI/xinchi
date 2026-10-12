@@ -2,7 +2,7 @@ import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {upsertSource,one,all,run} from '../lib/db.mjs';
+import {upsertSource,one,all,run} from '../lib/db.ts';
 import {createJob} from '../lib/agent.ts';
 import {claimLease,cancelLease} from '../lib/leases.ts';
 import {callContextTool} from '../lib/context-tools.ts';

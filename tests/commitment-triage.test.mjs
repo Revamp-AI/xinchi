@@ -5,7 +5,7 @@ import {randomBytes} from 'node:crypto';
 process.env.XIN_SECRET_STORAGE='postgres';process.env.XIN_SECRETS_KEY=randomBytes(32).toString('base64url');
 import assert from 'node:assert/strict';
 process.env.XIN_AGENT_MODE='cloud';
-const {upsertSource,one,all,run,uid,stamp,saveItem}=await import('../lib/db.mjs');
+const {upsertSource,one,all,run,uid,stamp,saveItem}=await import('../lib/db.ts');
 const {saveResult,takePendingImportReview}=await import('../lib/agent.ts');
 const {callContextTool}=await import('../lib/context-tools.ts');
 const empty={brief:'Review complete.',findings:[],proposals:[],questions:[],coverage_note:'Fictional fixtures only.'};

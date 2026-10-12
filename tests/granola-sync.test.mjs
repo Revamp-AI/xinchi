@@ -8,7 +8,7 @@ const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-pro
 const {granolaCompletedSettings}=await import('../lib/granola-sync.ts');
 const {startSync,syncProvider}=await import('../lib/connectors.ts');
 const {saveSecrets}=await import('../lib/secret-store.ts');
-const {setSetting,getSetting,one,run,transaction,upsertSource}=await import('../lib/db.mjs');
+const {setSetting,getSetting,one,run,transaction,upsertSource}=await import('../lib/db.ts');
 const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.ts');
 const note=id=>({id,title:'Fictional shared meeting '+id,updated_at:'2025-01-01T00:00:00Z',created_at:'2025-01-01T00:00:00Z',summary_text:'Fictional summary'});
 test.beforeEach(async()=>{await run('TRUNCATE durable_runs,sync_runs,contact_runs,sources CASCADE');for(const key of ['granola_page','granola_since'])await setSetting(key,null);await saveSecrets({granola_key:'fictional-granola-key'});});

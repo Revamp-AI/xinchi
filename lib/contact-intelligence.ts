@@ -20,7 +20,7 @@ import {
   setSetting,
   uid,
   stamp,
-} from './db.mjs';
+} from './db.ts';
 import { selectedReviewModel } from './review-settings.mjs';
 import { cloudReviewFailure } from './cloud-errors.mjs';
 import { db } from './postgres.ts';

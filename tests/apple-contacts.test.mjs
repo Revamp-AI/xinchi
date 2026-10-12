@@ -2,7 +2,7 @@ import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {one,run,uid} from '../lib/db.mjs';
+import {one,run,uid} from '../lib/db.ts';
 import {saveContact,contactDetail} from '../lib/contacts.ts';
 import {internationalPhone,normalizeAppleContacts,importAppleContacts} from '../lib/apple-contacts.ts';
 import {projectSource} from '../lib/contact-extraction.ts';

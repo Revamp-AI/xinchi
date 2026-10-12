@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
 const temp=mkdtempSync(join(tmpdir(),'xin-agent-loop-test-'));process.env.XIN_DATA_DIR=temp;process.env.XIN_CODEX_BIN=join(temp,'codex-is-not-installed');
-const m=await import('../lib/db.mjs');
+const m=await import('../lib/db.ts');
 const agent=await import('../lib/agent.ts');
 const spawned=[];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));

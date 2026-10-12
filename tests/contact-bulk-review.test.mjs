@@ -2,7 +2,7 @@ import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {one,run,uid} from '../lib/db.mjs';
+import {one,run,uid} from '../lib/db.ts';
 import {saveContact,saveDraft,contactDetail,contactStatus} from '../lib/contacts.ts';
 import {logInteraction} from '../lib/contact-extraction.ts';
 import {bulkMergePreview,mergeReviewGroup,bulkKeepSeparate,undoMerge} from '../lib/contact-identity.ts';

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { one, setSetting } from '../../lib/db.mjs';
+import { one, setSetting } from '../../lib/db.ts';
 import { saveContact } from '../../lib/contacts.ts';
 import {
   parseLinkedinConnections,

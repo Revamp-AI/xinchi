@@ -1,7 +1,7 @@
 import { and, eq, getColumns, isNull, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db, transaction, lockWorkspace } from './postgres.ts';
-import { hash, uid, stamp } from './db.mjs';
+import { hash, uid, stamp } from './db.ts';
 import { emailAddress, personalEmail } from './contact-email.ts';
 import { linkedinProfileUrl } from './linkedin-import.ts';
 import { evaluateContacts as evaluate } from './contacts.ts';

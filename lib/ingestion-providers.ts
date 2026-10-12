@@ -11,7 +11,7 @@ import {
 } from 'drizzle-orm';
 import { normalizeCalendar, calendarGranted } from './calendar.ts';
 import type { CalendarEvent } from './calendar.ts';
-import { getSetting as readSetting } from './db.mjs';
+import { getSetting as readSetting } from './db.ts';
 import { db } from './postgres.ts';
 import { items, proposals, source_versions, sources } from './schema/index.ts';
 import { secrets, updateSecrets } from './secret-store.ts';

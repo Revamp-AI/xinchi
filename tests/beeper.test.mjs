@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 process.env.XIN_AGENT_MODE='cloud';process.env.XIN_ALLOWED_EMAIL='owner@example.test';
-const {all,one,run,hash,exportData,upsertSource}=await import('../lib/db.mjs');
+const {all,one,run,hash,exportData,upsertSource}=await import('../lib/db.ts');
 const b=await import('../lib/beeper.ts');
 const {handleBeeperRequest}=await import('../lib/beeper-route.mjs');
 const {prepareDispatches,advanceDurableUnit}=await import('../lib/durable-ingestion.ts');

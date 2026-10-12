@@ -6,7 +6,7 @@ import {
   hash,
   getSetting as readSetting,
   upsertSource,
-} from './db.mjs';
+} from './db.ts';
 import {
   emailAddress,
   suggestIdentityMatches,

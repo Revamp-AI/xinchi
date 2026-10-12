@@ -3,7 +3,7 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {parseLinkedinConnections,linkedinProfileUrl,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.ts';
-import {one,run} from '../lib/db.mjs';
+import {one,run} from '../lib/db.ts';
 import {saveContact,contactDetail,listContacts} from '../lib/contacts.ts';
 import {mergeContacts,mergePreview,undoMerge} from '../lib/contact-identity.ts';
 import {projectSource} from '../lib/contact-extraction.ts';

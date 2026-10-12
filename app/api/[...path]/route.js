@@ -7,7 +7,7 @@ import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.
 import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,mergeReviewGroup,bulkKeepSeparate} from '../../../lib/contact-identity.ts';
 import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.ts';
 import {autoMatchStatus,runAutoContactMatching,setAutoMatchEnabled} from '../../../lib/contact-auto-match.ts';
-import {dashboard,searchSources,readSource,readSourceVersion,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.mjs';
+import {dashboard,searchSources,readSource,readSourceVersion,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.ts';
 import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.ts';
 import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.ts';
 import {importDocuments,importResearchArchive} from '../../../lib/imports.mjs';

@@ -9,7 +9,7 @@ import {
   readInteractions,
   contactStatus,
 } from './contacts.ts';
-import { readSource, searchSources, getSetting, stamp } from './db.mjs';
+import { readSource, searchSources, getSetting, stamp } from './db.ts';
 import { db, transaction } from './postgres.ts';
 import {
   events,
@@ -244,7 +244,11 @@ export async function callContextTool(
       excerpt: stripMarks(r.excerpt),
     }));
   } else if (name === 'read_source')
-    result = await readSource(a.id, Math.max(0, Number(a.offset) || 0), 18000);
+    result = await readSource(
+      a.id as string,
+      Math.max(0, Number(a.offset) || 0),
+      18000,
+    );
   else if (name === 'read_priorities') result = await readPriorities(a);
   else if (name === 'read_import_batch') result = await readReviewBatch(jobId);
   else if (name === 'read_commitments') {

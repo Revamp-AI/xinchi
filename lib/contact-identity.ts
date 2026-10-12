@@ -11,7 +11,7 @@ import {
 } from 'drizzle-orm';
 import { alias, type PgTable } from 'drizzle-orm/pg-core';
 import { db, transaction, lockWorkspace } from './postgres.ts';
-import { run, uid, hash } from './db.mjs';
+import { run, uid, hash } from './db.ts';
 import {
   existingContact,
   evaluateContacts as evaluateUntyped,

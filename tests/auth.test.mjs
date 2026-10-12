@@ -9,7 +9,7 @@ import {createHash} from 'node:crypto';
 import {generateKeyPair,SignJWT,exportJWK} from 'jose';
 const temp=mkdtempSync(join(tmpdir(),'xin-auth-test-'));
 process.env.XIN_DATA_DIR=temp;process.env.XIN_ALLOWED_EMAIL='owner@example.com';
-const db=await import('../lib/db.mjs');
+const db=await import('../lib/db.ts');
 const conn=await import('../lib/connectors.ts');
 const auth=await import('../lib/auth.ts');
 const route=await import('../app/api/[...path]/route.js');

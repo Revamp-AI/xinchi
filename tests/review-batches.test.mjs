@@ -3,7 +3,7 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 process.env.XIN_AGENT_MODE='cloud';
-const {upsertSource,all,one,run,stamp,uid,saveItem}=await import('../lib/db.mjs');
+const {upsertSource,all,one,run,stamp,uid,saveItem}=await import('../lib/db.ts');
 const {takePendingImportReview,saveResult}=await import('../lib/agent.ts');
 const {readReviewBatch,completeReviewBatch,releaseFailedReviewBatches}=await import('../lib/review-batches.ts');
 const {callContextTool}=await import('../lib/context-tools.ts');

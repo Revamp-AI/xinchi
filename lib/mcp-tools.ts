@@ -36,7 +36,7 @@ import {
   readSource,
   readSourceVersion,
   dateOK,
-} from './db.mjs';
+} from './db.ts';
 import {
   listContacts,
   contactDetail,
