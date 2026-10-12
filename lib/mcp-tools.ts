@@ -11,7 +11,17 @@ import {
   queuePriorityContext,
 } from './priorities.ts';
 import { z } from 'zod';
-import { and, desc, eq, ilike, inArray, isNull } from 'drizzle-orm';
+import {
+  and,
+  count,
+  desc,
+  eq,
+  getColumns,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+} from 'drizzle-orm';
 import { db } from './postgres.ts';
 import {
   all,
@@ -83,6 +93,7 @@ import {
   proposal_events,
   proposals,
   source_versions,
+  sources,
   sync_runs,
 } from './schema/index.ts';
 
@@ -293,6 +304,13 @@ const setting = getSetting as (
   key: string,
   fallback: unknown,
 ) => Promise<unknown>;
+// update-draft.mjs infers its default row lists as never[].
+const updateDraft = buildUpdateDraft as (input: {
+  items: unknown[];
+  events: unknown[];
+  since: string;
+  today: string;
+}) => ReturnType<typeof buildUpdateDraft>;
 function background() {
   if (!CLOUD_JOBS)
     throw Error('Background MCP actions require the cloud worker runtime.');
@@ -305,15 +323,22 @@ read(
   async () => ({
     focus: await setting('focus', ''),
     available_hours: await setting('available_hours', 0),
-    commitments: await all(
-      'SELECT status,count(*) AS count FROM items GROUP BY status',
-    ),
-    proposals: await all(
-      'SELECT status,count(*) AS count FROM proposals GROUP BY status',
-    ),
-    coverage: await all(
-      'SELECT provider,coverage,count(*) AS count FROM sources GROUP BY provider,coverage',
-    ),
+    commitments: await db
+      .select({ status: items.status, count: count() })
+      .from(items)
+      .groupBy(items.status),
+    proposals: await db
+      .select({ status: proposals.status, count: count() })
+      .from(proposals)
+      .groupBy(proposals.status),
+    coverage: await db
+      .select({
+        provider: sources.provider,
+        coverage: sources.coverage,
+        count: count(),
+      })
+      .from(sources)
+      .groupBy(sources.provider, sources.coverage),
     connections: await safeConnections(),
     links: {
       workspace: APP_ORIGIN,
@@ -563,12 +588,14 @@ read(
           new Date(Date.now() - 7 * 86400000),
           process.env.XIN_TIME_ZONE,
         );
-    const draft = buildUpdateDraft({
-      items: await all('SELECT * FROM items'),
-      events: await all(
-        'SELECT e.*,i.shared FROM events e JOIN items i ON i.id=e.item_id WHERE e.created_at>=? ORDER BY e.created_at',
-        since,
-      ),
+    const draft = updateDraft({
+      items: await db.select().from(items),
+      events: await db
+        .select({ ...getColumns(events), shared: items.shared })
+        .from(events)
+        .innerJoin(items, eq(items.id, events.item_id))
+        .where(gte(events.created_at, since))
+        .orderBy(events.created_at),
       since,
       today,
     });
@@ -956,13 +983,14 @@ write(
   { prompt: text.min(1), review: AgentResult },
   async (a) => {
     const id = uid();
-    await run(
-      "INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at) VALUES(?,'review','queued',?,?,?)",
+    await db.insert(jobs).values({
       id,
-      a.prompt,
-      stamp(),
-      stamp(),
-    );
+      kind: 'review',
+      status: 'queued',
+      prompt: a.prompt,
+      created_at: stamp(),
+      updated_at: stamp(),
+    });
     const result = await saveResult(id, a.review);
     return { id, status: 'complete', result };
   },
