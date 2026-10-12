@@ -169,23 +169,44 @@ export async function saveContact(input: ContactInput) {
         ...new Set(input.tags.map((t) => text(t, 40)).filter(Boolean)),
       ].slice(0, 20);
     }
-    await run(
-      `INSERT INTO contacts(id,name,email,role,tags,notes,tracked,priority,cadence_days,paused,snoozed_until,do_not_contact,archived,confirmed) VALUES(?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,email=excluded.email,role=excluded.role,tags=excluded.tags,notes=excluded.notes,tracked=excluded.tracked,priority=excluded.priority,cadence_days=excluded.cadence_days,paused=excluded.paused,snoozed_until=excluded.snoozed_until,do_not_contact=excluded.do_not_contact,archived=excluded.archived,confirmed=excluded.confirmed,version=contacts.version+1,updated_at=now()`,
-      row.id,
-      row.name,
-      row.email,
-      row.role,
-      JSON.stringify(row.tags),
-      row.notes,
-      row.tracked,
-      row.priority,
-      row.cadence_days,
-      row.paused,
-      row.snoozed_until,
-      row.do_not_contact,
-      row.archived,
-      row.confirmed,
-    );
+    await db
+      .insert(contacts)
+      .values({
+        id: row.id,
+        name: row.name,
+        email: row.email,
+        role: row.role,
+        tags: row.tags,
+        notes: row.notes,
+        tracked: row.tracked,
+        priority: row.priority,
+        cadence_days: row.cadence_days,
+        paused: row.paused,
+        snoozed_until: row.snoozed_until,
+        do_not_contact: row.do_not_contact,
+        archived: row.archived,
+        confirmed: row.confirmed,
+      })
+      .onConflictDoUpdate({
+        target: contacts.id,
+        set: {
+          name: sql`excluded.name`,
+          email: sql`excluded.email`,
+          role: sql`excluded.role`,
+          tags: sql`excluded.tags`,
+          notes: sql`excluded.notes`,
+          tracked: sql`excluded.tracked`,
+          priority: sql`excluded.priority`,
+          cadence_days: sql`excluded.cadence_days`,
+          paused: sql`excluded.paused`,
+          snoozed_until: sql`excluded.snoozed_until`,
+          do_not_contact: sql`excluded.do_not_contact`,
+          archived: sql`excluded.archived`,
+          confirmed: sql`excluded.confirmed`,
+          version: sql`${contacts.version}+1`,
+          updated_at: sql`now()`,
+        },
+      });
     if (input.organization !== undefined && text(input.organization, 200)) {
       for (const k of ['started_on', 'ended_on'] as const)
         if (input[k] && !dateOK(input[k]))
@@ -196,30 +217,35 @@ export async function saveContact(input: ContactInput) {
         input.ended_on < input.started_on
       )
         throw Error('Affiliation end must follow its start.');
-      const org = await one(
-        'INSERT INTO organizations(id,name) VALUES(?,?) ON CONFLICT(lower(name)) DO UPDATE SET name=organizations.name RETURNING id',
-        uid(),
-        text(input.organization, 200),
+      const started_on = (input.started_on as string) || null,
+        ended_on = (input.ended_on as string) || null;
+      // Drizzle's conflict target takes columns, not the lower(name) unique index.
+      const {
+        rows: [org],
+      } = await db.execute<{ id: string }>(
+        sql`INSERT INTO organizations(id,name) VALUES(${uid()},${text(input.organization, 200)}) ON CONFLICT(lower(name)) DO UPDATE SET name=organizations.name RETURNING id`,
       );
-      if (
-        !(await one(
-          'SELECT id FROM affiliations WHERE contact_id=? AND organization_id=? AND role=? AND started_on IS NOT DISTINCT FROM ?::date AND ended_on IS NOT DISTINCT FROM ?::date',
-          row.id,
-          org.id,
-          row.role,
-          input.started_on || null,
-          input.ended_on || null,
-        ))
-      )
-        await run(
-          'INSERT INTO affiliations VALUES(?,?,?,?,?,?)',
-          uid(),
-          row.id,
-          org.id,
-          row.role,
-          input.started_on || null,
-          input.ended_on || null,
+      const [affiliation] = await db
+        .select({ id: affiliations.id })
+        .from(affiliations)
+        .where(
+          and(
+            eq(affiliations.contact_id, row.id),
+            eq(affiliations.organization_id, org!.id),
+            eq(affiliations.role, row.role),
+            sql`${affiliations.started_on} IS NOT DISTINCT FROM ${started_on}::date`,
+            sql`${affiliations.ended_on} IS NOT DISTINCT FROM ${ended_on}::date`,
+          ),
         );
+      if (!affiliation)
+        await db.insert(affiliations).values({
+          id: uid(),
+          contact_id: row.id,
+          organization_id: org!.id,
+          role: row.role,
+          started_on,
+          ended_on,
+        });
     }
     if (
       !old ||
@@ -246,28 +272,33 @@ export async function saveAffiliation(input: AffiliationInput) {
   return transaction(async () => {
     await lockWorkspace();
     await existingContact(input.contact_id);
-    const a = await one(
-      'SELECT * FROM affiliations WHERE id=? AND contact_id=?',
-      input.id,
-      input.contact_id,
-    );
+    const [a] = await db
+      .select()
+      .from(affiliations)
+      .where(
+        and(
+          eq(affiliations.id, input.id),
+          eq(affiliations.contact_id, input.contact_id),
+        ),
+      );
     if (!a) throw Error('Affiliation not found.');
     for (const k of ['started_on', 'ended_on'] as const)
       if (input[k] && !dateOK(input[k]))
         throw Error('Choose valid affiliation dates.');
     if (input.started_on && input.ended_on && input.ended_on < input.started_on)
       throw Error('Affiliation end must follow its start.');
-    await run(
-      'UPDATE affiliations SET role=?,started_on=?,ended_on=? WHERE id=?',
-      text(input.role, 200),
-      input.started_on || null,
-      input.ended_on || null,
-      input.id,
-    );
-    await run(
-      'UPDATE contacts SET version=version+1,updated_at=now() WHERE id=?',
-      input.contact_id,
-    );
+    await db
+      .update(affiliations)
+      .set({
+        role: text(input.role, 200),
+        started_on: (input.started_on as string) || null,
+        ended_on: (input.ended_on as string) || null,
+      })
+      .where(eq(affiliations.id, input.id));
+    await db
+      .update(contacts)
+      .set({ version: sql`${contacts.version}+1`, updated_at: sql`now()` })
+      .where(eq(contacts.id, input.contact_id));
     return { saved: true };
   });
 }
