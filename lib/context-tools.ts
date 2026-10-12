@@ -36,7 +36,7 @@ type ContextTool = {
 };
 // Tool arguments as the model sent them; inputSchema describes each tool's
 // fields, and required ones are present.
-type ToolArgs = {
+export type ToolArgs = {
   id?: string;
   offset?: number;
   query?: string;

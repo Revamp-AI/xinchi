@@ -3,7 +3,7 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {MockLanguageModelV4} from 'ai/test';
-import {runCloudAgent} from '../lib/cloud-agent.mjs';
+import {runCloudAgent} from '../lib/cloud-agent.ts';
 import {createJob} from '../lib/agent.mjs';
 import {upsertSource,one,all} from '../lib/db.mjs';
 const usage={inputTokens:{total:10,noCache:10,cacheRead:0,cacheWrite:0},outputTokens:{total:20,text:20,reasoning:0}};
