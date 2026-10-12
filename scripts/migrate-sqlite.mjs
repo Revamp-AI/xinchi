@@ -4,7 +4,7 @@ import {mkdirSync,existsSync,chmodSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {all,one,run,transaction,lockWorkspace,exportTables,hash,stamp} from '../lib/db.mjs';
-import {closeDatabase} from '../lib/postgres.mjs';
+import {closeDatabase} from '../lib/postgres.ts';
 const legacyTables=['sources','source_versions','items','events','settings','jobs','proposals','job_events','sync_runs'];
 const read=(db,table)=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)?db.prepare('SELECT * FROM '+table).all():[];
 // Source files are read-only; callers stop all old writers before taking the cutover snapshot.

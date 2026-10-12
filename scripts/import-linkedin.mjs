@@ -1,6 +1,6 @@
 import {readFile} from 'node:fs/promises';
 import {parseLinkedinConnections,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.mjs';
-import {closeDatabase} from '../lib/postgres.mjs';
+import {closeDatabase} from '../lib/postgres.ts';
 
 try{
  const args=process.argv.slice(2),apply=args.includes('--apply'),paths=args.filter(a=>a!=='--apply');

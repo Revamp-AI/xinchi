@@ -5,7 +5,7 @@ import {writeFileSync,readFileSync,mkdirSync} from 'node:fs';
 import {one,run,stamp,dataDir,root} from '../lib/db.mjs';
 import {schema,saveResult,addProgress,takePendingImportReview,launchJob} from '../lib/agent.mjs';
 import {claimLease,heartbeatLease} from '../lib/leases.mjs';
-import {closeDatabase} from '../lib/postgres.mjs';
+import {closeDatabase} from '../lib/postgres.ts';
 const id=process.argv[2],claim=await claimLease('jobs',id||'');
 if(!claim)process.exit(0);
 const {row:job,token}=claim;

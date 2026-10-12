@@ -4,7 +4,7 @@ import {syncProvider,clearGmailIssue,recordGmailIssue} from '../lib/connectors.m
 import {startContactProjection} from '../lib/contact-jobs.mjs';
 import {queueImportReview} from '../lib/agent.mjs';
 import {claimLease,heartbeatLease,requireLease} from '../lib/leases.mjs';
-import {closeDatabase} from '../lib/postgres.mjs';
+import {closeDatabase} from '../lib/postgres.ts';
 export async function runSyncWorker(id){
  const claim=await claimLease('sync_runs',id);if(!claim)return;
  const {row:s,token}=claim;let checking=false;

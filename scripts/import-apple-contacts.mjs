@@ -1,7 +1,7 @@
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {importAppleContacts,normalizeAppleContacts} from '../lib/apple-contacts.mjs';
-import {closeDatabase} from '../lib/postgres.mjs';
+import {closeDatabase} from '../lib/postgres.ts';
 
 try{
  const args=process.argv.slice(2),path=args.find(a=>!a.startsWith('--'));

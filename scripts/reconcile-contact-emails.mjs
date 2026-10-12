@@ -1,5 +1,5 @@
 import {reconcileEmailContacts} from '../lib/contact-identity.mjs';
-import {closeDatabase} from '../lib/postgres.mjs';
+import {closeDatabase} from '../lib/postgres.ts';
 
 try{
  if(process.argv.slice(2).some(arg=>arg!=='--apply'))throw Error('Use --apply to reconcile contacts, or omit it for a dry run.');

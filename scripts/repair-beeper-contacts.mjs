@@ -1,5 +1,5 @@
 import {repairBeeperContactNames} from '../lib/beeper-contact-repair.mjs';
-import {closeDatabase} from '../lib/postgres.mjs';
+import {closeDatabase} from '../lib/postgres.ts';
 
 try{
  if(process.argv.slice(2).some(a=>a!=='--apply'))throw Error('Use --apply to save the repair, or omit it for a dry run.');

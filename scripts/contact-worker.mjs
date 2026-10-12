@@ -2,7 +2,7 @@ import {pathToFileURL} from 'node:url';
 import {one,run,stamp,transaction} from '../lib/db.mjs';
 import {projectSource} from '../lib/contact-extraction.mjs';
 import {claimLease,heartbeatLease,requireLease} from '../lib/leases.mjs';
-import {closeDatabase} from '../lib/postgres.mjs';
+import {closeDatabase} from '../lib/postgres.ts';
 import {checkJobBudget} from '../lib/job-budget.mjs';
 export async function runContactWorker(id){
  const claim=await claimLease('contact_runs',id);if(!claim)return;const {token}=claim;let total=claim.row.imported||0,checking=false;

@@ -4,7 +4,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {readFileSync,readdirSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {after} from 'node:test';
-import {closeDatabase} from '../../lib/postgres.mjs';
+import {closeDatabase} from '../../lib/postgres.ts';
 
 function serverUrl(){
  const url=new URL(process.env.FOCUS_TEST_DATABASE_URL||'postgresql://127.0.0.1:55439/postgres');

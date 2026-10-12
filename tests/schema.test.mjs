@@ -3,7 +3,7 @@ import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {all,transaction,run,one} from '../lib/postgres.mjs';
+import {all,transaction,run,one} from '../lib/postgres.ts';
 test('versioned migrations serialize concurrent deploys and are idempotent',async()=>{
  await Promise.all(Array.from({length:6},()=>migrateDatabase()));
  assert.ok((await all('SELECT * FROM drizzle.__drizzle_migrations')).length>=1);
