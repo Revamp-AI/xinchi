@@ -34,7 +34,7 @@ test('an exact-email match appears once and source names remain visible and sear
     );
   }
   const matched = await resolveExactEmailContact(email);
-  expect(matched.name).toBe(name);
+  expect(matched?.name).toBe(name);
   await page.goto('/#contacts');
   await page.getByRole('button', { name: 'List', exact: true }).click();
   await page.getByPlaceholder('Find a person, role, or organization').fill(email);
