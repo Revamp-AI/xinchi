@@ -1,12 +1,7 @@
-import {
-  all,
-  one,
-  run,
-  transaction,
-  lockWorkspace,
-  uid,
-  stamp,
-} from './db.mjs';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { all, one, run, uid, stamp } from './db.mjs';
+import { db, transaction, lockWorkspace } from './postgres.ts';
+import { import_chunks, import_uploads, sync_runs } from './schema/index.ts';
 import { normalizeResearchArchive } from './imports.mjs';
 
 // Parsed upload JSON. It is untrusted: normalizeRecord checks every field it keeps.
@@ -35,15 +30,20 @@ const validText = (value: unknown): value is string =>
 async function uploadRun(id: unknown) {
   if (typeof id !== 'string' || !id || id.length > 100)
     fail('Choose a valid file upload.');
-  const row = await one(
-    "SELECT * FROM sync_runs WHERE id=? AND provider='manual' FOR UPDATE",
-    id,
-  );
-  const upload =
-    row && (await one('SELECT * FROM import_uploads WHERE run_id=?', id));
+  const [row] = await db
+    .select()
+    .from(sync_runs)
+    .where(and(eq(sync_runs.id, id), eq(sync_runs.provider, 'manual')))
+    .for('update');
+  const [upload] = row
+    ? await db
+        .select()
+        .from(import_uploads)
+        .where(eq(import_uploads.run_id, id))
+    : [];
   if (!upload)
     fail('This file upload is no longer available. Choose the file again.');
-  return { ...row, ...upload };
+  return { ...row!, ...upload };
 }
 
 export async function createManualUpload({
@@ -62,29 +62,32 @@ export async function createManualUpload({
     fail('Choose a non-empty file of up to 64 MiB.');
   return transaction(async () => {
     await lockWorkspace();
-    if (
-      await one(
-        "SELECT id FROM sync_runs WHERE provider='manual' AND state IN ('uploading','queued','running')",
-      )
-    )
+    const [active] = await db
+      .select({ id: sync_runs.id })
+      .from(sync_runs)
+      .where(
+        and(
+          eq(sync_runs.provider, 'manual'),
+          inArray(sync_runs.state, ['uploading', 'queued', 'running']),
+        ),
+      );
+    if (active)
       fail(
         'A file import is already active. Wait for it to finish or cancel it.',
       );
     const id = uid(),
       date = stamp();
-    await run(
-      "INSERT INTO sync_runs(id,provider,state,started_at,updated_at,message) VALUES(?,'manual','uploading',?,?,'Uploading file')",
+    await db.insert(sync_runs).values({
       id,
-      date,
-      date,
-    );
-    await run(
-      'INSERT INTO import_uploads(run_id,format,title,expected_bytes) VALUES(?,?,?,?)',
-      id,
-      format,
-      title,
-      bytes,
-    );
+      provider: 'manual',
+      state: 'uploading',
+      started_at: date,
+      updated_at: date,
+      message: 'Uploading file',
+    });
+    await db
+      .insert(import_uploads)
+      .values({ run_id: id, format, title, expected_bytes: bytes });
     return { id };
   });
 }
@@ -112,38 +115,35 @@ export async function appendManualChunk({
     const upload = await uploadRun(id);
     if (upload.state !== 'uploading')
       fail('This file upload is already closed.');
-    const existing = await one(
-      'SELECT content FROM import_chunks WHERE run_id=? AND part=?',
-      id,
-      part,
-    );
+    const [existing] = await db
+      .select({ content: import_chunks.content })
+      .from(import_chunks)
+      .where(and(eq(import_chunks.run_id, id), eq(import_chunks.part, part)));
     if (existing && existing.content !== content)
       fail(
         'This file upload part differs from the saved part. Choose the file again.',
       );
     const received = (
-      await one(
-        'SELECT coalesce(sum(octet_length(content)),0) AS bytes FROM import_chunks WHERE run_id=?',
-        id,
-      )
-    ).bytes;
+      await db
+        .select({
+          bytes: sql<number>`coalesce(sum(octet_length(${import_chunks.content})), 0)`,
+        })
+        .from(import_chunks)
+        .where(eq(import_chunks.run_id, id))
+    )[0]!.bytes;
     const total =
       Number(received) + (existing ? 0 : Buffer.byteLength(content, 'utf8'));
     if (total > upload.expected_bytes || total > MAX_IMPORT_BYTES)
       fail('The uploaded file exceeds its declared size.');
     if (!existing)
-      await run(
-        'INSERT INTO import_chunks(run_id,part,content) VALUES(?,?,?)',
-        id,
-        part,
-        content,
-      );
-    await run(
-      'UPDATE sync_runs SET updated_at=?,message=? WHERE id=?',
-      stamp(),
-      `Uploading file: ${Math.floor((total * 100) / upload.expected_bytes)}%`,
-      id,
-    );
+      await db.insert(import_chunks).values({ run_id: id, part, content });
+    await db
+      .update(sync_runs)
+      .set({
+        updated_at: stamp(),
+        message: `Uploading file: ${Math.floor((total * 100) / upload.expected_bytes)}%`,
+      })
+      .where(eq(sync_runs.id, id));
     return { id, part, received_bytes: total };
   });
 }
