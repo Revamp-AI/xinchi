@@ -9,9 +9,9 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
+import { alias, type PgTable } from 'drizzle-orm/pg-core';
 import { db, transaction, lockWorkspace } from './postgres.ts';
-import { one, run, uid, hash } from './db.mjs';
+import { run, uid, hash } from './db.mjs';
 import {
   existingContact,
   evaluateContacts as evaluateUntyped,
@@ -46,8 +46,10 @@ type Snapshot = {
   message_drafts: (typeof message_drafts.$inferSelect)[];
   identity_reviews: (typeof identity_reviews.$inferSelect)[];
 };
-// What identity_decisions.before_snapshot holds.
-type DecisionSnapshot = Snapshot & {
+// What identity_decisions.before_snapshot holds. Decisions recorded before
+// contact priority existed have no priority key.
+type DecisionSnapshot = Omit<Snapshot, 'contacts'> & {
+  contacts: (Omit<Contact, 'priority'> & { priority?: boolean })[];
   automatic_email?: string;
   automatic_match?: unknown;
   bulk_contact_ids?: string[];
@@ -542,13 +544,26 @@ export async function bulkKeepSeparate(input: { ids?: unknown }) {
   const ids = reviewIds(input.ids);
   return transaction(async () => {
     await lockWorkspace();
-    const result = await run(
-      "UPDATE identity_reviews r SET status='separate' FROM contacts l,contacts rh WHERE r.id=ANY(?::text[]) AND r.status='pending' AND l.id=r.left_id AND rh.id=r.right_id AND l.merged_into IS NULL AND rh.merged_into IS NULL RETURNING r.id",
-      ids,
-    );
+    // FROM l, rh as a join on true: the ON clause cannot see the updated table.
+    const rows = await db
+      .update(identity_reviews)
+      .set({ status: 'separate' })
+      .from(leftContact)
+      .innerJoin(rightContact, sql`true`)
+      .where(
+        and(
+          inArray(identity_reviews.id, ids),
+          eq(identity_reviews.status, 'pending'),
+          eq(leftContact.id, identity_reviews.left_id),
+          eq(rightContact.id, identity_reviews.right_id),
+          isNull(leftContact.merged_into),
+          isNull(rightContact.merged_into),
+        ),
+      )
+      .returning({ id: identity_reviews.id });
     return {
-      completed: result.rows.map((r) => r.id),
-      skipped: ids.filter((id) => !result.rows.some((r) => r.id === id)),
+      completed: rows.map((r) => r.id),
+      skipped: ids.filter((id) => !rows.some((r) => r.id === id)),
     };
   });
 }
@@ -744,15 +759,20 @@ export async function reconcileEmailContacts({
 export async function undoMerge(id: string) {
   const ids = await transaction(async () => {
     await lockWorkspace();
-    const d = await one(
-      "SELECT * FROM identity_decisions WHERE id=? AND kind='merge' AND undone_at IS NULL FOR UPDATE",
-      id,
-    );
+    const [d] = await db
+      .select()
+      .from(identity_decisions)
+      .where(
+        and(
+          eq(identity_decisions.id, id),
+          eq(identity_decisions.kind, 'merge'),
+          isNull(identity_decisions.undone_at),
+        ),
+      )
+      .for('update');
     if (!d) throw Error('Merge not found or already undone.');
-    const ids: string[] = d.before_snapshot.bulk_contact_ids || [
-      d.left_id,
-      d.right_id,
-    ];
+    const prior = d.before_snapshot as DecisionSnapshot;
+    const ids = prior.bulk_contact_ids || [d.left_id, d.right_id];
     const current = await snapshot(ids);
     // Old decisions predate priority. Only omit its default value for legacy hashes.
     const legacy = {
@@ -767,49 +787,55 @@ export async function undoMerge(id: string) {
       throw Error(
         'These records changed after the merge. Review them before undoing; no later edits were removed.',
       );
-    await run(
-      'DELETE FROM contact_insights WHERE contact_id=ANY(?::text[]) AND NOT dismissed',
-      ids,
-    );
-    for (const t of related)
-      await run(`DELETE FROM ${t} WHERE contact_id=ANY(?::text[])`, ids);
-    await run(
-      'DELETE FROM identity_reviews WHERE left_id=ANY(?::text[]) OR right_id=ANY(?::text[])',
-      ids,
-      ids,
-    );
-    for (const previous of d.before_snapshot.contacts) {
-      const c = { priority: false, ...previous },
-        keys = Object.keys(c).filter((k) => k !== 'id');
-      await run(
-        `UPDATE contacts SET ${keys.map((k) => '"' + k + '"=?')} WHERE id=?`,
-        ...keys.map((k) => (k === 'tags' ? JSON.stringify(c[k]) : c[k])),
-        c.id,
+    await db
+      .delete(contact_insights)
+      .where(
+        and(
+          inArray(contact_insights.contact_id, ids),
+          not(contact_insights.dismissed),
+        ),
       );
+    for (const t of related) {
+      const table = relatedTables[t];
+      await db.delete(table).where(inArray(table.contact_id, ids));
     }
-    for (const t of [...related, 'identity_reviews'])
-      for (const row of d.before_snapshot[t]) {
-        const keys = Object.keys(row);
-        await run(
-          `INSERT INTO ${t} (${keys}) VALUES(${keys.map(() => '?')})`,
-          ...keys.map((k) =>
-            Array.isArray(row[k]) ? JSON.stringify(row[k]) : row[k],
-          ),
-        );
-      }
-    if (
-      d.before_snapshot.automatic_email ||
-      d.before_snapshot.automatic_match
-    ) {
+    await db
+      .delete(identity_reviews)
+      .where(
+        or(
+          inArray(identity_reviews.left_id, ids),
+          inArray(identity_reviews.right_id, ids),
+        ),
+      );
+    // Snapshot keys are column names; columns a legacy snapshot lacks keep their values.
+    for (const previous of prior.contacts) {
+      const { id: contact_id, ...values } = { priority: false, ...previous };
+      await db.update(contacts).set(values).where(eq(contacts.id, contact_id));
+    }
+    const restored = { ...relatedTables, identity_reviews };
+    for (const t of [...related, 'identity_reviews'] as const)
+      for (const row of prior[t])
+        await db.insert(restored[t] as PgTable).values(row);
+    if (prior.automatic_email || prior.automatic_match) {
       const [left, right] = ids.slice().sort();
-      await run(
-        "INSERT INTO identity_reviews(id,left_id,right_id,reason,status) VALUES(?,?,?,'Automatic match undone by you.','separate') ON CONFLICT(left_id,right_id) DO UPDATE SET status='separate'",
-        uid(),
-        left,
-        right,
-      );
+      await db
+        .insert(identity_reviews)
+        .values({
+          id: uid(),
+          left_id: left!,
+          right_id: right!,
+          reason: 'Automatic match undone by you.',
+          status: 'separate',
+        })
+        .onConflictDoUpdate({
+          target: [identity_reviews.left_id, identity_reviews.right_id],
+          set: { status: 'separate' },
+        });
     }
-    await run('UPDATE identity_decisions SET undone_at=now() WHERE id=?', id);
+    await db
+      .update(identity_decisions)
+      .set({ undone_at: sql`now()` })
+      .where(eq(identity_decisions.id, id));
     return ids;
   });
   await evaluateContacts(ids);
@@ -818,10 +844,15 @@ export async function undoMerge(id: string) {
 export async function keepSeparate(id: string) {
   await transaction(async () => {
     await lockWorkspace();
-    await run(
-      "UPDATE identity_reviews SET status='separate' WHERE id=? AND status='pending'",
-      id,
-    );
+    await db
+      .update(identity_reviews)
+      .set({ status: 'separate' })
+      .where(
+        and(
+          eq(identity_reviews.id, id),
+          eq(identity_reviews.status, 'pending'),
+        ),
+      );
   });
   return { saved: true };
 }
