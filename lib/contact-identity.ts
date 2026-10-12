@@ -1,4 +1,14 @@
-import { and, eq, getColumns, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import {
+  and,
+  eq,
+  getColumns,
+  inArray,
+  isNull,
+  ne,
+  not,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import { one, run, uid, hash } from './db.mjs';
@@ -15,7 +25,9 @@ import {
 import {
   affiliations,
   contact_identities,
+  contact_insights,
   contacts,
+  identity_decisions,
   identity_reviews,
   interaction_participants,
   item_contacts,
@@ -118,45 +130,73 @@ async function applyMerge(
     ids = [target_id, source_id],
     before = await snapshot(ids);
   // If both profiles participated in one event, retain the stronger recorded role.
-  await run(
-    "INSERT INTO interaction_participants SELECT interaction_id,?,role FROM interaction_participants WHERE contact_id=? ON CONFLICT(interaction_id,contact_id) DO UPDATE SET role=CASE WHEN interaction_participants.role IN ('cc','mentioned','uncertain','') AND excluded.role NOT IN ('cc','mentioned','uncertain','') THEN excluded.role ELSE interaction_participants.role END",
-    target_id,
-    source_id,
-  );
-  await run(
-    'DELETE FROM interaction_participants WHERE contact_id=?',
-    source_id,
-  );
-  await run(
-    'INSERT INTO item_contacts SELECT item_id,? FROM item_contacts WHERE contact_id=? ON CONFLICT DO NOTHING',
-    target_id,
-    source_id,
-  );
-  await run('DELETE FROM item_contacts WHERE contact_id=?', source_id);
-  for (const table of ['contact_identities', 'affiliations', 'message_drafts'])
-    await run(
-      `UPDATE ${table} SET contact_id=? WHERE contact_id=?`,
-      target_id,
-      source_id,
-    );
+  await db
+    .insert(interaction_participants)
+    .select(
+      db
+        .select({
+          interaction_id: interaction_participants.interaction_id,
+          contact_id: sql<string>`${target_id}`.as('contact_id'),
+          role: interaction_participants.role,
+        })
+        .from(interaction_participants)
+        .where(eq(interaction_participants.contact_id, source_id)),
+    )
+    .onConflictDoUpdate({
+      target: [
+        interaction_participants.interaction_id,
+        interaction_participants.contact_id,
+      ],
+      set: {
+        role: sql`CASE WHEN interaction_participants.role IN ('cc','mentioned','uncertain','') AND excluded.role NOT IN ('cc','mentioned','uncertain','') THEN excluded.role ELSE interaction_participants.role END`,
+      },
+    });
+  await db
+    .delete(interaction_participants)
+    .where(eq(interaction_participants.contact_id, source_id));
+  await db
+    .insert(item_contacts)
+    .select(
+      db
+        .select({
+          item_id: item_contacts.item_id,
+          contact_id: sql<string>`${target_id}`.as('contact_id'),
+        })
+        .from(item_contacts)
+        .where(eq(item_contacts.contact_id, source_id)),
+    )
+    .onConflictDoNothing();
+  await db.delete(item_contacts).where(eq(item_contacts.contact_id, source_id));
+  for (const table of [contact_identities, affiliations, message_drafts])
+    await db
+      .update(table)
+      .set({ contact_id: target_id })
+      .where(eq(table.contact_id, source_id));
   if (
     (source.name !== target.name ||
       (source.email && source.email !== target.email)) &&
-    !(await one(
-      'SELECT id FROM contact_identities WHERE contact_id=? AND display_name=? AND address=?',
-      target_id,
-      source.name,
-      source.email,
-    ))
+    !(
+      await db
+        .select({ id: contact_identities.id })
+        .from(contact_identities)
+        .where(
+          and(
+            eq(contact_identities.contact_id, target_id),
+            eq(contact_identities.display_name, source.name),
+            eq(contact_identities.address, source.email),
+          ),
+        )
+    ).length
   )
-    await run(
-      "INSERT INTO contact_identities(id,contact_id,provider,account,external_key,display_name,address) VALUES(?,?,'manual','workspace',?,?,?)",
-      uid(),
-      target_id,
-      'contact:' + source_id,
-      source.name,
-      source.email,
-    );
+    await db.insert(contact_identities).values({
+      id: uid(),
+      contact_id: target_id,
+      provider: 'manual',
+      account: 'workspace',
+      external_key: 'contact:' + source_id,
+      display_name: source.name,
+      address: source.email,
+    });
   const tags = [
       ...new Set([...(target.tags as string[]), ...(source.tags as string[])]),
     ],
@@ -165,31 +205,42 @@ async function applyMerge(
         .filter(Boolean)
         .sort()
         .at(-1) || null;
-  await run(
-    'UPDATE contacts SET email=?,role=?,notes=?,tags=?::jsonb,do_not_contact=?,paused=?,snoozed_until=?,tracked=?,priority=?,archived=?,confirmed=?,version=version+1,updated_at=now() WHERE id=?',
-    target.email || source.email,
-    target.role || source.role,
-    combinedNotes(target.notes, source.notes),
-    JSON.stringify(tags),
-    target.do_not_contact || source.do_not_contact,
-    target.paused || source.paused,
-    snooze,
-    target.tracked || source.tracked,
-    target.priority || source.priority,
-    automaticEmail ? target.archived || source.archived : target.archived,
-    automaticEmail ? target.confirmed || source.confirmed : true,
-    target_id,
-  );
+  await db
+    .update(contacts)
+    .set({
+      email: target.email || source.email,
+      role: target.role || source.role,
+      notes: combinedNotes(target.notes, source.notes),
+      tags,
+      do_not_contact: target.do_not_contact || source.do_not_contact,
+      paused: target.paused || source.paused,
+      snoozed_until: snooze,
+      tracked: target.tracked || source.tracked,
+      priority: target.priority || source.priority,
+      archived: automaticEmail
+        ? target.archived || source.archived
+        : target.archived,
+      confirmed: automaticEmail ? target.confirmed || source.confirmed : true,
+      version: sql`${contacts.version} + 1`,
+      updated_at: sql`now()`,
+    })
+    .where(eq(contacts.id, target_id));
+  // Stays raw so a failure here reaches callers as the driver's own error;
+  // tests/contact-bulk-review and tests/contact-email match its message.
   await run(
     'UPDATE contacts SET merged_into=?,archived=true,version=version+1,updated_at=now() WHERE id=?',
     target_id,
     source_id,
   );
   // Derived insights must be rebuilt against the combined evidence.
-  await run(
-    'DELETE FROM contact_insights WHERE contact_id=ANY(?::text[]) AND NOT dismissed',
-    ids,
-  );
+  await db
+    .delete(contact_insights)
+    .where(
+      and(
+        inArray(contact_insights.contact_id, ids),
+        not(contact_insights.dismissed),
+      ),
+    );
   // Carry unresolved matches and explicit separations to the surviving contact.
   // Merging a pair must not dismiss an unrelated match on the kept profile.
   for (const review of before.identity_reviews) {
@@ -201,41 +252,46 @@ async function applyMerge(
       ['pending', 'separate'].includes(review.status)
     ) {
       const [left, right] = [target_id, other].sort();
-      await run(
-        "INSERT INTO identity_reviews(id,left_id,right_id,reason,status) VALUES(?,?,?,?,?) ON CONFLICT(left_id,right_id) DO UPDATE SET status=CASE WHEN excluded.status='separate' THEN 'separate' ELSE identity_reviews.status END",
-        uid(),
-        left,
-        right,
-        review.reason,
-        review.status,
-      );
+      await db
+        .insert(identity_reviews)
+        .values({
+          id: uid(),
+          left_id: left!,
+          right_id: right!,
+          reason: review.reason,
+          status: review.status,
+        })
+        .onConflictDoUpdate({
+          target: [identity_reviews.left_id, identity_reviews.right_id],
+          set: {
+            status: sql`CASE WHEN excluded.status='separate' THEN 'separate' ELSE identity_reviews.status END`,
+          },
+        });
     }
     if (review.status === 'pending')
-      await run(
-        'UPDATE identity_reviews SET status=? WHERE id=?',
-        other === target_id ? 'merged' : 'obsolete',
-        review.id,
-      );
+      await db
+        .update(identity_reviews)
+        .set({ status: other === target_id ? 'merged' : 'obsolete' })
+        .where(eq(identity_reviews.id, review.id));
   }
   if (recordDecision) {
-    const id = uid();
-    await run(
-      "INSERT INTO identity_decisions(id,kind,left_id,right_id,before_snapshot,after_hash) VALUES(?,'merge',?,?,?::jsonb,?)",
+    const id = uid(),
+      before_snapshot = automaticEmail
+        ? {
+            ...before,
+            ...(typeof automaticEmail === 'string'
+              ? { automatic_email: automaticEmail }
+              : { automatic_match: automaticEmail }),
+          }
+        : before;
+    await db.insert(identity_decisions).values({
       id,
-      target_id,
-      source_id,
-      JSON.stringify(
-        automaticEmail
-          ? {
-              ...before,
-              ...(typeof automaticEmail === 'string'
-                ? { automatic_email: automaticEmail }
-                : { automatic_match: automaticEmail }),
-            }
-          : before,
-      ),
-      hash(await snapshot(ids)),
-    );
+      kind: 'merge',
+      left_id: target_id,
+      right_id: source_id,
+      before_snapshot,
+      after_hash: hash(await snapshot(ids)),
+    });
     return id;
   }
 }
