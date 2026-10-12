@@ -9,7 +9,7 @@ const privateDir=mkdtempSync(join(tmpdir(),'focus-durable-'));process.env.XIN_DA
 const {one,run,uid,stamp,upsertSource,getSetting,setSetting}=await import('../lib/db.mjs');
 const {prepareDispatches,acknowledgeDispatch,advanceDurableUnit,resumeDurable,failDurableRun}=await import('../lib/durable-ingestion.mjs');
 const {expireLeases,claimLease,heartbeatLease}=await import('../lib/leases.mjs');
-const {reconcileWorkflows}=await import('../lib/workflow-recovery.mjs');
+const {reconcileWorkflows}=await import('../lib/workflow-recovery.ts');
 const {createManualUpload,appendManualChunk,finishManualUpload}=await import('../lib/manual-ingestion.mjs');
 async function queued(provider='fireflies'){await run("UPDATE sync_runs SET state='complete' WHERE state IN ('queued','running','uploading')");await run("UPDATE contact_runs SET state='complete' WHERE state IN ('queued','running')");const id=uid();await run("INSERT INTO sync_runs(id,provider,state,started_at,updated_at) VALUES(?,?,'queued',?,?)",id,provider,stamp(),stamp());const rows=await prepareDispatches(),row=rows.find(r=>r.id===id);return{...row,wf:'wf-'+id};}
 const unit=(row,revision,adapters)=>advanceDurableUnit('sync',row.id,row.token,row.wf,revision,adapters);
