@@ -4,7 +4,7 @@ import {
   savePriority,
   priorityDetail,
   prioritiesState,
-} from '../../lib/priorities.mjs';
+} from '../../lib/priorities.ts';
 import { saveResult } from '../../lib/agent.mjs';
 
 test.afterEach(async () => {
