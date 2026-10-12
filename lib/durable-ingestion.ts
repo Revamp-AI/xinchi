@@ -5,7 +5,7 @@ import {
   lockWorkspace,
   transaction as dbTransaction,
 } from './postgres.ts';
-import { one, run, stamp, uid, setSetting, upsertSource } from './db.mjs';
+import { stamp, uid, setSetting, upsertSource } from './db.mjs';
 import {
   contact_queue,
   contact_runs,
@@ -61,10 +61,6 @@ type StepError = Error & {
   manualImport?: boolean;
 };
 
-const tables: Record<string, string> = {
-  sync: 'sync_runs',
-  contacts: 'contact_runs',
-};
 // The run table each durable kind tracks, in dispatch order.
 const parents = { sync: sync_runs, contacts: contact_runs };
 const transaction = <T>(fn: () => Promise<T>) =>
@@ -103,15 +99,7 @@ const lockParent = async (
   id: string,
 ): Promise<Parent | undefined> =>
   (await db.select().from(table).where(eq(table.id, id)).for('update'))[0];
-function tableFor(kind: string) {
-  if (!tables[kind]) throw Error('Unknown ingestion queue.');
-  return tables[kind];
-}
-const summary = (row: {
-  revision: number;
-  completed: boolean;
-  outcome: unknown;
-}) => ({
+const summary = (row: DurableRun) => ({
   revision: row.revision,
   done: row.completed,
   ...(row.outcome as Outcome),
@@ -639,26 +627,27 @@ export async function failDurableRun(
 ) {
   return transaction(async () => {
     await lockWorkspace();
-    const row = await one(
-      'SELECT * FROM durable_runs WHERE kind=? AND run_id=? FOR UPDATE',
-      kind,
-      id,
-    );
+    const row = await lockDurableRun(kind, id);
     if (!row || row.completed || row.workflow_id !== workflowId) return;
-    await run(
-      'UPDATE durable_runs SET completed=true,outcome=?::jsonb,updated_at=now() WHERE kind=? AND run_id=?',
-      JSON.stringify({ done: true, failed: true }),
-      kind,
-      id,
-    );
-    await run(
-      'UPDATE ' +
-        tableFor(kind) +
-        " SET state='failed',message='Workflow interrupted after retries; refresh to resume saved progress',updated_at=?,finished_at=? WHERE id=?",
-      stamp(),
-      stamp(),
-      id,
-    );
+    await db
+      .update(durable_runs)
+      .set({
+        completed: true,
+        outcome: { done: true, failed: true },
+        updated_at: sql`now()`,
+      })
+      .where(durableRun(kind, id));
+    const table = parentTable(kind);
+    await db
+      .update(table)
+      .set({
+        state: 'failed',
+        message:
+          'Workflow interrupted after retries; refresh to resume saved progress',
+        updated_at: stamp(),
+        finished_at: stamp(),
+      })
+      .where(eq(table.id, id));
   });
 }
 
@@ -673,11 +662,7 @@ export async function recoverStalledRun(
 ) {
   return transaction(async () => {
     await lockWorkspace();
-    const row = await one(
-      'SELECT * FROM durable_runs WHERE kind=? AND run_id=? FOR UPDATE',
-      kind,
-      id,
-    );
+    const row = await lockDurableRun(kind, id);
     if (
       !row ||
       row.completed ||
@@ -686,31 +671,44 @@ export async function recoverStalledRun(
     )
       return false;
     const now = Date.now(),
-      wait = Math.max(15 * 60000, Number(row.outcome?.waitMs || 0) + 5 * 60000);
+      wait = Math.max(
+        15 * 60000,
+        Number((row.outcome as Outcome | null)?.waitMs || 0) + 5 * 60000,
+      );
     if (
       (row.unit_until && Date.parse(row.unit_until) > now) ||
       (!terminal && now - Date.parse(row.updated_at) < wait)
     )
       return false;
-    const table = tableFor(kind),
-      parent = await one(
-        'SELECT state FROM ' + table + ' WHERE id=? FOR UPDATE',
-        id,
-      );
+    const table = parentTable(kind),
+      [parent] = await db
+        .select({ state: table.state })
+        .from(table)
+        .where(eq(table.id, id))
+        .for('update');
     if (!parent || !['queued', 'running'].includes(parent.state)) return false;
-    await run(
-      "UPDATE durable_runs SET workflow_id='',dispatch_token='',dispatch_until=NULL,unit_token='',unit_until=NULL,outcome=?::jsonb,updated_at=now() WHERE kind=? AND run_id=?",
-      JSON.stringify({ done: false, revision: row.revision }),
-      kind,
-      id,
-    );
-    await run(
-      'UPDATE ' +
-        table +
-        " SET state='queued',lease_owner='',lease_until=NULL,updated_at=?,message='Recovering interrupted import from saved progress' WHERE id=?",
-      stamp(),
-      id,
-    );
+    await db
+      .update(durable_runs)
+      .set({
+        workflow_id: '',
+        dispatch_token: '',
+        dispatch_until: null,
+        unit_token: '',
+        unit_until: null,
+        outcome: { done: false, revision: row.revision },
+        updated_at: sql`now()`,
+      })
+      .where(durableRun(kind, id));
+    await db
+      .update(table)
+      .set({
+        state: 'queued',
+        lease_owner: '',
+        lease_until: null,
+        updated_at: stamp(),
+        message: 'Recovering interrupted import from saved progress',
+      })
+      .where(eq(table.id, id));
     return true;
   });
 }
@@ -724,11 +722,7 @@ export async function yieldDurableRun(
 ) {
   return transaction(async () => {
     await lockWorkspace();
-    const row = await one(
-      'SELECT * FROM durable_runs WHERE kind=? AND run_id=? FOR UPDATE',
-      kind,
-      id,
-    );
+    const row = await lockDurableRun(kind, id);
     if (
       !row ||
       row.completed ||
@@ -737,18 +731,26 @@ export async function yieldDurableRun(
       (row.unit_until && Date.parse(row.unit_until) > Date.now())
     )
       return false;
-    await run(
-      "UPDATE durable_runs SET workflow_id='',dispatch_token='',dispatch_until=NULL,updated_at=now() WHERE kind=? AND run_id=?",
-      kind,
-      id,
-    );
-    await run(
-      'UPDATE ' +
-        tableFor(kind) +
-        " SET state='queued',lease_owner='',lease_until=NULL,updated_at=?,message='Saved progress; continuing in the next background run' WHERE id=?",
-      stamp(),
-      id,
-    );
+    await db
+      .update(durable_runs)
+      .set({
+        workflow_id: '',
+        dispatch_token: '',
+        dispatch_until: null,
+        updated_at: sql`now()`,
+      })
+      .where(durableRun(kind, id));
+    const table = parentTable(kind);
+    await db
+      .update(table)
+      .set({
+        state: 'queued',
+        lease_owner: '',
+        lease_until: null,
+        updated_at: stamp(),
+        message: 'Saved progress; continuing in the next background run',
+      })
+      .where(eq(table.id, id));
     return true;
   });
 }
