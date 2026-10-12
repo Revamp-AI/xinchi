@@ -13,7 +13,7 @@ import { REMOTE_WORKERS } from './runtime.mjs';
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import {
   assignReviewBatch,
   completeReviewBatch,
@@ -37,6 +37,8 @@ import { db } from './postgres.ts';
 import {
   contacts,
   items,
+  jobs,
+  message_drafts,
   priorities,
   source_versions,
   sources,
@@ -316,38 +318,49 @@ export async function saveResult(
     result = await validateResult(value);
     if (leaseToken) await requireLease('jobs', id, leaseToken);
     else if (
-      !(await one(
-        "SELECT id FROM jobs WHERE id=? AND status IN ('queued','running') FOR UPDATE",
-        id,
-      ))
+      !(
+        await db
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(
+            and(eq(jobs.id, id), inArray(jobs.status, ['queued', 'running'])),
+          )
+          .for('update')
+      ).length
     )
       throw Error('This review is no longer running.');
-    const job = await one('SELECT kind FROM jobs WHERE id=?', id);
+    const [job] = await db
+      .select({ kind: jobs.kind })
+      .from(jobs)
+      .where(eq(jobs.id, id));
     result.proposal_reconciliations = await reconcileProposals(
       id,
       result.proposal_reconciliations,
     );
     result.proposals = await saveProposals(id, result.proposals, {
-      automatic: job.kind === 'import_review' || job.kind === 'backlog_review',
+      automatic:
+        job!.kind === 'import_review' || job!.kind === 'backlog_review',
     });
     await completeProposalReview(id, result.proposal_checks);
     await rebalanceProposals();
     for (const d of result.drafts)
-      await run(
-        'INSERT INTO message_drafts(id,contact_id,job_id,subject,body,citations) VALUES(?,?,?,?,?,?::jsonb)',
-        uid(),
-        d.contact_id,
-        id,
-        d.subject,
-        d.body,
-        JSON.stringify(d.citations),
-      );
-    await run(
-      "UPDATE jobs SET status='complete',result_json=?,progress='Review ready',updated_at=? WHERE id=?",
-      JSON.stringify(result),
-      stamp(),
-      id,
-    );
+      await db.insert(message_drafts).values({
+        id: uid(),
+        contact_id: d.contact_id,
+        job_id: id,
+        subject: d.subject,
+        body: d.body,
+        citations: d.citations,
+      });
+    await db
+      .update(jobs)
+      .set({
+        status: 'complete',
+        result_json: JSON.stringify(result),
+        progress: 'Review ready',
+        updated_at: stamp(),
+      })
+      .where(eq(jobs.id, id));
     await savePriorityEnrichment(
       id,
       result.priority_updates,
@@ -376,10 +389,10 @@ export async function createJob(
     throw Error('Answer at least one question.');
   let text = String(prompt || '');
   if (answers.length) {
-    const parent = await one(
-      'SELECT prompt FROM jobs WHERE id=?',
-      String(options.parent_id || ''),
-    );
+    const [parent] = await db
+      .select({ prompt: jobs.prompt })
+      .from(jobs)
+      .where(eq(jobs.id, String(options.parent_id || '')));
     if (!parent)
       throw Error('The review you are answering is no longer available.');
     text = [
@@ -396,24 +409,24 @@ export async function createJob(
   if (!text.trim()) throw Error('Tell the agent what to look into.');
   const id = await transaction(async () => {
     await lockWorkspace();
-    const active = await one(
-      "SELECT id FROM jobs WHERE status IN ('queued','running')",
-    );
+    const [active] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(inArray(jobs.status, ['queued', 'running']));
     if (active)
       throw Error(
         'An agent is already working. Let it finish before starting another review.',
       );
     const id = uid();
-    await run(
-      'INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at,progress) VALUES(?,?,?,?,?,?,?)',
+    await db.insert(jobs).values({
       id,
       kind,
-      'queued',
-      text.slice(0, 6000),
-      stamp(),
-      stamp(),
-      'Starting the context review',
-    );
+      status: 'queued',
+      prompt: text.slice(0, 6000),
+      created_at: stamp(),
+      updated_at: stamp(),
+      progress: 'Starting the context review',
+    });
     return id;
   });
   if (kind === 'review')
