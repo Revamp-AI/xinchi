@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { serializeAcrossProjects } from './cross-project-lock';
+
+// The shortlist keeps at most ten pending suggestions for the whole workspace,
+// so the other project's proposal fixtures would displace this file's.
+serializeAcrossProjects('proposal-shortlist');
 
 test('Commitments exposes pending proposals before any outcomes are saved', async ({
   page,

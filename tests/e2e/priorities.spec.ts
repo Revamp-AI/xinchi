@@ -6,6 +6,11 @@ import {
   prioritiesState,
 } from '../../lib/priorities.ts';
 import { saveResult } from '../../lib/agent.ts';
+import { serializeAcrossProjects } from './cross-project-lock';
+
+// This spec truncates every priority, reorders the three shared stacks and
+// holds one fixed blocker job, so the other project's run must not overlap it.
+serializeAcrossProjects('priorities');
 
 test.afterEach(async () => {
   await run(
