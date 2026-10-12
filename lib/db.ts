@@ -1,4 +1,4 @@
-import { and, desc, eq, getColumns, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, getColumns, or, sql, type SQL } from 'drizzle-orm';
 import { CONTACT_TABLES } from './contact-tables.mjs';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -7,7 +7,12 @@ import { MARK_START, MARK_END } from './marks.mjs';
 import { all, one, run, transaction, lockWorkspace, db } from './postgres.ts';
 import { SERVERLESS } from './runtime.mjs';
 import { queueSourceReview } from './review-batches.ts';
-import { settings, source_versions, sources } from './schema/index.ts';
+import {
+  contact_queue,
+  settings,
+  source_versions,
+  sources,
+} from './schema/index.ts';
 import type { items } from './schema/index.ts';
 export {
   all,
@@ -77,26 +82,31 @@ export async function upsertSource(doc: SourceInput, raw: unknown = doc) {
       !doc.title
     )
       throw Error('A source needs a provider, ID, and title.');
-    await one(
-      'SELECT pg_advisory_xact_lock(hashtext(?))',
-      'source:' + provider + ':' + external_id,
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${'source:' + provider + ':' + external_id}))`,
     );
-    const byUrl =
+    const [byUrl] =
       provider === 'granola' && doc.url
-        ? await one(
-            'SELECT * FROM sources WHERE provider=? AND (url=? OR external_id=?)',
-            provider,
-            doc.url,
-            doc.url.split('/').pop(),
-          )
-        : null;
+        ? await db
+            .select()
+            .from(sources)
+            .where(
+              and(
+                eq(sources.provider, provider),
+                or(
+                  eq(sources.url, doc.url),
+                  eq(sources.external_id, doc.url.split('/').pop()!),
+                ),
+              ),
+            )
+        : [];
     const id = byUrl?.id || provider + ':' + external_id,
-      old = await one('SELECT * FROM sources WHERE id=?', id);
+      [old] = await db.select().from(sources).where(eq(sources.id, id));
     const values = {
       title: String(doc.title),
       occurred_at: String(doc.occurred_at || ''),
       body: String(doc.body || ''),
-      url: /^https?:\/\//.test(doc.url || '') ? doc.url : '',
+      url: /^https?:\/\//.test(doc.url || '') ? doc.url! : '',
       coverage: doc.coverage || 'metadata',
     };
     if (values.occurred_at && !isNaN(Date.parse(values.occurred_at)))
@@ -123,29 +133,40 @@ export async function upsertSource(doc: SourceInput, raw: unknown = doc) {
       date = stamp();
     if (old?.content_hash === content_hash) return { id, changed: false };
     await transaction(async () => {
-      await run(
-        `INSERT INTO sources VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,occurred_at=excluded.occurred_at,body=excluded.body,url=excluded.url,coverage=excluded.coverage,content_hash=excluded.content_hash,updated_at=excluded.updated_at`,
-        id,
-        provider,
-        external_id,
-        values.title,
-        values.occurred_at,
-        values.body,
-        values.url,
-        values.coverage,
-        content_hash,
-        date,
-        date,
-      );
-      await run(
-        'INSERT OR IGNORE INTO source_versions(id,source_id,content_hash,raw_json,fetched_at,normalized_body) VALUES(?,?,?,?,?,?)',
-        uid(),
-        id,
-        content_hash,
-        JSON.stringify(raw),
-        date,
-        values.body,
-      );
+      await db
+        .insert(sources)
+        .values({
+          id,
+          provider,
+          external_id,
+          ...values,
+          content_hash,
+          imported_at: date,
+          updated_at: date,
+        })
+        .onConflictDoUpdate({
+          target: sources.id,
+          set: {
+            title: sql`excluded.title`,
+            occurred_at: sql`excluded.occurred_at`,
+            body: sql`excluded.body`,
+            url: sql`excluded.url`,
+            coverage: sql`excluded.coverage`,
+            content_hash: sql`excluded.content_hash`,
+            updated_at: sql`excluded.updated_at`,
+          },
+        });
+      await db
+        .insert(source_versions)
+        .values({
+          id: uid(),
+          source_id: id,
+          content_hash,
+          raw_json: JSON.stringify(raw),
+          fetched_at: date,
+          normalized_body: values.body,
+        })
+        .onConflictDoNothing();
       if (
         !old ||
         old.body !== values.body ||
@@ -155,11 +176,19 @@ export async function upsertSource(doc: SourceInput, raw: unknown = doc) {
         await queueSourceReview(id);
 
       if (provider !== 'calendar')
-        await run(
-          "INSERT INTO contact_queue(source_id,content_hash) VALUES(?,?) ON CONFLICT(source_id) DO UPDATE SET content_hash=excluded.content_hash,state='pending',attempts=0,error='',updated_at=now()",
-          id,
-          content_hash,
-        );
+        await db
+          .insert(contact_queue)
+          .values({ source_id: id, content_hash })
+          .onConflictDoUpdate({
+            target: contact_queue.source_id,
+            set: {
+              content_hash: sql`excluded.content_hash`,
+              state: 'pending',
+              attempts: 0,
+              error: '',
+              updated_at: sql`now()`,
+            },
+          });
     });
     return { id, changed: true };
   });
