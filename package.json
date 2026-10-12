@@ -14,6 +14,7 @@
     "test:e2e": "node scripts/test-postgres.mjs --e2e",
     "agent-worker": "node scripts/worker.mjs",
     "import": "node --env-file-if-exists=.env.local scripts/import.mjs",
+    "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs",
     "db:import-sqlite": "node --env-file-if-exists=.env.local scripts/migrate-sqlite.mjs"
   },
