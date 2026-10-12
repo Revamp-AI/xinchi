@@ -13,7 +13,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { db, transaction, lockWorkspace } from './postgres.ts';
-import { all, one, run, uid, hash, stamp, upsertSource } from './db.mjs';
+import { uid, hash, stamp, upsertSource } from './db.mjs';
 import {
   items,
   priorities,
@@ -614,87 +614,99 @@ export async function decidePrioritySuggestion({
 }) {
   return transaction(async () => {
     await lockWorkspace();
-    const s = await one(
-      "SELECT * FROM priority_suggestions WHERE id=? AND status='pending' FOR UPDATE",
-      id,
-    );
+    const [s] = await db
+      .select()
+      .from(priority_suggestions)
+      .where(
+        and(
+          eq(priority_suggestions.id, id),
+          eq(priority_suggestions.status, 'pending'),
+        ),
+      )
+      .for('update');
     if (!s) throw Error('This suggestion was already resolved.');
+    const resolve = (status: 'applied' | 'dismissed') =>
+      db
+        .update(priority_suggestions)
+        .set({ status })
+        .where(eq(priority_suggestions.id, id));
     if (action === 'dismiss') {
-      await run(
-        "UPDATE priority_suggestions SET status='dismissed' WHERE id=?",
-        id,
-      );
+      await resolve('dismissed');
       if (s.priority_id)
-        await run(
-          'UPDATE priorities SET updated_at=now() WHERE id=?',
-          s.priority_id,
-        );
+        await db
+          .update(priorities)
+          .set({ updated_at: sql`now()` })
+          .where(eq(priorities.id, s.priority_id));
       return { saved: true };
     }
     if (action !== 'apply') throw Error('Choose apply or dismiss.');
-    let p: any;
+    let p: Priority;
     if (s.priority_id) {
-      p = await one('SELECT * FROM priorities WHERE id=?', s.priority_id);
+      const change = s.payload as PriorityChange;
+      p = (
+        await db
+          .select()
+          .from(priorities)
+          .where(eq(priorities.id, s.priority_id))
+      )[0]!;
       if (
         p.status !== 'active' ||
         p.version !== version ||
-        p.version !== s.payload.base_version
+        p.version !== change.base_version
       )
         throw Error(
           'This priority changed since the suggestion. Dismiss it or review its context again.',
         );
-      if (s.payload.next_decision)
+      if (change.next_decision)
         p = await savePriority({
           id: p.id,
           version: p.version,
-          next_decision: s.payload.next_decision,
+          next_decision: change.next_decision,
         });
-      if (s.payload.suggested_rank !== null) {
-        const rows = await all(
-          "SELECT id FROM priorities WHERE stack_id=? AND status='active' ORDER BY position,id",
-          p.stack_id,
-        );
+      if (change.suggested_rank !== null) {
+        const rows = await db
+          .select({ id: priorities.id })
+          .from(priorities)
+          .where(
+            and(
+              eq(priorities.stack_id, p.stack_id),
+              eq(priorities.status, 'active'),
+            ),
+          )
+          .orderBy(priorities.position, priorities.id);
         const ids = rows.map((r) => r.id).filter((id) => id !== p.id);
         ids.splice(
-          Math.min(ids.length, Math.max(0, s.payload.suggested_rank - 1)),
+          Math.min(ids.length, Math.max(0, change.suggested_rank - 1)),
           0,
           p.id,
         );
         await reorderPriorities({
-          version: (await one('SELECT version FROM priority_order WHERE id=1'))
-            .version,
+          version: await orderVersion(),
           stack_id: p.stack_id,
           ids,
         });
       }
     } else {
-      if (
-        await one(
-          "SELECT id FROM priorities WHERE lower(title)=lower(?) AND status='active'",
-          s.payload.title,
-        )
-      )
+      const suggestion = s.payload as PrioritySuggestion;
+      if ((await activeTitle(suggestion.title)).length)
         throw Error('This priority already exists. Dismiss the suggestion.');
       p = await savePriority({
-        stack_id: s.payload.stack_id,
-        title: s.payload.title,
-        next_decision: s.payload.next_decision,
-        notes: s.payload.summary,
+        stack_id: suggestion.stack_id,
+        title: suggestion.title,
+        next_decision: suggestion.next_decision,
+        notes: suggestion.summary,
       });
       await savePriorityEnrichment(s.job_id, [
         {
           priority_id: p.id,
-          summary: s.payload.summary,
+          summary: suggestion.summary,
           next_decision: '',
           suggested_rank: null,
-          citations: s.payload.citations,
+          citations: suggestion.citations,
         },
       ]);
     }
-    await run(
-      "UPDATE priority_suggestions SET status='applied' WHERE id=?",
-      id,
-    );
+    await resolve('applied');
     return priorityDetail(p.id);
   });
 }
