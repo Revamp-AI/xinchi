@@ -1,3 +1,4 @@
+import { and, eq, inArray } from 'drizzle-orm';
 import { CALENDAR_SCOPE, calendarGranted } from './calendar.ts';
 import { expireLeases } from './leases.mjs';
 import { resolve } from 'node:path';
@@ -8,14 +9,12 @@ import {
   stamp,
   uid,
   all,
-  one,
-  run,
   getSetting as readSetting,
   setSetting,
   upsertSource,
-  transaction,
-  lockWorkspace,
 } from './db.mjs';
+import { db, transaction, lockWorkspace } from './postgres.ts';
+import { sources, sync_runs } from './schema/index.ts';
 import { gmailFailureCode, gmailMessages } from './auth-messages.mjs';
 import {
   secrets,
@@ -529,12 +528,16 @@ export async function startSync(
   const id = await transaction(async () => {
     await lockWorkspace();
     await recoverSyncRuns();
-    if (
-      await one(
-        "SELECT id FROM sync_runs WHERE provider=? AND state IN ('queued','running','uploading')",
-        provider,
-      )
-    )
+    const [active] = await db
+      .select({ id: sync_runs.id })
+      .from(sync_runs)
+      .where(
+        and(
+          eq(sync_runs.provider, provider),
+          inArray(sync_runs.state, ['queued', 'running', 'uploading']),
+        ),
+      );
+    if (active)
       throw Error('An import for this connection is already running.');
     if (rescan)
       await setSetting(
@@ -544,14 +547,13 @@ export async function startSync(
         }),
       );
     const id = uid();
-    await run(
-      'INSERT INTO sync_runs(id,provider,started_at,updated_at,state) VALUES(?,?,?,?,?)',
+    await db.insert(sync_runs).values({
       id,
       provider,
-      stamp(),
-      stamp(),
-      'queued',
-    );
+      started_at: stamp(),
+      updated_at: stamp(),
+      state: 'queued',
+    });
     return id;
   });
   if (REMOTE_WORKERS) return { id };
@@ -567,10 +569,11 @@ export async function startSync(
   );
   child.unref();
   child.on('error', () =>
-    run(
-      "UPDATE sync_runs SET state='failed',message='Could not start import worker' WHERE id=? AND state='queued'",
-      id,
-    ).catch(() => {}),
+    db
+      .update(sync_runs)
+      .set({ state: 'failed', message: 'Could not start import worker' })
+      .where(and(eq(sync_runs.id, id), eq(sync_runs.state, 'queued')))
+      .catch(() => {}),
   );
   return { id };
 }
@@ -824,10 +827,10 @@ export async function syncProvider(
         await put(normalizeGmail(m), m);
       } catch (e) {
         if ((e as RequestFailure).status !== 404) throw e;
-        const old = await one(
-          'SELECT * FROM sources WHERE id=?',
-          'gmail:' + id,
-        );
+        const [old] = await db
+          .select()
+          .from(sources)
+          .where(eq(sources.id, 'gmail:' + id));
         if (old)
           await put(
             {
