@@ -2,6 +2,7 @@
 
 import {
   ArrowUpRight,
+  CalendarDays,
   Check,
   Circle,
   FileText,
@@ -47,6 +48,7 @@ export const providerNames = {
   fireflies: 'Fireflies',
   granola: 'Granola',
   gmail: 'Gmail',
+  calendar: 'Google Calendar',
   manual: 'Your notes',
   beeper: 'Beeper',
 };
@@ -83,6 +85,7 @@ export function ProviderIcon({ provider, small = false }) {
       fireflies: Flame,
       granola: Leaf,
       gmail: Mail,
+      calendar: CalendarDays,
       manual: FileText,
       beeper: MessagesSquare,
     }[provider] || FileText;

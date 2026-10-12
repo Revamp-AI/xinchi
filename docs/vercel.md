@@ -9,7 +9,7 @@ Link the intended Vercel team/project, then configure these **production-only** 
 - `DATABASE_URL`: the pooled Neon connection with verified TLS.
 - `XIN_APP_ORIGIN`: the exact production HTTPS origin, without a path.
 - `XIN_ALLOWED_EMAIL`: the sole Google account allowed to sign in.
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: a Google OAuth **Web application** client. Authorize `${XIN_APP_ORIGIN}/api/auth/google/callback` in Google Cloud and enable the Gmail API. Gmail consent is optional for workspace sign-in.
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`: a Google OAuth **Web application** client. Authorize `${XIN_APP_ORIGIN}/api/auth/google/callback` in Google Cloud and enable the Gmail and Google Calendar APIs. Gmail and Calendar consent is optional for workspace sign-in.
 - `XIN_SECRET_STORAGE=postgres` and `XIN_SECRETS_KEY`: a random 32-byte base64url key. Back it up separately from the database; losing this key makes stored provider credentials unrecoverable.
 - `CRON_SECRET`: a random secret for Vercel's scheduled dispatch, recovery, and review worker.
 - `XIN_AGENT_MODE=cloud`, optional `XIN_AGENT_MODEL` (defaults to `openai/gpt-6-astra`), and optional `XIN_TIME_ZONE` for server calendar dates.
@@ -36,13 +36,15 @@ Commit and push the tested changes to GitHub before deploying to Vercel. Verify 
 
 User requests enqueue work in PostgreSQL and start a Vercel Workflow after the response. The authenticated cron dispatches queued work every minute as a fallback. A Workflow advances through small steps: at most one provider API call and one complete source per step, or one source for contact extraction. File validation is a separate staging step. Source writes and progress changes commit together in Neon; revision and ownership checks prevent duplicate deliveries or an old worker from applying a step twice. Workflow arguments and outputs contain coordination identifiers and status, while source text and cursors stay in PostgreSQL.
 
-Gmail, Fireflies, Granola, and manual files have independent import slots. A running or retrying provider does not block another provider. Duplicate runs for the same provider remain blocked by both admission checks and a database constraint; contact extraction and AI review each retain their own single shared worker.
+Gmail, Google Calendar, Fireflies, Granola, and manual files have independent import slots. A running or retrying provider does not block another provider. Duplicate runs for the same provider remain blocked by both admission checks and a database constraint; contact extraction and AI review each retain their own single shared worker.
 
 Gmail saves pending message IDs and history/page positions, Granola saves note and transcript-page progress, and Fireflies saves its participant scope, fixed scan boundary, and transcript offset. A hosted backfill continues across function invocations until its pages are exhausted. Imports with changed sources queue contact extraction; extraction then requests a separate AI review. Cron also schedules configured Granola and Fireflies connections after five idle minutes and checks full history daily. See [automatic meeting imports](meeting-sync.md) for shared-note discovery, recovery, and provider scope.
 
 Transient provider failures use durable exponential waits, honoring provider retry delays up to 24 hours per wait. A successful step resets the failure count. Permanent errors or 12 consecutive failures at one position mark the import failed with a safe message in Connections. After correcting the connection or input, **Retry import** resumes its saved position. Workflow step execution also has bounded infrastructure retries. Cron reconciles Workflow runs that terminated without updating Focus so they do not remain shown as running indefinitely; these runs are available for manual retry.
 
 Individual steps still have limits: provider requests time out after 45 seconds, provider responses/checkpoints/records are capped at 8 MiB, and durable database transactions have bounded statement and lock waits. A single oversized record needs a smaller export. Reviews remain separate Node.js functions with the configured 800-second maximum; they stop after eight minutes or twelve model steps, with bounded tool output and read-only tools. Every result is citation-validated before saving; proposals remain unaccepted and message drafts remain unsent.
+
+Open suggestions are rechecked daily in bounded background jobs. See [automatic commitment triage](commitment-triage.md) for admission, shortlist ranking, evidence-backed pruning and calendar context.
 
 ## Manual uploads
 
@@ -52,6 +54,6 @@ Chunks, records, and cursors live in private PostgreSQL tables excluded from wor
 
 ## Credentials and recovery
 
-Provider keys and Gmail refresh/access tokens use AES-256-GCM encryption in `focus_auth.provider_secrets`. Updates serialize to preserve concurrent credential changes. The encryption key lives in server environment secrets. Google client credentials stay in server environment variables. None of these appear in workspace exports or model tools.
+Provider keys and Google refresh/access tokens use AES-256-GCM encryption in `focus_auth.provider_secrets`. Updates serialize to preserve concurrent credential changes. The encryption key lives in server environment secrets. Google client credentials stay in server environment variables. None of these appear in workspace exports or model tools.
 
 Keep PostgreSQL backups and the encryption key in separate private storage. A restored database needs the same encryption key, Google client configuration, owner allowlist, and production callback origin. Invalidate restored sessions and OAuth attempts before opening a recovered workspace. See [the Postgres runbook](postgres-cutover.md).
