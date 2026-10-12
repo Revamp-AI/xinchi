@@ -1,5 +1,8 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
-import { all, one, run, transaction, uid } from './db.mjs';
+import { and, eq, lt, notExists, sql } from 'drizzle-orm';
+import { db, transaction } from './postgres.ts';
+import { all, one, run, uid } from './db.mjs';
+import { mcp_clients, mcp_grants, mcp_rate_limits } from './schema/index.ts';
 import { APP_ORIGIN, allowedEmail } from './auth.mjs';
 
 // Untrusted OAuth request fields; each one is checked before it is used.
@@ -53,11 +56,20 @@ export function checkMcpOrigin(req: Request) {
     throw error('This browser origin is not allowed.', 'invalid_request', 403);
 }
 export async function rateLimit(key: string, limit = 120) {
-  const row = await one(
-    "INSERT INTO focus_auth.mcp_rate_limits(key,count,expires_at) VALUES(?,1,now()+interval '1 minute') ON CONFLICT(key) DO UPDATE SET count=CASE WHEN mcp_rate_limits.expires_at<=now() THEN 1 ELSE mcp_rate_limits.count+1 END,expires_at=CASE WHEN mcp_rate_limits.expires_at<=now() THEN now()+interval '1 minute' ELSE mcp_rate_limits.expires_at END RETURNING count",
-    key,
-  );
-  if (row.count > limit)
+  const { count, expires_at } = mcp_rate_limits;
+  const expired = sql`${expires_at} <= now()`;
+  const [row] = await db
+    .insert(mcp_rate_limits)
+    .values({ key, count: 1, expires_at: sql`now() + interval '1 minute'` })
+    .onConflictDoUpdate({
+      target: mcp_rate_limits.key,
+      set: {
+        count: sql`CASE WHEN ${expired} THEN 1 ELSE ${count} + 1 END`,
+        expires_at: sql`CASE WHEN ${expired} THEN now() + interval '1 minute' ELSE ${expires_at} END`,
+      },
+    })
+    .returning({ count });
+  if (row!.count > limit)
     throw error(
       'Too many requests. Try again in one minute.',
       'temporarily_unavailable',
@@ -181,27 +193,30 @@ export async function registerMcpClient(input: OAuthInput) {
         .slice(0, 100) || 'MCP client',
     id = uid();
   await transaction(async () => {
-    await one(
-      "SELECT pg_advisory_xact_lock(hashtext('focus-mcp-registration'))",
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('focus-mcp-registration'))`,
     );
-    await run(
-      "DELETE FROM focus_auth.mcp_clients c WHERE created_at<now()-interval '1 day' AND NOT EXISTS(SELECT 1 FROM focus_auth.mcp_grants g WHERE g.client_id=c.id)",
+    await db.delete(mcp_clients).where(
+      and(
+        lt(mcp_clients.created_at, sql`now() - interval '1 day'`),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(mcp_grants)
+            .where(eq(mcp_grants.client_id, mcp_clients.id)),
+        ),
+      ),
     );
-    await run('DELETE FROM focus_auth.mcp_rate_limits WHERE expires_at<now()');
-    if (
-      (await one('SELECT count(*) AS n FROM focus_auth.mcp_clients')).n >= 1000
-    )
+    await db
+      .delete(mcp_rate_limits)
+      .where(lt(mcp_rate_limits.expires_at, sql`now()`));
+    if ((await db.$count(mcp_clients)) >= 1000)
       throw error(
         'Client registration limit reached.',
         'temporarily_unavailable',
         429,
       );
-    await run(
-      'INSERT INTO focus_auth.mcp_clients(id,name,redirect_uris) VALUES(?,?,?::jsonb)',
-      id,
-      name,
-      JSON.stringify(redirects),
-    );
+    await db.insert(mcp_clients).values({ id, name, redirect_uris: redirects });
   });
   return {
     client_id: id,
@@ -216,12 +231,12 @@ export async function registerMcpClient(input: OAuthInput) {
 export async function validateAuthorization(input: OAuthInput) {
   if (typeof input.client_id !== 'string' || input.client_id.length > 200)
     throw error('Unknown client.', 'invalid_client');
-  const client = await one(
-    'SELECT * FROM focus_auth.mcp_clients WHERE id=?',
-    input.client_id,
-  );
+  const [client] = await db
+    .select()
+    .from(mcp_clients)
+    .where(eq(mcp_clients.id, input.client_id));
   if (!client) throw error('Unknown client.', 'invalid_client');
-  if (!redirectMatches(client.redirect_uris, input.redirect_uri))
+  if (!redirectMatches(client.redirect_uris as string[], input.redirect_uri))
     throw error('Redirect URI does not match this client.');
   if (
     input.response_type !== 'code' ||
