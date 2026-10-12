@@ -1,5 +1,10 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
-import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import {
+  createRemoteJWKSet,
+  jwtVerify,
+  type JWTVerifyGetKey,
+  type KeyInput,
+} from 'jose';
 import { and, desc, eq, gt, lte, notInArray, sql } from 'drizzle-orm';
 import { db } from './postgres.ts';
 import { all, one, run, transaction, lockWorkspace } from './db.mjs';
@@ -181,7 +186,7 @@ export async function verifyGoogleIdentity(
   token: string,
   clientId: string,
   nonce: string,
-  keys: JWTVerifyGetKey = googleKeys,
+  keys: KeyInput | JWTVerifyGetKey = googleKeys,
 ) {
   const { payload: p } = await jwtVerify(token, keys, {
     issuer: ['https://accounts.google.com', 'accounts.google.com'],
@@ -269,7 +274,7 @@ export async function finishGoogle(
   code: string | null,
   state: string | null,
   browser: string | null,
-  keys: JWTVerifyGetKey = googleKeys,
+  keys: KeyInput | JWTVerifyGetKey = googleKeys,
 ) {
   let stage = 'state';
   try {
