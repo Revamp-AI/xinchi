@@ -1,7 +1,12 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { all, one, run, uid, stamp } from './db.mjs';
+import { uid, stamp } from './db.mjs';
 import { db, transaction, lockWorkspace } from './postgres.ts';
-import { import_chunks, import_uploads, sync_runs } from './schema/index.ts';
+import {
+  import_chunks,
+  import_records,
+  import_uploads,
+  sync_runs,
+} from './schema/index.ts';
 import { normalizeResearchArchive } from './imports.mjs';
 
 // Parsed upload JSON. It is untrusted: normalizeRecord checks every field it keeps.
@@ -262,18 +267,17 @@ export async function prepareManualRecords(id: string) {
     const upload = await uploadRun(id);
     if (!['queued', 'running'].includes(upload.state))
       fail('This file is not queued for import.');
-    const staged = (
-      await one(
-        'SELECT count(*) AS count FROM import_records WHERE run_id=?',
-        id,
-      )
-    ).count;
+    const staged = await db.$count(
+      import_records,
+      eq(import_records.run_id, id),
+    );
     if (staged) return { total: staged };
     const text = (
-      await all(
-        'SELECT content FROM import_chunks WHERE run_id=? ORDER BY part',
-        id,
-      )
+      await db
+        .select({ content: import_chunks.content })
+        .from(import_chunks)
+        .where(eq(import_chunks.run_id, id))
+        .orderBy(import_chunks.part)
     )
       .map((chunk) => chunk.content)
       .join('');
@@ -318,11 +322,14 @@ export async function prepareManualRecords(id: string) {
       fail('The file is not a valid JSON source archive.');
     }
     if (records.length)
-      await run(
-        'INSERT INTO import_records(run_id,ordinal,payload) SELECT ?,ordinality-1,value FROM jsonb_array_elements(?::jsonb) WITH ORDINALITY AS records(value,ordinality) ON CONFLICT(run_id,ordinal) DO NOTHING',
-        id,
-        JSON.stringify(records),
-      );
+      await db
+        .insert(import_records)
+        .select(
+          sql`SELECT ${id}, ordinality - 1, value FROM jsonb_array_elements(${JSON.stringify(records)}::jsonb) WITH ORDINALITY AS records(value, ordinality)`,
+        )
+        .onConflictDoNothing({
+          target: [import_records.run_id, import_records.ordinal],
+        });
     return { total: records.length };
   });
 }
@@ -352,11 +359,12 @@ export async function advanceManual(
   )
     fail('The saved file import position is invalid.');
   if (next === total) return { cursor, records: [], complete: true };
-  const record = await one(
-    'SELECT payload FROM import_records WHERE run_id=? AND ordinal=?',
-    id,
-    next,
-  );
+  const [record] = await db
+    .select({ payload: import_records.payload })
+    .from(import_records)
+    .where(
+      and(eq(import_records.run_id, id), eq(import_records.ordinal, next)),
+    );
   if (!record)
     fail('The staged file import is incomplete. Choose the file again.');
   return {
