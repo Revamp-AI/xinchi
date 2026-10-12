@@ -1,8 +1,24 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
-import { and, eq, lt, notExists, sql } from 'drizzle-orm';
+import {
+  and,
+  eq,
+  getColumns,
+  gt,
+  isNull,
+  lt,
+  notExists,
+  sql,
+} from 'drizzle-orm';
 import { db, transaction } from './postgres.ts';
 import { all, one, run, uid } from './db.mjs';
-import { mcp_clients, mcp_grants, mcp_rate_limits } from './schema/index.ts';
+import {
+  mcp_clients,
+  mcp_codes,
+  mcp_grants,
+  mcp_rate_limits,
+  mcp_tokens,
+  owner,
+} from './schema/index.ts';
 import { APP_ORIGIN, allowedEmail } from './auth.mjs';
 
 // Untrusted OAuth request fields; each one is checked before it is used.
@@ -284,34 +300,49 @@ export async function authorizeMcp(
   const code = randomToken(),
     id = uid();
   await transaction(async () => {
-    await run(
-      "INSERT INTO focus_auth.mcp_grants(id,client_id,owner_sub,owner_email,scope,resource,expires_at) VALUES(?,?,?,?,?,?,now()+interval '90 days')",
+    await db.insert(mcp_grants).values({
       id,
-      client.id,
-      user.sub,
-      user.email,
-      request.scope,
-      MCP_URL,
-    );
-    await run(
-      "INSERT INTO focus_auth.mcp_codes(token_hash,grant_id,redirect_uri,challenge,expires_at) VALUES(?,?,?,?,now()+interval '5 minutes')",
-      tokenHash(code),
-      id,
-      request.redirect_uri,
-      request.code_challenge,
-    );
+      client_id: client.id,
+      owner_sub: user.sub,
+      owner_email: user.email,
+      scope: request.scope,
+      resource: MCP_URL,
+      expires_at: sql`now() + interval '90 days'`,
+    });
+    await db.insert(mcp_codes).values({
+      token_hash: tokenHash(code),
+      grant_id: id,
+      redirect_uri: request.redirect_uri,
+      challenge: request.code_challenge,
+      expires_at: sql`now() + interval '5 minutes'`,
+    });
   });
   redirect.searchParams.set('code', code);
   return { redirect: redirect.href };
 }
 async function liveGrant(id: string, clientId: string) {
-  return one(
-    'SELECT g.* FROM focus_auth.mcp_grants g JOIN focus_auth.owner o ON o.sub=g.owner_sub AND o.email=g.owner_email WHERE g.id=? AND g.client_id=? AND g.resource=? AND g.owner_email=? AND g.revoked_at IS NULL AND g.expires_at>now() FOR UPDATE OF g',
-    id,
-    clientId,
-    MCP_URL,
-    allowedEmail(),
-  );
+  const [grant] = await db
+    .select(getColumns(mcp_grants))
+    .from(mcp_grants)
+    .innerJoin(
+      owner,
+      and(
+        eq(owner.sub, mcp_grants.owner_sub),
+        eq(owner.email, mcp_grants.owner_email),
+      ),
+    )
+    .where(
+      and(
+        eq(mcp_grants.id, id),
+        eq(mcp_grants.client_id, clientId),
+        eq(mcp_grants.resource, MCP_URL),
+        eq(mcp_grants.owner_email, allowedEmail()),
+        isNull(mcp_grants.revoked_at),
+        gt(mcp_grants.expires_at, sql`now()`),
+      ),
+    )
+    .for('update', { of: mcp_grants });
+  return grant;
 }
 async function issueTokens(
   grant: { id: string; scope: string; expires_at: string },
@@ -319,14 +350,20 @@ async function issueTokens(
 ) {
   const access = randomToken(),
     refresh = randomToken();
-  await run(
-    "INSERT INTO focus_auth.mcp_tokens(token_hash,grant_id,kind,expires_at) VALUES(?,?,'access',now()+interval '1 hour'),(?,?,'refresh',?::timestamptz)",
-    tokenHash(access),
-    grant.id,
-    tokenHash(refresh),
-    grant.id,
-    grant.expires_at,
-  );
+  await db.insert(mcp_tokens).values([
+    {
+      token_hash: tokenHash(access),
+      grant_id: grant.id,
+      kind: 'access',
+      expires_at: sql`now() + interval '1 hour'`,
+    },
+    {
+      token_hash: tokenHash(refresh),
+      grant_id: grant.id,
+      kind: 'refresh',
+      expires_at: grant.expires_at,
+    },
+  ]);
   return {
     access_token: access,
     token_type: 'Bearer',
@@ -348,12 +385,19 @@ export async function exchangeMcpToken(input: OAuthInput) {
           'Authorization code is invalid or expired.',
           'invalid_grant',
         );
-      const code = await one(
-        'SELECT * FROM focus_auth.mcp_codes WHERE token_hash=? AND expires_at>now() FOR UPDATE',
-        tokenHash(input.code),
-      );
+      const [code] = await db
+        .select()
+        .from(mcp_codes)
+        .where(
+          and(
+            eq(mcp_codes.token_hash, tokenHash(input.code)),
+            gt(mcp_codes.expires_at, sql`now()`),
+          ),
+        )
+        .for('update');
       const grant = code && (await liveGrant(code.grant_id, input.client_id));
       if (
+        !code ||
         !grant ||
         code.redirect_uri !== input.redirect_uri ||
         !/^[A-Za-z0-9._~-]{43,128}$/.test(input.code_verifier || '') ||
@@ -366,27 +410,32 @@ export async function exchangeMcpToken(input: OAuthInput) {
           'Authorization code or PKCE verifier is invalid.',
           'invalid_grant',
         );
-      await run(
-        'DELETE FROM focus_auth.mcp_codes WHERE token_hash=?',
-        tokenHash(input.code),
-      );
+      await db
+        .delete(mcp_codes)
+        .where(eq(mcp_codes.token_hash, tokenHash(input.code)));
       return issueTokens(grant);
     }
     if (input.grant_type === 'refresh_token') {
       if (!/^[A-Za-z0-9_-]{43}$/.test(input.refresh_token || ''))
         throw error('Refresh token is invalid.', 'invalid_grant');
-      const token = await one(
-        "SELECT * FROM focus_auth.mcp_tokens WHERE token_hash=? AND kind='refresh' FOR UPDATE",
-        tokenHash(input.refresh_token),
-      );
+      const [token] = await db
+        .select()
+        .from(mcp_tokens)
+        .where(
+          and(
+            eq(mcp_tokens.token_hash, tokenHash(input.refresh_token)),
+            eq(mcp_tokens.kind, 'refresh'),
+          ),
+        )
+        .for('update');
       const grant = token && (await liveGrant(token.grant_id, input.client_id));
-      if (!grant || token.expires_at <= new Date().toISOString())
+      if (!token || !grant || token.expires_at <= new Date().toISOString())
         throw error('Refresh token is invalid or expired.', 'invalid_grant');
       if (token.used_at) {
-        await run(
-          'UPDATE focus_auth.mcp_grants SET revoked_at=now() WHERE id=?',
-          grant.id,
-        );
+        await db
+          .update(mcp_grants)
+          .set({ revoked_at: sql`now()` })
+          .where(eq(mcp_grants.id, grant.id));
         return { replay: true };
       }
       if (input.scope && scopes(input.scope) !== grant.scope)
@@ -394,10 +443,10 @@ export async function exchangeMcpToken(input: OAuthInput) {
           'Refresh must preserve the granted scope.',
           'invalid_scope',
         );
-      await run(
-        'UPDATE focus_auth.mcp_tokens SET used_at=now() WHERE token_hash=?',
-        tokenHash(input.refresh_token),
-      );
+      await db
+        .update(mcp_tokens)
+        .set({ used_at: sql`now()` })
+        .where(eq(mcp_tokens.token_hash, tokenHash(input.refresh_token)));
       return issueTokens(grant);
     }
     throw error(
