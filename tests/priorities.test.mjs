@@ -7,7 +7,7 @@ process.env.XIN_AGENT_MODE='cloud';
 const {all,one,run,upsertSource,stamp}=await import('../lib/db.mjs');
 const {prioritiesState,savePriority,priorityDetail,reorderPriorities,addPriorityUpdate,queuePriorityContext,decidePrioritySuggestion,readPriorities}=await import('../lib/priorities.ts');
 const {takePendingImportReview,saveResult,validateResult}=await import('../lib/agent.mjs');
-const {readReviewBatch}=await import('../lib/review-batches.mjs');
+const {readReviewBatch}=await import('../lib/review-batches.ts');
 const {runCloudAgent}=await import('../lib/cloud-agent.mjs');
 const empty={brief:'Reviewed the assigned meeting.',findings:[],proposals:[],drafts:[],questions:[],coverage_note:'Only cited source pages.'};
 const meeting=async(id='atlas',body='Atlas needs a pricing decision before the pilot.',occurred_at=stamp())=>{const {id:sourceId}=await upsertSource({provider:'granola',external_id:id,title:'Atlas pilot discussion',body,occurred_at,coverage:'summary'});return one('SELECT * FROM sources WHERE id=?',sourceId);};
