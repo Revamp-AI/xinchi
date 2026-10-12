@@ -277,7 +277,7 @@ test('priorities keep manual order, enrich from meetings, and connect the overvi
     .getByRole('menuitem', { name: 'Move stack earlier', exact: true })
     .click();
   await expect
-    .poll(async () => (await prioritiesState()).stacks[0].id)
+    .poll(async () => (await prioritiesState()).stacks[0]?.id)
     .toBe('product');
   await page.reload();
   await expect(page.locator('.priority-stack').first()).toHaveAttribute(

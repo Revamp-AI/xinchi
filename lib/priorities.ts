@@ -1,15 +1,15 @@
 import { z } from 'zod';
+import { and, desc, eq, getColumns, sql } from 'drizzle-orm';
+import { db, transaction, lockWorkspace } from './postgres.ts';
+import { all, one, run, uid, hash, stamp, upsertSource } from './db.mjs';
 import {
-  all,
-  one,
-  run,
-  transaction,
-  lockWorkspace,
-  uid,
-  hash,
-  stamp,
-  upsertSource,
-} from './db.mjs';
+  items,
+  priorities,
+  priority_order,
+  priority_stacks,
+  priority_suggestions,
+  priority_updates,
+} from './schema/index.ts';
 import type { AgentResult } from './agent.mjs';
 
 type AgentOutput = z.output<typeof AgentResult>;
@@ -18,7 +18,6 @@ type PriorityUpdate = Pick<
   'priority_id' | 'summary' | 'next_decision' | 'suggested_rank' | 'citations'
 >;
 type PrioritySuggestion = AgentOutput['priority_suggestions'][number];
-
 export const stackId = z.enum(['deal-flow', 'product', 'go-to-market']);
 export const priorityFields = {
   stack_id: stackId,
@@ -38,30 +37,59 @@ export const priorityInput = z
   })
   .extend(z.object(priorityFields).partial().shape)
   .strict();
+
+const stacksInOrder = () =>
+  db
+    .select()
+    .from(priority_stacks)
+    .orderBy(priority_stacks.position, priority_stacks.id);
+async function orderVersion({ lock = false } = {}) {
+  const query = db
+    .select({ version: priority_order.version })
+    .from(priority_order)
+    .where(eq(priority_order.id, 1));
+  const [order] = await (lock ? query.for('update') : query);
+  return order!.version;
+}
 export async function prioritiesState() {
-  const [stacks, items, suggestions, order] = await Promise.all([
-    all('SELECT * FROM priority_stacks ORDER BY position,id'),
-    all(
-      "SELECT p.*,COALESCE((SELECT count(*) FROM priority_suggestions s WHERE s.priority_id=p.id AND s.status='pending'),0) suggestion_count FROM priorities p ORDER BY p.position,p.id",
-    ),
-    all(
-      "SELECT * FROM priority_suggestions WHERE status='pending' ORDER BY created_at DESC LIMIT 100",
-    ),
-    one('SELECT version FROM priority_order WHERE id=1'),
+  const [stacks, items, suggestions, order_version] = await Promise.all([
+    stacksInOrder(),
+    db
+      .select({
+        ...getColumns(priorities),
+        suggestion_count: db.$count(
+          priority_suggestions,
+          and(
+            eq(priority_suggestions.priority_id, priorities.id),
+            eq(priority_suggestions.status, 'pending'),
+          ),
+        ),
+      })
+      .from(priorities)
+      .orderBy(priorities.position, priorities.id),
+    db
+      .select()
+      .from(priority_suggestions)
+      .where(eq(priority_suggestions.status, 'pending'))
+      .orderBy(desc(priority_suggestions.created_at))
+      .limit(100),
+    orderVersion(),
   ]);
-  return { stacks, items, suggestions, order_version: order.version };
+  return { stacks, items, suggestions, order_version };
 }
 export async function readPriorities({
   offset = 0,
 }: { offset?: unknown } = {}) {
-  const stacks = await all(
-    'SELECT * FROM priority_stacks ORDER BY position,id',
-  );
+  const stacks = await stacksInOrder();
   const start = Math.max(0, Number(offset) || 0);
-  const rows = await all(
-    "SELECT p.* FROM priorities p JOIN priority_stacks s ON s.id=p.stack_id WHERE p.status='active' ORDER BY s.position,p.position,p.id LIMIT 21 OFFSET ?",
-    start,
-  );
+  const rows = await db
+    .select(getColumns(priorities))
+    .from(priorities)
+    .innerJoin(priority_stacks, eq(priority_stacks.id, priorities.stack_id))
+    .where(eq(priorities.status, 'active'))
+    .orderBy(priority_stacks.position, priorities.position, priorities.id)
+    .limit(21)
+    .offset(start);
   const items = [];
   let size = 0;
   for (const row of rows.slice(0, 20)) {
@@ -75,9 +103,20 @@ export async function readPriorities({
     items.push(p);
     size += n;
   }
-  const pending_suggestions = await all(
-    "SELECT priority_id,left(payload->>'title',200) title,left(payload->>'next_decision',500) next_decision,payload->>'suggested_rank' suggested_rank FROM priority_suggestions WHERE status='pending' ORDER BY created_at DESC LIMIT 20",
-  );
+  const payload = priority_suggestions.payload;
+  const pending_suggestions = await db
+    .select({
+      priority_id: priority_suggestions.priority_id,
+      title: sql<string | null>`left(${payload}->>'title', 200)`,
+      next_decision: sql<
+        string | null
+      >`left(${payload}->>'next_decision', 500)`,
+      suggested_rank: sql<string | null>`${payload}->>'suggested_rank'`,
+    })
+    .from(priority_suggestions)
+    .where(eq(priority_suggestions.status, 'pending'))
+    .orderBy(desc(priority_suggestions.created_at))
+    .limit(20);
   return {
     stacks,
     items,
@@ -89,20 +128,36 @@ export async function readPriorities({
   };
 }
 export async function priorityDetail(id: string) {
-  const item = await one('SELECT * FROM priorities WHERE id=?', id);
+  const [item] = await db
+    .select()
+    .from(priorities)
+    .where(eq(priorities.id, id));
   if (!item) throw Error('Priority not found.');
   return {
     ...item,
-    updates: await all(
-      'SELECT * FROM priority_updates WHERE priority_id=? ORDER BY occurred_at DESC,created_at DESC LIMIT 40',
-      id,
-    ),
-    suggestions: await all(
-      "SELECT * FROM priority_suggestions WHERE priority_id=? AND status='pending' ORDER BY created_at DESC",
-      id,
-    ),
+    updates: await db
+      .select()
+      .from(priority_updates)
+      .where(eq(priority_updates.priority_id, id))
+      .orderBy(
+        desc(priority_updates.occurred_at),
+        desc(priority_updates.created_at),
+      )
+      .limit(40),
+    suggestions: await db
+      .select()
+      .from(priority_suggestions)
+      .where(
+        and(
+          eq(priority_suggestions.priority_id, id),
+          eq(priority_suggestions.status, 'pending'),
+        ),
+      )
+      .orderBy(desc(priority_suggestions.created_at)),
     commitment: item.commitment_id
-      ? await one('SELECT * FROM items WHERE id=?', item.commitment_id)
+      ? (
+          await db.select().from(items).where(eq(items.id, item.commitment_id))
+        )[0]
       : null,
   };
 }
