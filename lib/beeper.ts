@@ -1,16 +1,16 @@
 import { randomBytes } from 'node:crypto';
-import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import {
-  all,
-  one,
-  run,
-  transaction,
-  lockWorkspace,
-  uid,
-  stamp,
-  hash,
-} from './db.mjs';
-import { db } from './postgres.ts';
+  and,
+  desc,
+  eq,
+  getColumns,
+  gt,
+  inArray,
+  isNull,
+  sql,
+} from 'drizzle-orm';
+import { uid, stamp, hash } from './db.mjs';
+import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   beeper_devices,
   beeper_pairings,
@@ -470,11 +470,21 @@ export async function appendBeeperBatch(
   return transaction(async () => {
     await lockWorkspace();
     const d = await deviceFor(id),
-      u = await one(
-        'SELECT u.*,s.state,s.started_at FROM beeper_uploads u JOIN sync_runs s ON s.id=u.run_id WHERE u.run_id=? AND u.device_id=? FOR UPDATE',
-        run_id,
-        id,
-      );
+      [u] = await db
+        .select({
+          ...getColumns(beeper_uploads),
+          state: sync_runs.state,
+          started_at: sync_runs.started_at,
+        })
+        .from(beeper_uploads)
+        .innerJoin(sync_runs, eq(sync_runs.id, beeper_uploads.run_id))
+        .where(
+          and(
+            eq(beeper_uploads.run_id, run_id),
+            eq(beeper_uploads.device_id, id),
+          ),
+        )
+        .for('update');
     if (!u) fail('This import is unavailable.');
     if (part === u.part_count - 1 && digest === u.last_part_hash)
       return { part, received: u.record_count };
@@ -494,30 +504,33 @@ export async function appendBeeperBatch(
       if (age > 91 * 86400000 || age < -300000)
         fail('Messages must be within the selected 90-day window.');
     }
-    await run(
-      'INSERT INTO import_records(run_id,ordinal,payload) SELECT ?,?+ordinality-1,value FROM jsonb_array_elements(?::jsonb) WITH ORDINALITY AS records(value,ordinality)',
-      run_id,
-      u.record_count,
-      JSON.stringify(normalized),
-    );
-    await run(
-      'UPDATE beeper_uploads SET part_count=part_count+1,record_count=record_count+?,last_part_hash=? WHERE run_id=?',
-      normalized.length,
-      digest,
-      run_id,
-    );
-    await run(
-      'UPDATE sync_runs SET updated_at=?,message=? WHERE id=?',
-      stamp(),
-      u.record_count +
-        normalized.length +
-        ' messages received; saved on the server',
-      run_id,
-    );
-    await run(
-      "UPDATE focus_auth.beeper_devices SET last_seen=now(),issue='' WHERE id=?",
-      id,
-    );
+    await db
+      .insert(import_records)
+      .select(
+        sql`SELECT ${run_id}, ${u.record_count} + ordinality - 1, value FROM jsonb_array_elements(${JSON.stringify(normalized)}::jsonb) WITH ORDINALITY AS records(value, ordinality)`,
+      );
+    await db
+      .update(beeper_uploads)
+      .set({
+        part_count: sql`${beeper_uploads.part_count} + 1`,
+        record_count: sql`${beeper_uploads.record_count} + ${normalized.length}`,
+        last_part_hash: digest,
+      })
+      .where(eq(beeper_uploads.run_id, run_id));
+    await db
+      .update(sync_runs)
+      .set({
+        updated_at: stamp(),
+        message:
+          u.record_count +
+          normalized.length +
+          ' messages received; saved on the server',
+      })
+      .where(eq(sync_runs.id, run_id));
+    await db
+      .update(beeper_devices)
+      .set({ last_seen: sql`now()`, issue: '' })
+      .where(eq(beeper_devices.id, id));
     return { part, received: u.record_count + normalized.length };
   });
 }
@@ -528,20 +541,31 @@ export async function finishBeeperUpload(
   return transaction(async () => {
     await lockWorkspace();
     await deviceFor(id);
-    const u = await one(
-      'SELECT * FROM beeper_uploads WHERE run_id=? AND device_id=? FOR UPDATE',
-      run_id,
-      id,
-    );
+    const [u] = await db
+      .select()
+      .from(beeper_uploads)
+      .where(
+        and(
+          eq(beeper_uploads.run_id, run_id),
+          eq(beeper_uploads.device_id, id),
+        ),
+      )
+      .for('update');
     if (!u || parts !== u.part_count)
       fail('Upload is incomplete. Resume the companion.');
     if (!u.sealed) {
-      await run('UPDATE beeper_uploads SET sealed=true WHERE run_id=?', run_id);
-      await run(
-        "UPDATE sync_runs SET state='queued',message='Upload saved; processing conversations',updated_at=? WHERE id=? AND state='uploading'",
-        stamp(),
-        run_id,
-      );
+      await db
+        .update(beeper_uploads)
+        .set({ sealed: true })
+        .where(eq(beeper_uploads.run_id, run_id));
+      await db
+        .update(sync_runs)
+        .set({
+          state: 'queued',
+          message: 'Upload saved; processing conversations',
+          updated_at: stamp(),
+        })
+        .where(and(eq(sync_runs.id, run_id), eq(sync_runs.state, 'uploading')));
     }
     return { id: run_id, queued: true };
   });
@@ -550,19 +574,23 @@ export async function advanceBeeper(
   id: string,
   cursor: { next?: number } | null | undefined,
 ) {
-  const u = await one(
-    'SELECT record_count,sealed FROM beeper_uploads WHERE run_id=?',
-    id,
-  );
+  const [u] = await db
+    .select({
+      record_count: beeper_uploads.record_count,
+      sealed: beeper_uploads.sealed,
+    })
+    .from(beeper_uploads)
+    .where(eq(beeper_uploads.run_id, id));
   if (!u?.sealed) throw Error('Beeper upload is not complete.');
   const next = cursor?.next || 0;
   if (next >= u.record_count)
     return { cursor: { next }, records: [], complete: true };
-  const r = await one(
-    'SELECT payload FROM import_records WHERE run_id=? AND ordinal=?',
-    id,
-    next,
-  );
+  const [r] = await db
+    .select({ payload: import_records.payload })
+    .from(import_records)
+    .where(
+      and(eq(import_records.run_id, id), eq(import_records.ordinal, next)),
+    );
   if (!r) throw Error('Beeper staging record is missing.');
   return {
     cursor: { next: next + 1 },
