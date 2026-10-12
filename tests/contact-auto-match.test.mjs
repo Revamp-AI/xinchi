@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {one,run,setSetting,uid} from '../lib/db.mjs';
 import {saveContact,contactDetail} from '../lib/contacts.mjs';
 import {parseLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.ts';
-import {previewEmployerMatches,runAutoContactMatching,setAutoMatchEnabled,autoMatchStatus} from '../lib/contact-auto-match.mjs';
+import {previewEmployerMatches,runAutoContactMatching,setAutoMatchEnabled,autoMatchStatus} from '../lib/contact-auto-match.ts';
 import {undoMerge,keepSeparate} from '../lib/contact-identity.mjs';
 import {companyKey,corporateDomain,plausibleEmployerDomain,publicIPv4,employerWebsiteUrl,websiteCompanyEvidence} from '../lib/company-domain.mjs';
 
