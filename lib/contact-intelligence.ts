@@ -14,7 +14,6 @@ import {
   sql,
 } from 'drizzle-orm';
 import {
-  run,
   transaction,
   lockWorkspace,
   getSetting as readSetting,
@@ -249,10 +248,10 @@ export async function configureContactIntelligence(enabled: unknown) {
 export async function dismissContactInsight(id: string) {
   await transaction(async () => {
     await lockWorkspace();
-    await run(
-      'UPDATE contact_insights SET dismissed=true WHERE contact_id=?',
-      id,
-    );
+    await db
+      .update(contact_insights)
+      .set({ dismissed: true })
+      .where(eq(contact_insights.contact_id, id));
   });
   return { saved: true };
 }
@@ -510,19 +509,21 @@ export async function runContactIntelligence({
       (!force && Date.parse(state.next_run || '') > Date.now())
     )
       return false;
-    await run(
-      "UPDATE contact_analysis_runs SET state='interrupted',finished_at=now(),error='Interrupted; unchanged work will retry.' WHERE state='running'",
-    );
+    await db
+      .update(contact_analysis_runs)
+      .set({
+        state: 'interrupted',
+        finished_at: sql`now()`,
+        error: 'Interrupted; unchanged work will retry.',
+      })
+      .where(eq(contact_analysis_runs.state, 'running'));
     await setSetting(STATE, {
       ...state,
       enabled: true,
       lease: id,
       lease_until: new Date(Date.now() + 180000).toISOString(),
     });
-    await run(
-      "INSERT INTO contact_analysis_runs(id,state) VALUES(?,'running')",
-      id,
-    );
+    await db.insert(contact_analysis_runs).values({ id, state: 'running' });
     return true;
   });
   if (!claimed) return { skipped: true };
@@ -590,24 +591,41 @@ export async function runContactIntelligence({
         }
         const result =
           results.find((r) => r.contact_id === contact.id) || empty(contact);
-        await run(
-          `INSERT INTO contact_insights(contact_id,input_hash,result,model,run_id) VALUES(?,?,?::jsonb,?,?) ON CONFLICT(contact_id) DO UPDATE SET input_hash=excluded.input_hash,result=excluded.result,model=excluded.model,run_id=excluded.run_id,reviewed_at=now()`,
-          contact.id,
-          contact.input_hash,
-          JSON.stringify(result),
-          batch.some((c) => c.id === contact.id) ? generated.model || '' : '',
-          id,
-        );
+        await db
+          .insert(contact_insights)
+          .values({
+            contact_id: contact.id,
+            input_hash: contact.input_hash,
+            result,
+            model: batch.some((c) => c.id === contact.id)
+              ? generated.model || ''
+              : '',
+            run_id: id,
+          })
+          .onConflictDoUpdate({
+            target: contact_insights.contact_id,
+            set: {
+              input_hash: sql`excluded.input_hash`,
+              result: sql`excluded.result`,
+              model: sql`excluded.model`,
+              run_id: sql`excluded.run_id`,
+              reviewed_at: sql`now()`,
+            },
+          });
         reviewed++;
       }
-      await run(
-        "UPDATE contact_analysis_runs SET state='complete',model=?,reviewed=?,skipped=?,usage=?::jsonb,finished_at=now() WHERE id=?",
-        generated.model || '',
-        reviewed,
-        skipped,
-        JSON.stringify(generated.usage || null),
-        id,
-      );
+      await db
+        .update(contact_analysis_runs)
+        .set({
+          state: 'complete',
+          model: generated.model || '',
+          reviewed,
+          skipped,
+          // Without usage the column holds JSON null, not SQL NULL.
+          usage: sql`${JSON.stringify(generated.usage || null)}::jsonb`,
+          finished_at: sql`now()`,
+        })
+        .where(eq(contact_analysis_runs.id, id));
       await setSetting(STATE, {
         ...state,
         lease: '',
@@ -639,11 +657,10 @@ export async function runContactIntelligence({
     });
     await transaction(async () => {
       await lockWorkspace();
-      await run(
-        "UPDATE contact_analysis_runs SET state='failed',finished_at=now(),error=? WHERE id=?",
-        message,
-        id,
-      );
+      await db
+        .update(contact_analysis_runs)
+        .set({ state: 'failed', finished_at: sql`now()`, error: message })
+        .where(eq(contact_analysis_runs.id, id));
       const state = await getSetting<IntelligenceState>(STATE, {});
       if (state.lease === id)
         await setSetting(STATE, {
