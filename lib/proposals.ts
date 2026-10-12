@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { and, desc, eq, exists, inArray, sql } from 'drizzle-orm';
 import { calendarGranted } from './calendar.ts';
 import { secrets } from './secret-store.ts';
 import {
@@ -13,6 +14,14 @@ import {
   transaction,
   lockWorkspace,
 } from './db.mjs';
+import { db } from './postgres.ts';
+import {
+  jobs,
+  proposal_review_batches,
+  proposals,
+  source_versions,
+  sources,
+} from './schema/index.ts';
 import type { AgentResult } from './agent.mjs';
 
 type AgentOutput = z.output<typeof AgentResult>;
@@ -25,6 +34,9 @@ export const SHORTLIST_LIMIT = 10;
 const open = "('pending','deferred')";
 const due =
   "(reviewed_at IS NULL OR reviewed_at<now()-interval '1 day') AND (review_attempted_at IS NULL OR review_attempted_at<now()-interval '1 hour')";
+const isOpen = () => inArray(proposals.status, ['pending', 'deferred']);
+const reviewDue = () =>
+  sql`(${proposals.reviewed_at} IS NULL OR ${proposals.reviewed_at} < now() - interval '1 day') AND (${proposals.review_attempted_at} IS NULL OR ${proposals.review_attempted_at} < now() - interval '1 hour')`;
 export function proposalScore(
   p: { qualification?: Qualification | null },
   now = Date.now(),
@@ -53,18 +65,28 @@ export async function validateQualification(p: Proposal) {
     throw Error(
       'A commitment needs an exact ownership excerpt in its citations.',
     );
-  const source = await one(
-    'SELECT s.provider,s.coverage,v.normalized_body body FROM source_versions v JOIN sources s ON s.id=v.source_id WHERE v.id=? AND s.id=?',
-    c.source_version_id,
-    c.source_id,
-  );
+  const [source] = await db
+    .select({
+      provider: sources.provider,
+      coverage: sources.coverage,
+      body: source_versions.normalized_body,
+    })
+    .from(source_versions)
+    .innerJoin(sources, eq(sources.id, source_versions.source_id))
+    .where(
+      and(
+        eq(source_versions.id, c.source_version_id),
+        eq(sources.id, c.source_id),
+      ),
+    );
   if (q.basis === 'verbal_promise') {
     const transcript = source?.body
       ?.split(/\n?Transcript\n/)
       .slice(1)
       .join('\nTranscript\n');
     if (
-      !['granola', 'fireflies'].includes(source?.provider) ||
+      !source ||
+      !['granola', 'fireflies'].includes(source.provider) ||
       !transcript?.includes(q.commitment_quote)
     )
       throw Error(
@@ -73,7 +95,7 @@ export async function validateQualification(p: Proposal) {
   }
   if (
     q.basis === 'written_promise' &&
-    !['gmail', 'beeper', 'manual'].includes(source?.provider)
+    (!source || !['gmail', 'beeper', 'manual'].includes(source.provider))
   )
     throw Error('A written promise needs a message or owner note.');
   if (q.due_date) {
@@ -87,11 +109,20 @@ export async function validateQualification(p: Proposal) {
     if (q.deadline_quote.length < 8 || !deadline)
       throw Error('A suggested deadline needs an exact cited date basis.');
     if (q.deadline_source_id.startsWith('calendar:')) {
-      const event = await one(
-        'SELECT s.content_hash,v.content_hash cited_hash,v.raw_json FROM sources s JOIN source_versions v ON v.source_id=s.id WHERE s.id=? AND v.id=?',
-        q.deadline_source_id,
-        deadline.source_version_id,
-      );
+      const [event] = await db
+        .select({
+          content_hash: sources.content_hash,
+          cited_hash: source_versions.content_hash,
+          raw_json: source_versions.raw_json,
+        })
+        .from(sources)
+        .innerJoin(source_versions, eq(source_versions.source_id, sources.id))
+        .where(
+          and(
+            eq(sources.id, q.deadline_source_id),
+            eq(source_versions.id, deadline.source_version_id),
+          ),
+        );
       const raw = event ? JSON.parse(event.raw_json) : null;
       const sync = await getSetting('calendar_last_sync');
       if (
@@ -102,7 +133,7 @@ export async function validateQualification(p: Proposal) {
         throw Error('Calendar checkpoints require a fresh calendar sync.');
       if (
         !raw ||
-        event.content_hash !== event.cited_hash ||
+        event!.content_hash !== event!.cited_hash ||
         ['cancelled', 'tentative'].includes(raw.status) ||
         raw.attendees?.some(
           (a: { self?: boolean; responseStatus: string }) =>
@@ -334,31 +365,38 @@ export async function readProposals(
   jobId?: string,
 ) {
   const start = Math.max(0, Number(offset) || 0);
-  const args: unknown[] = [],
-    where: string[] = [];
-  if (status === 'assigned') {
-    where.push(
-      'EXISTS(SELECT 1 FROM proposal_review_batches b WHERE b.proposal_id=p.id AND b.job_id=?)',
-    );
-    args.push(jobId || '');
-  } else if (status === 'open') where.push(`p.status IN ${open}`);
-  else {
-    where.push('p.status=?');
-    args.push(status);
-  }
-  if (query) {
-    where.push(
-      "to_tsvector('simple',p.payload::jsonb->>'title') @@ plainto_tsquery('simple',?)",
-    );
-    args.push(query);
-  }
-  const rows = await all(
-    'SELECT p.* FROM proposals p WHERE ' +
-      where.join(' AND ') +
-      ' ORDER BY p.priority_score DESC,p.created_at DESC,p.id LIMIT 11 OFFSET ?',
-    ...args,
-    start,
-  );
+  const rows = await db
+    .select()
+    .from(proposals)
+    .where(
+      and(
+        status === 'assigned'
+          ? exists(
+              db
+                .select({ one: sql`1` })
+                .from(proposal_review_batches)
+                .where(
+                  and(
+                    eq(proposal_review_batches.proposal_id, proposals.id),
+                    eq(proposal_review_batches.job_id, jobId || ''),
+                  ),
+                ),
+            )
+          : status === 'open'
+            ? isOpen()
+            : eq(proposals.status, status),
+        query
+          ? sql`to_tsvector('simple', ${proposals.payload}::jsonb->>'title') @@ plainto_tsquery('simple', ${query})`
+          : undefined,
+      ),
+    )
+    .orderBy(
+      desc(proposals.priority_score),
+      desc(proposals.created_at),
+      proposals.id,
+    )
+    .limit(11)
+    .offset(start);
   return {
     records: rows
       .slice(0, 10)
@@ -407,38 +445,57 @@ export async function completeProposalReview(
   }
 }
 export async function maintenanceDue() {
-  const last = await one(
-    "SELECT status,updated_at FROM jobs WHERE kind='backlog_review' ORDER BY created_at DESC LIMIT 1",
-  );
+  const [last] = await db
+    .select({ status: jobs.status, updated_at: jobs.updated_at })
+    .from(jobs)
+    .where(eq(jobs.kind, 'backlog_review'))
+    .orderBy(desc(jobs.created_at))
+    .limit(1);
   if (
     last?.status === 'failed' &&
     Date.now() - Date.parse(last.updated_at) < 3600000
   )
     return false;
-  return Boolean(
-    await one(
-      `SELECT id FROM proposals WHERE status IN ${open} AND ${due} LIMIT 1`,
-    ),
-  );
+  const [stale] = await db
+    .select({ id: proposals.id })
+    .from(proposals)
+    .where(and(isOpen(), reviewDue()))
+    .limit(1);
+  return Boolean(stale);
 }
 export async function readProposalEvidence(id: string) {
-  const row = await one('SELECT payload FROM proposals WHERE id=?', id);
+  const [row] = await db
+    .select({ payload: proposals.payload })
+    .from(proposals)
+    .where(eq(proposals.id, id));
   if (!row) throw Error('Proposal not found.');
-  const sources = [];
+  const windows = [];
   let remaining = 18000;
   for (const c of JSON.parse(row.payload).citations.slice(0, 6)) {
-    const s = await one(
-      'SELECT s.title,s.provider,s.content_hash current_hash,v.id source_version_id,v.content_hash,v.normalized_body body FROM source_versions v JOIN sources s ON s.id=v.source_id WHERE v.source_id=? AND v.id=?',
-      c.source_id,
-      c.source_version_id,
-    );
+    const [s] = await db
+      .select({
+        title: sources.title,
+        provider: sources.provider,
+        current_hash: sources.content_hash,
+        source_version_id: source_versions.id,
+        content_hash: source_versions.content_hash,
+        body: source_versions.normalized_body,
+      })
+      .from(source_versions)
+      .innerJoin(sources, eq(sources.id, source_versions.source_id))
+      .where(
+        and(
+          eq(source_versions.source_id, c.source_id),
+          eq(source_versions.id, c.source_version_id),
+        ),
+      );
     if (!s?.body) continue;
     const index = s.body.indexOf(c.quote);
     if (index < 0) continue;
     const offset = Math.max(0, index - 1000),
       end = Math.min(s.body.length, offset + Math.min(remaining, 5000));
     if (end <= index) break;
-    sources.push({
+    windows.push({
       source_id: c.source_id,
       source_version_id: s.source_version_id,
       title: s.title,
@@ -455,7 +512,7 @@ export async function readProposalEvidence(id: string) {
   }
   return {
     proposal_id: id,
-    sources,
+    sources: windows,
     note: 'Scoped windows around the cited promise, not the full sources. Search newer evidence and read current snapshots before deciding whether it remains open.',
   };
 }
