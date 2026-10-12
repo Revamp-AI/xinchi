@@ -1,5 +1,16 @@
 import { z } from 'zod';
-import { and, desc, eq, getColumns, sql } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  getColumns,
+  gte,
+  inArray,
+  ne,
+  notLike,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import { all, one, run, uid, hash, stamp, upsertSource } from './db.mjs';
 import {
@@ -9,6 +20,9 @@ import {
   priority_stacks,
   priority_suggestions,
   priority_updates,
+  review_queue,
+  source_versions,
+  sources,
 } from './schema/index.ts';
 import type { AgentResult } from './agent.mjs';
 
@@ -162,7 +176,7 @@ export async function priorityDetail(id: string) {
   };
 }
 export async function queuePriorityContext(id: string) {
-  const p = await one('SELECT * FROM priorities WHERE id=?', id);
+  const [p] = await db.select().from(priorities).where(eq(priorities.id, id));
   if (!p) throw Error('Priority not found.');
   if (p.status !== 'active') return { queued: 0 };
   const words = [
@@ -185,18 +199,72 @@ export async function queuePriorityContext(id: string) {
         ].includes(w),
     )
     .slice(0, 16);
-  const rows = await all(
-    `SELECT s.id,v.id version_id FROM sources s JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE s.body<>'' AND s.external_id NOT LIKE 'agent-request-%' AND s.external_id NOT LIKE 'contact-profile-%' AND s.external_id NOT LIKE 'linkedin-connection-%' AND s.external_id NOT LIKE 'apple-contact-%' AND (s.id=(SELECT source_id FROM items WHERE id=?) OR (s.occurred_at>=? AND s.provider IN ('granola','fireflies','gmail','beeper','manual') AND to_tsvector('simple',s.title||' '||s.body) @@ to_tsquery('simple',?))) ORDER BY s.occurred_at DESC LIMIT 12`,
-    p.commitment_id,
-    new Date(Date.now() - 30 * 86400000).toISOString(),
-    words.length ? words.join(' | ') : 'focusunlikelyemptyquery',
-  );
+  const query = words.length ? words.join(' | ') : 'focusunlikelyemptyquery';
+  const rows = await db
+    .select({ id: sources.id, version_id: source_versions.id })
+    .from(sources)
+    .innerJoin(
+      source_versions,
+      and(
+        eq(source_versions.source_id, sources.id),
+        eq(source_versions.content_hash, sources.content_hash),
+      ),
+    )
+    .where(
+      and(
+        ne(sources.body, ''),
+        notLike(sources.external_id, 'agent-request-%'),
+        notLike(sources.external_id, 'contact-profile-%'),
+        notLike(sources.external_id, 'linkedin-connection-%'),
+        notLike(sources.external_id, 'apple-contact-%'),
+        or(
+          p.commitment_id
+            ? eq(
+                sources.id,
+                db
+                  .select({ source_id: items.source_id })
+                  .from(items)
+                  .where(eq(items.id, p.commitment_id)),
+              )
+            : undefined,
+          and(
+            gte(
+              sources.occurred_at,
+              new Date(Date.now() - 30 * 86400000).toISOString(),
+            ),
+            inArray(sources.provider, [
+              'granola',
+              'fireflies',
+              'gmail',
+              'beeper',
+              'manual',
+            ]),
+            sql`to_tsvector('simple', ${sources.title} || ' ' || ${sources.body}) @@ to_tsquery('simple', ${query})`,
+          ),
+        ),
+      ),
+    )
+    .orderBy(desc(sources.occurred_at))
+    .limit(12);
+  // A source already under review keeps its version and is revisited after
+  // that review finishes; otherwise it restarts from the first page.
+  const idle = sql`${review_queue.job_id} IS NULL`;
   for (const s of rows)
-    await run(
-      `INSERT INTO review_queue(source_id,source_version_id) VALUES(?,?) ON CONFLICT(source_id) DO UPDATE SET source_version_id=CASE WHEN review_queue.job_id IS NULL THEN excluded.source_version_id ELSE review_queue.source_version_id END,revisit=review_queue.job_id IS NOT NULL,updated_at=now(),completed=false,next_offset=CASE WHEN review_queue.job_id IS NULL THEN 0 ELSE review_queue.next_offset END,attempts=CASE WHEN review_queue.job_id IS NULL THEN 0 ELSE review_queue.attempts END,retry_after=NULL`,
-      s.id,
-      s.version_id,
-    );
+    await db
+      .insert(review_queue)
+      .values({ source_id: s.id, source_version_id: s.version_id })
+      .onConflictDoUpdate({
+        target: review_queue.source_id,
+        set: {
+          source_version_id: sql`CASE WHEN ${idle} THEN excluded.source_version_id ELSE ${review_queue.source_version_id} END`,
+          revisit: sql`${review_queue.job_id} IS NOT NULL`,
+          updated_at: sql`now()`,
+          completed: false,
+          next_offset: sql`CASE WHEN ${idle} THEN 0 ELSE ${review_queue.next_offset} END`,
+          attempts: sql`CASE WHEN ${idle} THEN 0 ELSE ${review_queue.attempts} END`,
+          retry_after: null,
+        },
+      });
   return { queued: rows.length };
 }
 export async function savePriority(value: unknown) {
