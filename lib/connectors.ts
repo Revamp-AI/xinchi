@@ -30,7 +30,7 @@ import {
   REMOTE_WORKERS,
 } from './runtime.mjs';
 import { checkJobBudget } from './job-budget.mjs';
-import { beeperState } from './beeper.mjs';
+import { beeperState } from './beeper.ts';
 import {
   firefliesWindow,
   firefliesCheckpoint,

@@ -23,7 +23,7 @@ import {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUplo
 import {start,getRun} from 'workflow/api';
 import {ingestionWorkflow} from '../../../workflows/ingestion.js';
 import {resumeDurable} from '../../../lib/durable-ingestion.mjs';
-import {createBeeperPairing,revokeBeeper,requestBeeperSync} from '../../../lib/beeper.mjs';
+import {createBeeperPairing,revokeBeeper,requestBeeperSync} from '../../../lib/beeper.ts';
 import {reviewSettings,startChatGPTLogin,pollChatGPTLogin,cancelChatGPTLogin,disconnectChatGPT,testChatGPTConnection,saveReviewProvider} from '../../../lib/review-settings.mjs';
 export const maxDuration=800;
 function scheduleWork(){if(CLOUD_JOBS)after(async()=>{try{await drainCloudWork((...args)=>start(ingestionWorkflow,args),id=>getRun(id).status);}catch{console.error('Background work interrupted; pending dispatch will retry.');}});}
