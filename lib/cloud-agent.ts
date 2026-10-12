@@ -1,11 +1,14 @@
 import { ToolLoopAgent, Output, jsonSchema, tool } from 'ai';
 import type { LanguageModel } from 'ai';
+import { and, eq, sql } from 'drizzle-orm';
 import { AgentResult, saveResult, addProgress } from './agent.mjs';
 import { agentPolicy } from './agent-policy.mjs';
 import { contextTools, callContextTool } from './context-tools.ts';
 import type { ToolArgs } from './context-tools.ts';
 import { claimLease, heartbeatLease, requireLease } from './leases.ts';
-import { run, stamp, transaction } from './db.mjs';
+import { stamp } from './db.mjs';
+import { db, transaction } from './postgres.ts';
+import { jobs } from './schema/index.ts';
 import { cloudReviewFailure } from './cloud-errors.mjs';
 import { selectedReviewModel } from './review-settings.mjs';
 import { readReviewBatch } from './review-batches.ts';
@@ -35,12 +38,12 @@ export async function runCloudAgent(
   try {
     // review-settings is untyped JavaScript; it returns an AI SDK language model.
     model ||= (await selectedReviewModel()) as LanguageModel;
-    await run(
-      'UPDATE jobs SET model=? WHERE id=? AND lease_owner=?',
-      typeof model === 'string' ? model : model.modelId || 'test',
-      id,
-      token,
-    );
+    await db
+      .update(jobs)
+      .set({
+        model: typeof model === 'string' ? model : model.modelId || 'test',
+      })
+      .where(and(eq(jobs.id, id), eq(jobs.lease_owner, token)));
     await addProgress(id, 'Cloud agent is reviewing your stored context');
     const tools = Object.fromEntries(
       contextTools.map((def) => [
@@ -141,11 +144,10 @@ export async function runCloudAgent(
     });
     await transaction(async () => {
       await requireLease('jobs', id, token);
-      await run(
-        'UPDATE jobs SET usage_json=? WHERE id=?',
-        JSON.stringify(result.totalUsage),
-        id,
-      );
+      await db
+        .update(jobs)
+        .set({ usage_json: JSON.stringify(result.totalUsage) })
+        .where(eq(jobs.id, id));
     });
     if (!reads) throw Error('No context was read.');
     await saveResult(id, result.output, token);
@@ -159,13 +161,17 @@ export async function runCloudAgent(
       model: typeof model === 'string' ? model : model?.modelId || 'unselected',
       ...diagnostic,
     });
-    await run(
-      "UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND lease_until>now()",
-      message,
-      stamp(),
-      id,
-      token,
-    );
+    await db
+      .update(jobs)
+      .set({ status: 'failed', error: message, updated_at: stamp() })
+      .where(
+        and(
+          eq(jobs.id, id),
+          eq(jobs.status, 'running'),
+          eq(jobs.lease_owner, token),
+          sql`${jobs.lease_until} > now()`,
+        ),
+      );
   } finally {
     clearTimeout(timeout);
     clearInterval(beat);
