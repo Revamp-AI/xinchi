@@ -8,6 +8,11 @@ import {
 import { employerDomainCacheKey } from '../../lib/contact-auto-match.ts';
 import { websiteCompanyEvidence } from '../../lib/company-domain.mjs';
 import { importAppleContacts } from '../../lib/apple-contacts.ts';
+import { serializeAcrossProjects } from './cross-project-lock';
+
+// Automatic matching is one workspace-wide setting and run, so the other
+// project's run would pause this one or match this file's profile as well.
+serializeAcrossProjects('contact-auto-match');
 
 test('automatic employer matching can be paused, run, explained and undone', async ({
   page,
