@@ -15,6 +15,7 @@ import {
   sql,
   type SQLWrapper,
 } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   emailAddress,
   exactEmailContacts,
@@ -46,9 +47,11 @@ import {
   contact_identities,
   contact_insights,
   contact_queue,
+  contact_runs,
   contact_state_history,
   contact_states,
   contacts,
+  identity_decisions,
   identity_reviews,
   interaction_participants,
   interaction_sources,
@@ -1024,36 +1027,91 @@ export async function listContacts({
   };
 }
 export async function contactStatus() {
+  const left = alias(contacts, 'l'),
+    right = alias(contacts, 'rh'),
+    original = alias(interactions, 'd');
+  const pendingReview = and(
+    eq(identity_reviews.status, 'pending'),
+    isNull(left.merged_into),
+    isNull(right.merged_into),
+  );
   return {
     review_total: (
-      await one(
-        "SELECT count(*) n FROM identity_reviews r JOIN contacts l ON l.id=r.left_id JOIN contacts rh ON rh.id=r.right_id WHERE r.status='pending' AND l.merged_into IS NULL AND rh.merged_into IS NULL",
-      )
-    ).n,
+      await db
+        .select({ n: count() })
+        .from(identity_reviews)
+        .innerJoin(left, eq(left.id, identity_reviews.left_id))
+        .innerJoin(right, eq(right.id, identity_reviews.right_id))
+        .where(pendingReview)
+    )[0]!.n,
     duplicate_total: (
-      await one(
-        "SELECT count(*) n FROM interactions i JOIN interactions d ON d.id=i.duplicate_of WHERE i.duplicate_status='review'",
+      await db
+        .select({ n: count() })
+        .from(interactions)
+        .innerJoin(original, eq(original.id, interactions.duplicate_of))
+        .where(eq(interactions.duplicate_status, 'review'))
+    )[0]!.n,
+    queue: await db
+      .select({ state: contact_queue.state, n: count() })
+      .from(contact_queue)
+      .groupBy(contact_queue.state),
+    runs: await db
+      .select()
+      .from(contact_runs)
+      .orderBy(desc(contact_runs.started_at))
+      .limit(5),
+    reviews: await db
+      .select({
+        ...getColumns(identity_reviews),
+        left_name: left.name,
+        right_name: right.name,
+        left_email: left.email,
+        right_email: right.email,
+      })
+      .from(identity_reviews)
+      .innerJoin(left, eq(left.id, identity_reviews.left_id))
+      .innerJoin(right, eq(right.id, identity_reviews.right_id))
+      .where(pendingReview)
+      .orderBy(identity_reviews.created_at, identity_reviews.id)
+      .limit(30),
+    duplicates: await db
+      .select({
+        ...getColumns(interactions),
+        other_title: original.title,
+        other_source_id: original.source_id,
+      })
+      .from(interactions)
+      .innerJoin(original, eq(original.id, interactions.duplicate_of))
+      .where(eq(interactions.duplicate_status, 'review'))
+      .orderBy(
+        sql`${interactions.occurred_at} DESC NULLS LAST`,
+        interactions.id,
       )
-    ).n,
-    queue: await all(
-      'SELECT state,count(*) AS n FROM contact_queue GROUP BY state',
-    ),
-    runs: await all(
-      'SELECT * FROM contact_runs ORDER BY started_at DESC LIMIT 5',
-    ),
-    reviews: await all(
-      "SELECT r.*,l.name AS left_name,rh.name AS right_name,l.email AS left_email,rh.email AS right_email FROM identity_reviews r JOIN contacts l ON l.id=r.left_id JOIN contacts rh ON rh.id=r.right_id WHERE r.status='pending' AND l.merged_into IS NULL AND rh.merged_into IS NULL ORDER BY r.created_at,r.id LIMIT 30",
-    ),
-    duplicates: await all(
-      "SELECT i.*,d.title AS other_title,d.source_id AS other_source_id FROM interactions i JOIN interactions d ON d.id=i.duplicate_of WHERE i.duplicate_status='review' ORDER BY i.occurred_at DESC NULLS LAST,i.id LIMIT 30",
-    ),
-    exclusions: await all(
-      "SELECT exclusion,count(*) AS n FROM interactions WHERE exclusion<>'' GROUP BY exclusion",
-    ),
+      .limit(30),
+    exclusions: await db
+      .select({ exclusion: interactions.exclusion, n: count() })
+      .from(interactions)
+      .where(ne(interactions.exclusion, ''))
+      .groupBy(interactions.exclusion),
     last_evaluation: await getSetting('contacts_last_evaluation'),
-    decisions: await all(
-      "SELECT d.id,d.kind,d.left_id,d.right_id,d.created_at,d.before_snapshot->'automatic_match' AS automatic_match,COALESCE(jsonb_array_length(d.before_snapshot->'bulk_contact_ids')-1,1) AS merged_count,l.name AS left_name,r.name AS right_name FROM identity_decisions d JOIN contacts l ON l.id=d.left_id JOIN contacts r ON r.id=d.right_id WHERE d.undone_at IS NULL ORDER BY d.created_at DESC LIMIT 10",
-    ),
+    decisions: await db
+      .select({
+        id: identity_decisions.id,
+        kind: identity_decisions.kind,
+        left_id: identity_decisions.left_id,
+        right_id: identity_decisions.right_id,
+        created_at: identity_decisions.created_at,
+        automatic_match: sql`${identity_decisions.before_snapshot}->'automatic_match'`,
+        merged_count: sql<number>`COALESCE(jsonb_array_length(${identity_decisions.before_snapshot}->'bulk_contact_ids')-1,1)`,
+        left_name: left.name,
+        right_name: right.name,
+      })
+      .from(identity_decisions)
+      .innerJoin(left, eq(left.id, identity_decisions.left_id))
+      .innerJoin(right, eq(right.id, identity_decisions.right_id))
+      .where(isNull(identity_decisions.undone_at))
+      .orderBy(desc(identity_decisions.created_at))
+      .limit(10),
   };
 }
 export async function saveDraft(input: DraftInput) {
