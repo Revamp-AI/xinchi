@@ -1,16 +1,15 @@
-import {
-  all,
-  one,
-  run,
-  transaction,
-  lockWorkspace,
-  hash,
-  uid,
-  stamp,
-} from './db.mjs';
+import { and, eq, getColumns, isNull, sql } from 'drizzle-orm';
+import { db, run, transaction, lockWorkspace } from './postgres.ts';
+import { hash, uid, stamp } from './db.mjs';
 import { emailAddress, personalEmail } from './contact-email.mjs';
 import { linkedinProfileUrl } from './linkedin-import.mjs';
 import { evaluateContacts as evaluate } from './contacts.mjs';
+import {
+  contact_identities,
+  contacts as contactsTable,
+  source_versions,
+  sources,
+} from './schema/index.ts';
 
 // contacts.mjs is untyped JavaScript; TypeScript reads its `ids = null`
 // default as the type `null`.
@@ -131,19 +130,41 @@ export async function importAppleContacts(
     throw Error('Import at most 50 Apple contact cards per batch.');
   return transaction(async () => {
     if (apply) await lockWorkspace();
-    else await run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const contacts = await all<Contact>(
-        'SELECT * FROM contacts WHERE merged_into IS NULL',
-      ),
-      identities = await all<Identity>(
-        'SELECT i.* FROM contact_identities i JOIN contacts c ON c.id=i.contact_id WHERE c.merged_into IS NULL',
+    else
+      await db.execute(
+        sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`,
       );
+    const contacts: Contact[] = await db
+        .select()
+        .from(contactsTable)
+        .where(isNull(contactsTable.merged_into)),
+      identities: Identity[] = await db
+        .select(getColumns(contact_identities))
+        .from(contact_identities)
+        .innerJoin(
+          contactsTable,
+          eq(contactsTable.id, contact_identities.contact_id),
+        )
+        .where(isNull(contactsTable.merged_into));
+    const sourceIds = records.map((r) => 'manual:apple-contact-' + hash(r.key));
     const previous = new Map(
       (
-        await all(
-          "SELECT s.id,v.raw_json::jsonb->>'apple_contact_hash' AS hash FROM sources s JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE s.id=ANY(?::text[])",
-          records.map((r) => 'manual:apple-contact-' + hash(r.key)),
-        )
+        await db
+          .select({
+            id: sources.id,
+            hash: sql<
+              string | null
+            >`${source_versions.raw_json}::jsonb->>'apple_contact_hash'`,
+          })
+          .from(sources)
+          .innerJoin(
+            source_versions,
+            and(
+              eq(source_versions.source_id, sources.id),
+              eq(source_versions.content_hash, sources.content_hash),
+            ),
+          )
+          .where(sql`${sources.id} = ANY(${sql.param(sourceIds)}::text[])`)
       ).map((r) => [r.id, r.hash]),
     );
     const owner = String(process.env.XIN_ALLOWED_EMAIL || '').toLowerCase(),
