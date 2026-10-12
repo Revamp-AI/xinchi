@@ -13,6 +13,7 @@ import { REMOTE_WORKERS } from './runtime.mjs';
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { z } from 'zod';
+import { and, eq, isNull } from 'drizzle-orm';
 import {
   assignReviewBatch,
   completeReviewBatch,
@@ -32,6 +33,14 @@ import {
   getSetting,
   setSetting,
 } from './db.mjs';
+import { db } from './postgres.ts';
+import {
+  contacts,
+  items,
+  priorities,
+  source_versions,
+  sources,
+} from './schema/index.ts';
 const ContactDraft = z
   .object({
     contact_id: z.string(),
@@ -168,22 +177,34 @@ export async function validateResult(value: unknown) {
     ...result.priority_suggestions,
   ])
     for (const c of item.citations) {
-      const s = await one(
-        'SELECT body,content_hash FROM sources WHERE id=?',
-        c.source_id,
-      );
+      const [s] = await db
+        .select({ body: sources.body, content_hash: sources.content_hash })
+        .from(sources)
+        .where(eq(sources.id, c.source_id));
       const version = c.source_version_id
-        ? await one(
-            'SELECT * FROM source_versions WHERE id=? AND source_id=?',
-            c.source_version_id,
-            c.source_id,
-          )
+        ? (
+            await db
+              .select()
+              .from(source_versions)
+              .where(
+                and(
+                  eq(source_versions.id, c.source_version_id),
+                  eq(source_versions.source_id, c.source_id),
+                ),
+              )
+          )[0]
         : s
-          ? await one(
-              'SELECT * FROM source_versions WHERE source_id=? AND content_hash=?',
-              c.source_id,
-              s.content_hash,
-            )
+          ? (
+              await db
+                .select()
+                .from(source_versions)
+                .where(
+                  and(
+                    eq(source_versions.source_id, c.source_id),
+                    eq(source_versions.content_hash, s.content_hash),
+                  ),
+                )
+            )[0]
           : null;
       const body =
         version?.normalized_body ??
@@ -192,36 +213,68 @@ export async function validateResult(value: unknown) {
         throw Error(
           'The agent returned an unverified source excerpt. Nothing was accepted. Run it again.',
         );
-      c.source_version_id = version.id;
+      c.source_version_id = version!.id;
     }
   for (const p of result.proposals) await validateQualification(p);
   for (const p of result.proposals)
     if (
       p.existing_item_id &&
-      !(await one('SELECT id FROM items WHERE id=?', p.existing_item_id))
+      !(
+        await db
+          .select({ id: items.id })
+          .from(items)
+          .where(eq(items.id, p.existing_item_id))
+      ).length
     )
       throw Error('The agent referred to an unknown commitment.');
   for (const p of result.proposals)
     for (const id of p.contact_ids)
       if (
-        !(await one(
-          'SELECT id FROM contacts WHERE id=? AND merged_into IS NULL AND archived=false',
-          id,
-        ))
+        !(
+          await db
+            .select({ id: contacts.id })
+            .from(contacts)
+            .where(
+              and(
+                eq(contacts.id, id),
+                isNull(contacts.merged_into),
+                eq(contacts.archived, false),
+              ),
+            )
+        ).length
       )
         throw Error('The agent referred to an unknown contact.');
   for (const d of result.drafts)
     if (
-      !(await one(
-        'SELECT id FROM contacts WHERE id=? AND merged_into IS NULL AND archived=false AND do_not_contact=false',
-        d.contact_id,
-      ))
+      !(
+        await db
+          .select({ id: contacts.id })
+          .from(contacts)
+          .where(
+            and(
+              eq(contacts.id, d.contact_id),
+              isNull(contacts.merged_into),
+              eq(contacts.archived, false),
+              eq(contacts.do_not_contact, false),
+            ),
+          )
+      ).length
     )
       throw Error('This contact is unavailable for drafting.');
   for (const p of result.priority_updates)
-    if (!(await one('SELECT id FROM priorities WHERE id=?', p.priority_id)))
+    if (
+      !(
+        await db
+          .select({ id: priorities.id })
+          .from(priorities)
+          .where(eq(priorities.id, p.priority_id))
+      ).length
+    )
       throw Error('The agent referred to an unknown priority.');
-  const meta = new Map();
+  const meta = new Map<
+    string,
+    { title: string; provider: string; occurred_at: string } | undefined
+  >();
   for (const item of [
     ...result.findings,
     ...result.proposals,
@@ -236,10 +289,16 @@ export async function validateResult(value: unknown) {
         if (!meta.has(c.source_id))
           meta.set(
             c.source_id,
-            await one(
-              'SELECT title,provider,occurred_at FROM sources WHERE id=?',
-              c.source_id,
-            ),
+            (
+              await db
+                .select({
+                  title: sources.title,
+                  provider: sources.provider,
+                  occurred_at: sources.occurred_at,
+                })
+                .from(sources)
+                .where(eq(sources.id, c.source_id))
+            )[0],
           );
         return { ...c, ...meta.get(c.source_id) };
       }),
