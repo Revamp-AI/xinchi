@@ -1,11 +1,17 @@
 import { parse } from 'csv-parse/sync';
 import {
   and,
+  count,
   desc,
   eq,
+  exists,
   getColumns,
+  ilike,
+  inArray,
   isNull,
   ne,
+  notInArray,
+  or,
   sql,
   type SQLWrapper,
 } from 'drizzle-orm';
@@ -803,8 +809,11 @@ export async function contactDetail(id: string, evaluate = true) {
     profile_source_id: 'manual:contact-profile-' + id,
   };
 }
-const effectivePurpose =
-  "CASE WHEN jsonb_array_length(c.tags)>0 THEN c.tags WHEN ci.dismissed THEN '[]'::jsonb ELSE COALESCE(ci.result->'purpose_tags','[]'::jsonb) END";
+// Manual tags win; a dismissed insight contributes none.
+const effectivePurpose = sql<
+  string[]
+>`CASE WHEN jsonb_array_length(${contacts.tags})>0 THEN ${contacts.tags} WHEN ${contact_insights.dismissed} THEN '[]'::jsonb ELSE COALESCE(${contact_insights.result}->'purpose_tags','[]'::jsonb) END`;
+const segmentOf = sql<string>`COALESCE(${contact_states.state},'Unclassified')`;
 export async function listContacts({
   q = '',
   segment = '',
@@ -826,64 +835,183 @@ export async function listContacts({
   evaluate?: unknown;
 } = {}) {
   if (evaluate) await evaluateContacts();
-  const where = ['c.merged_into IS NULL', 'c.archived=?'],
-    args: unknown[] = [archived === true || archived === 'true'];
-  if (priority === true || priority === 'true') where.push('c.priority=true');
+  const archivedValue = archived === true || archived === 'true';
+  const conditions = [
+    isNull(contacts.merged_into),
+    eq(contacts.archived, archivedValue),
+  ];
+  if (priority === true || priority === 'true')
+    conditions.push(eq(contacts.priority, true));
   if (q) {
-    where.push(
-      "(c.name ILIKE ? OR c.email ILIKE ? OR c.role ILIKE ? OR EXISTS(SELECT 1 FROM affiliations a JOIN organizations o ON o.id=a.organization_id WHERE a.contact_id=c.id AND o.name ILIKE ?) OR EXISTS(SELECT 1 FROM contact_identities i WHERE i.contact_id=c.id AND (i.display_name ILIKE ? OR i.address ILIKE ? OR (i.provider='linkedin' AND i.external_key ILIKE ?))))",
+    const like = '%' + text(q, 200) + '%';
+    conditions.push(
+      or(
+        ilike(contacts.name, like),
+        ilike(contacts.email, like),
+        ilike(contacts.role, like),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(affiliations)
+            .innerJoin(
+              organizations,
+              eq(organizations.id, affiliations.organization_id),
+            )
+            .where(
+              and(
+                eq(affiliations.contact_id, contacts.id),
+                ilike(organizations.name, like),
+              ),
+            ),
+        ),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(contact_identities)
+            .where(
+              and(
+                eq(contact_identities.contact_id, contacts.id),
+                or(
+                  ilike(contact_identities.display_name, like),
+                  ilike(contact_identities.address, like),
+                  and(
+                    eq(contact_identities.provider, 'linkedin'),
+                    ilike(contact_identities.external_key, like),
+                  ),
+                ),
+              ),
+            ),
+        ),
+      )!,
     );
-    args.push(...Array(7).fill('%' + text(q, 200) + '%'));
   }
-  if (tag) {
-    where.push('(' + effectivePurpose + ') @> ?::jsonb');
-    args.push(JSON.stringify([tag]));
-  }
+  if (tag)
+    conditions.push(
+      sql`(${effectivePurpose}) @> ${JSON.stringify([tag])}::jsonb`,
+    );
   if (segment) {
     if (!SEGMENTS.includes(segment))
       throw Error('Unknown relationship segment.');
-    where.push("COALESCE(s.state,'Unclassified')=?");
-    args.push(segment);
+    conditions.push(sql`${segmentOf}=${segment}`);
   }
-  const from =
-    ' FROM contacts c LEFT JOIN contact_states s ON s.contact_id=c.id LEFT JOIN contact_insights ci ON ci.contact_id=c.id WHERE ' +
-    where.join(' AND ');
-  const counts = await all(
-    "SELECT COALESCE(s.state,'Unclassified') AS state,count(*) AS n" +
-      from +
-      " GROUP BY COALESCE(s.state,'Unclassified')",
-    ...args,
-  );
-  const select = `SELECT c.*,${effectivePurpose} AS purpose_tags,CASE WHEN jsonb_array_length(c.tags)>0 THEN 'manual' WHEN ci.dismissed THEN 'dismissed' WHEN ci.contact_id IS NULL THEN 'pending' WHEN jsonb_array_length(ci.result->'purpose_tags')>0 THEN 'agent' ELSE 'unknown' END AS purpose_origin,COALESCE(s.state,'Unclassified') AS state,s.basis,(SELECT string_agg(o.name,', ' ORDER BY o.name) FROM affiliations a JOIN organizations o ON o.id=a.organization_id WHERE a.contact_id=c.id AND a.ended_on IS NULL) AS organization,(SELECT count(*) FROM item_contacts ic JOIN items i ON i.id=ic.item_id WHERE ic.contact_id=c.id AND i.status NOT IN ('done','dropped') AND i.checkpoint<>'' AND i.checkpoint<=CURRENT_DATE::text) AS promises_due,EXISTS(SELECT 1 FROM contact_state_history h WHERE h.contact_id=c.id AND h.from_state IN ('Cooling','Dormant') AND h.to_state='Active' AND h.basis->>'reconnected'='true' AND h.changed_at>now()-interval '14 days' AND (h.basis->>'last_meaningful_at')::timestamptz>now()-interval '14 days') AS reconnected`;
-  const records = await all(
-    select +
-      from +
-      ' ORDER BY c.priority DESC,lower(c.name),c.id LIMIT ? OFFSET ?',
-    ...args,
-    Math.min(500, Math.max(1, Math.floor(Number(limit) || 500))),
-    Math.max(0, Number(offset) || 0),
-  );
-  const mapIds = await all(
-    "SELECT id FROM (SELECT c.id,row_number() OVER(PARTITION BY COALESCE(s.state,'Unclassified') ORDER BY c.priority DESC,s.basis->>'last_meaningful_at' DESC NULLS LAST,lower(c.name),c.id) rank" +
-      from +
-      ') ranked WHERE rank<=15',
-    ...args,
-  );
-  const mapRecords = mapIds.length
-    ? await all(
-        select +
-          from +
-          ' AND c.id=ANY(?::text[]) ORDER BY c.priority DESC,lower(c.name),c.id',
-        ...args,
-        mapIds.map((c) => c.id),
+  const where = and(...conditions);
+  const counts = await db
+    .select({ state: segmentOf, n: count() })
+    .from(contacts)
+    .leftJoin(contact_states, eq(contact_states.contact_id, contacts.id))
+    .leftJoin(contact_insights, eq(contact_insights.contact_id, contacts.id))
+    .where(where)
+    .groupBy(segmentOf);
+  const fields = {
+    ...getColumns(contacts),
+    purpose_tags: effectivePurpose,
+    purpose_origin: sql<string>`CASE WHEN jsonb_array_length(${contacts.tags})>0 THEN 'manual' WHEN ${contact_insights.dismissed} THEN 'dismissed' WHEN ${contact_insights.contact_id} IS NULL THEN 'pending' WHEN jsonb_array_length(${contact_insights.result}->'purpose_tags')>0 THEN 'agent' ELSE 'unknown' END`,
+    state: segmentOf,
+    basis: contact_states.basis,
+    organization: sql<string | null>`(${db
+      .select({
+        names: sql`string_agg(${organizations.name},', ' ORDER BY ${organizations.name})`,
+      })
+      .from(affiliations)
+      .innerJoin(
+        organizations,
+        eq(organizations.id, affiliations.organization_id),
       )
+      .where(
+        and(
+          eq(affiliations.contact_id, contacts.id),
+          isNull(affiliations.ended_on),
+        ),
+      )})`,
+    promises_due: sql<number>`(${db
+      .select({ n: count() })
+      .from(item_contacts)
+      .innerJoin(items, eq(items.id, item_contacts.item_id))
+      .where(
+        and(
+          eq(item_contacts.contact_id, contacts.id),
+          notInArray(items.status, ['done', 'dropped']),
+          ne(items.checkpoint, ''),
+          sql`${items.checkpoint}<=CURRENT_DATE::text`,
+        ),
+      )})`,
+    reconnected: sql<boolean>`${exists(
+      db
+        .select({ one: sql`1` })
+        .from(contact_state_history)
+        .where(
+          and(
+            eq(contact_state_history.contact_id, contacts.id),
+            inArray(contact_state_history.from_state, ['Cooling', 'Dormant']),
+            eq(contact_state_history.to_state, 'Active'),
+            sql`${contact_state_history.basis}->>'reconnected'='true'`,
+            sql`${contact_state_history.changed_at}>now()-interval '14 days'`,
+            sql`(${contact_state_history.basis}->>'last_meaningful_at')::timestamptz>now()-interval '14 days'`,
+          ),
+        ),
+    )}`,
+  };
+  const records = await db
+    .select(fields)
+    .from(contacts)
+    .leftJoin(contact_states, eq(contact_states.contact_id, contacts.id))
+    .leftJoin(contact_insights, eq(contact_insights.contact_id, contacts.id))
+    .where(where)
+    .orderBy(desc(contacts.priority), sql`lower(${contacts.name})`, contacts.id)
+    .limit(Math.min(500, Math.max(1, Math.floor(Number(limit) || 500))))
+    .offset(Math.max(0, Number(offset) || 0));
+  const ranked = db
+    .select({
+      id: contacts.id,
+      rank: sql<number>`row_number() OVER(PARTITION BY ${segmentOf} ORDER BY ${contacts.priority} DESC,${contact_states.basis}->>'last_meaningful_at' DESC NULLS LAST,lower(${contacts.name}),${contacts.id})`.as(
+        'rank',
+      ),
+    })
+    .from(contacts)
+    .leftJoin(contact_states, eq(contact_states.contact_id, contacts.id))
+    .leftJoin(contact_insights, eq(contact_insights.contact_id, contacts.id))
+    .where(where)
+    .as('ranked');
+  const mapIds = await db
+    .select({ id: ranked.id })
+    .from(ranked)
+    .where(sql`${ranked.rank}<=15`);
+  const mapRecords = mapIds.length
+    ? await db
+        .select(fields)
+        .from(contacts)
+        .leftJoin(contact_states, eq(contact_states.contact_id, contacts.id))
+        .leftJoin(
+          contact_insights,
+          eq(contact_insights.contact_id, contacts.id),
+        )
+        .where(
+          and(
+            where,
+            anyOf(
+              contacts.id,
+              mapIds.map((c) => c.id),
+            ),
+          ),
+        )
+        .orderBy(
+          desc(contacts.priority),
+          sql`lower(${contacts.name})`,
+          contacts.id,
+        )
     : [];
-  const purposes = await all(
-    'SELECT DISTINCT jsonb_array_elements_text(' +
-      effectivePurpose +
-      ') tag FROM contacts c LEFT JOIN contact_insights ci ON ci.contact_id=c.id WHERE c.merged_into IS NULL AND c.archived=? ORDER BY tag',
-    archived === true || archived === 'true',
-  );
+  const purposes = await db
+    .selectDistinct({
+      tag: sql<string>`jsonb_array_elements_text(${effectivePurpose})`.as(
+        'tag',
+      ),
+    })
+    .from(contacts)
+    .leftJoin(contact_insights, eq(contact_insights.contact_id, contacts.id))
+    .where(
+      and(isNull(contacts.merged_into), eq(contacts.archived, archivedValue)),
+    )
+    .orderBy(sql`tag`);
   return {
     records,
     map_records: mapRecords,
