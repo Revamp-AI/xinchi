@@ -156,7 +156,7 @@ test('bounded workflow handoff retains cursor and rejects late writes from the o
  assert.equal((await one('SELECT state FROM sync_runs WHERE id=?',row.id)).state,'complete');
 });
 test('automatic historical extraction fills only missing source work and keeps progress',async()=>{
- const {scheduleContactHistory}=await import('../lib/contact-jobs.mjs');
+ const {scheduleContactHistory}=await import('../lib/contact-jobs.ts');
  await run("UPDATE contact_runs SET state='complete' WHERE state IN ('queued','running')");await run("UPDATE contact_queue SET state='complete'");
  const s=await upsertSource({provider:'fireflies',external_id:'old-backfill-test',title:'Old fictional meeting',occurred_at:'2020-01-01T12:00:00Z',body:'Old fictional evidence.'});await run('DELETE FROM contact_queue WHERE source_id=?',s.id);
  const first=await scheduleContactHistory();assert.ok(first.id);assert.equal((await one('SELECT state FROM contact_queue WHERE source_id=?',s.id)).state,'pending');

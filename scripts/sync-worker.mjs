@@ -2,7 +2,7 @@ import {pathToFileURL} from 'node:url';
 import {databaseErrorCode} from '../lib/postgres.ts';
 import {run,stamp,transaction} from '../lib/db.mjs';
 import {syncProvider,clearGmailIssue,recordGmailIssue} from '../lib/connectors.ts';
-import {startContactProjection} from '../lib/contact-jobs.mjs';
+import {startContactProjection} from '../lib/contact-jobs.ts';
 import {queueImportReview} from '../lib/agent.mjs';
 import {claimLease,heartbeatLease,requireLease} from '../lib/leases.ts';
 import {closeDatabase} from '../lib/postgres.ts';

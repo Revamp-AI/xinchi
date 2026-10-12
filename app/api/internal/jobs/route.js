@@ -3,7 +3,7 @@ import {start,getRun} from 'workflow/api';
 import {ingestionWorkflow} from '../../../../workflows/ingestion.js';
 import {scheduleProviderSyncs} from '../../../../lib/scheduled-sync.ts';
 import {runAutoContactMatching} from '../../../../lib/contact-auto-match.ts';
-import {scheduleContactHistory} from '../../../../lib/contact-jobs.mjs';
+import {scheduleContactHistory} from '../../../../lib/contact-jobs.ts';
 import {runContactIntelligence} from '../../../../lib/contact-intelligence.mjs';
 import {evaluateContacts} from '../../../../lib/contacts.mjs';
 export const runtime='nodejs';

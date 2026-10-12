@@ -5,7 +5,7 @@ import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntel
 import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.mjs';
 import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.ts';
 import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,mergeReviewGroup,bulkKeepSeparate} from '../../../lib/contact-identity.mjs';
-import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.mjs';
+import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.ts';
 import {autoMatchStatus,runAutoContactMatching,setAutoMatchEnabled} from '../../../lib/contact-auto-match.ts';
 import {dashboard,searchSources,readSource,readSourceVersion,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.mjs';
 import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.mjs';
