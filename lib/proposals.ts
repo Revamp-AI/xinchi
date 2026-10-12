@@ -2,19 +2,8 @@ import type { z } from 'zod';
 import { and, desc, eq, exists, inArray, ne, or, sql } from 'drizzle-orm';
 import { calendarGranted } from './calendar.ts';
 import { secrets } from './secret-store.ts';
-import {
-  all,
-  one,
-  run,
-  uid,
-  hash,
-  stamp,
-  dateOK,
-  getSetting,
-  transaction,
-  lockWorkspace,
-} from './db.mjs';
-import { db } from './postgres.ts';
+import { uid, hash, stamp, dateOK, getSetting } from './db.mjs';
+import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   jobs,
   proposal_events,
@@ -32,9 +21,6 @@ type Reconciliation = AgentOutput['proposal_reconciliations'][number];
 type ProposalCheck = AgentOutput['proposal_checks'][number];
 
 export const SHORTLIST_LIMIT = 10;
-const open = "('pending','deferred')";
-const due =
-  "(reviewed_at IS NULL OR reviewed_at<now()-interval '1 day') AND (review_attempted_at IS NULL OR review_attempted_at<now()-interval '1 hour')";
 const isOpen = () => inArray(proposals.status, ['pending', 'deferred']);
 const reviewDue = () =>
   sql`(${proposals.reviewed_at} IS NULL OR ${proposals.reviewed_at} < now() - interval '1 day') AND (${proposals.review_attempted_at} IS NULL OR ${proposals.review_attempted_at} < now() - interval '1 hour')`;
@@ -355,12 +341,12 @@ export async function reconcileProposals(
 export async function dismissProposal(id: string) {
   return transaction(async () => {
     await lockWorkspace();
-    const changed = await run(
-      `UPDATE proposals SET status='dismissed',version=version+1 WHERE id=? AND status IN ${open}`,
-      id,
-    );
-    if (!changed.changes)
-      throw Error('Proposal not found or already resolved.');
+    const changed = await db
+      .update(proposals)
+      .set({ status: 'dismissed', version: sql`${proposals.version} + 1` })
+      .where(and(eq(proposals.id, id), isOpen()))
+      .returning({ id: proposals.id });
+    if (!changed.length) throw Error('Proposal not found or already resolved.');
     await proposalEvent(id, 'dismissed', 'user_decision');
     await rebalanceProposals();
     return { dismissed: true, id };
@@ -369,12 +355,22 @@ export async function dismissProposal(id: string) {
 export async function restoreProposal(id: string, version: number) {
   return transaction(async () => {
     await lockWorkspace();
-    const changed = await run(
-      "UPDATE proposals SET status='pending',version=version+1,reviewed_at=now() WHERE id=? AND version=? AND status='dismissed'",
-      id,
-      version,
-    );
-    if (!changed.changes)
+    const changed = await db
+      .update(proposals)
+      .set({
+        status: 'pending',
+        version: sql`${proposals.version} + 1`,
+        reviewed_at: sql`now()`,
+      })
+      .where(
+        and(
+          eq(proposals.id, id),
+          eq(proposals.version, version),
+          eq(proposals.status, 'dismissed'),
+        ),
+      )
+      .returning({ id: proposals.id });
+    if (!changed.length)
       throw Error('This suggestion changed. Reopen it before restoring.');
     await proposalEvent(id, 'restored', 'user_decision');
     await rebalanceProposals();
@@ -431,20 +427,27 @@ export async function readProposals(
   };
 }
 export async function assignProposalReview(jobId: string) {
-  const rows = await all(
-    `SELECT id,version FROM proposals WHERE status IN ${open} AND ${due} ORDER BY reviewed_at NULLS FIRST,review_attempted_at NULLS FIRST,created_at,id LIMIT 3`,
-  );
+  const rows = await db
+    .select({ id: proposals.id, version: proposals.version })
+    .from(proposals)
+    .where(and(isOpen(), reviewDue()))
+    .orderBy(
+      sql`${proposals.reviewed_at} NULLS FIRST`,
+      sql`${proposals.review_attempted_at} NULLS FIRST`,
+      proposals.created_at,
+      proposals.id,
+    )
+    .limit(3);
   for (const row of rows) {
-    await run(
-      'INSERT INTO proposal_review_batches VALUES(?,?,?)',
-      jobId,
-      row.id,
-      row.version,
-    );
-    await run(
-      'UPDATE proposals SET review_attempted_at=now() WHERE id=?',
-      row.id,
-    );
+    await db.insert(proposal_review_batches).values({
+      job_id: jobId,
+      proposal_id: row.id,
+      version: row.version,
+    });
+    await db
+      .update(proposals)
+      .set({ review_attempted_at: sql`now()` })
+      .where(eq(proposals.id, row.id));
   }
   return rows.length;
 }
@@ -453,13 +456,22 @@ export async function completeProposalReview(
   checks: ProposalCheck[] = [],
 ) {
   for (const check of checks) {
-    const updated = await run(
-      `UPDATE proposals p SET reviewed_at=now() FROM proposal_review_batches b WHERE b.job_id=? AND b.proposal_id=p.id AND b.version=p.version AND p.id=? AND p.version=? AND p.status IN ${open}`,
-      jobId,
-      check.proposal_id,
-      check.version,
-    );
-    if (updated.changes)
+    const updated = await db
+      .update(proposals)
+      .set({ reviewed_at: sql`now()` })
+      .from(proposal_review_batches)
+      .where(
+        and(
+          eq(proposal_review_batches.job_id, jobId),
+          eq(proposal_review_batches.proposal_id, proposals.id),
+          eq(proposal_review_batches.version, proposals.version),
+          eq(proposals.id, check.proposal_id),
+          eq(proposals.version, check.version),
+          isOpen(),
+        ),
+      )
+      .returning({ id: proposals.id });
+    if (updated.length)
       await proposalEvent(
         check.proposal_id,
         'reviewed',
