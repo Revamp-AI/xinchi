@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
 process.env.XIN_ALLOWED_EMAIL='owner@example.com';process.env.XIN_AGENT_MODE='cloud';process.env.XIN_SECRET_STORAGE='postgres';process.env.XIN_SECRETS_KEY=randomBytes(32).toString('base64url');
-const {firefliesWindow,firefliesCompletedSettings}=await import('../lib/fireflies-sync.mjs');
+const {firefliesWindow,firefliesCompletedSettings}=await import('../lib/fireflies-sync.ts');
 const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.mjs');
 const {startSync,syncProvider}=await import('../lib/connectors.mjs');
 const {saveSecrets}=await import('../lib/secret-store.mjs');
