@@ -6,7 +6,7 @@ import {parseLinkedinConnections,linkedinProfileUrl,previewLinkedinConnections,i
 import {one,run} from '../lib/db.mjs';
 import {saveContact,contactDetail,listContacts} from '../lib/contacts.mjs';
 import {mergeContacts,mergePreview,undoMerge} from '../lib/contact-identity.mjs';
-import {projectSource} from '../lib/contact-extraction.mjs';
+import {projectSource} from '../lib/contact-extraction.ts';
 
 const header='First Name,Last Name,URL,Email Address,Company,Position,Connected On';
 const csv=(...rows)=>'\ufeffNotes:\n"Some connections do not share their email."\n\n'+header+'\n'+rows.join('\n');

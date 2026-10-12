@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {one,run,uid} from '../lib/db.mjs';
 import {saveContact,saveDraft,contactDetail,contactStatus} from '../lib/contacts.mjs';
-import {logInteraction} from '../lib/contact-extraction.mjs';
+import {logInteraction} from '../lib/contact-extraction.ts';
 import {bulkMergePreview,mergeReviewGroup,bulkKeepSeparate,undoMerge} from '../lib/contact-identity.mjs';
 
 const person=(name,extra={})=>saveContact({name,...extra});

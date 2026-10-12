@@ -3,7 +3,7 @@ import {databaseErrorCode} from '../../../lib/postgres.ts';
 import {prioritiesState,priorityDetail,savePriority,reorderPriorities,addPriorityUpdate,decidePrioritySuggestion,queuePriorityContext} from '../../../lib/priorities.ts';
 import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntelligence,dismissContactInsight,runContactIntelligence} from '../../../lib/contact-intelligence.mjs';
 import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.mjs';
-import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.mjs';
+import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.ts';
 import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,mergeReviewGroup,bulkKeepSeparate} from '../../../lib/contact-identity.mjs';
 import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.mjs';
 import {autoMatchStatus,runAutoContactMatching,setAutoMatchEnabled} from '../../../lib/contact-auto-match.mjs';

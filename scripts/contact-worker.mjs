@@ -1,6 +1,6 @@
 import {pathToFileURL} from 'node:url';
 import {one,run,stamp,transaction} from '../lib/db.mjs';
-import {projectSource} from '../lib/contact-extraction.mjs';
+import {projectSource} from '../lib/contact-extraction.ts';
 import {claimLease,heartbeatLease,requireLease} from '../lib/leases.ts';
 import {closeDatabase} from '../lib/postgres.ts';
 import {checkJobBudget} from '../lib/job-budget.mjs';

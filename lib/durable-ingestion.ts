@@ -14,7 +14,7 @@ import {
   import_uploads,
   sync_runs,
 } from './schema/index.ts';
-import { projectSource } from './contact-extraction.mjs';
+import { projectSource } from './contact-extraction.ts';
 import { startContactProjection } from './contact-jobs.mjs';
 import { queueImportReview } from './agent.mjs';
 

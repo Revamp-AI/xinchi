@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {one,run,uid} from '../lib/db.mjs';
 import {saveContact,contactDetail} from '../lib/contacts.mjs';
 import {internationalPhone,normalizeAppleContacts,importAppleContacts} from '../lib/apple-contacts.ts';
-import {projectSource} from '../lib/contact-extraction.mjs';
+import {projectSource} from '../lib/contact-extraction.ts';
 
 const card=(key,extra={})=>({key,name:'Fictional '+key,emails:[],phones:[],urls:[],...extra});
 test('phone matching keeps international country codes and never guesses local numbers',()=>{

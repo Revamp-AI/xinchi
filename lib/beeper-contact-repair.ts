@@ -1,7 +1,7 @@
 import { and, eq, exists, getColumns, isNull, not, or, sql } from 'drizzle-orm';
 import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { db, transaction, lockWorkspace } from './postgres.ts';
-import { extractInteraction } from './contact-extraction.mjs';
+import { extractInteraction } from './contact-extraction.ts';
 import { suggestIdentityMatches } from './contacts.mjs';
 import {
   affiliations,
@@ -143,10 +143,8 @@ export async function repairBeeperContactNames({ apply = false } = {}) {
         { provider: 'beeper', coverage: c.coverage },
         raw,
         [],
-      )!.participants.find(
-        (p: { external_id?: string }) => p.external_id === c.external_key,
-      );
-      const name = person?.name.slice(0, 200);
+      )!.participants.find((p) => p.external_id === c.external_key);
+      const name = person?.name!.slice(0, 200);
       const badFallback =
         p &&
         !p.fullName &&
