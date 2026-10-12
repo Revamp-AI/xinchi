@@ -23,7 +23,7 @@ import {
   mcp_tokens,
   owner,
 } from './schema/index.ts';
-import { APP_ORIGIN, allowedEmail } from './auth.mjs';
+import { APP_ORIGIN, allowedEmail } from './auth.ts';
 
 // Untrusted OAuth request fields; each one is checked before it is used.
 type OAuthInput = Record<string, any>;

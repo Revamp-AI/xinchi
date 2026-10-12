@@ -12,7 +12,7 @@ import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../..
 import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.ts';
 import {importDocuments,importResearchArchive} from '../../../lib/imports.mjs';
 import {authMessages,gmailMessages} from '../../../lib/auth-messages.mjs';
-import {APP_ORIGIN,SESSION_COOKIE,FLOW_COOKIE,SESSION_SECONDS,checkLocalRequest,sessionFor,requireSession,readCookie,cookie,beginGoogle,finishGoogle,endSession,recordAuthEvent} from '../../../lib/auth.mjs';
+import {APP_ORIGIN,SESSION_COOKIE,FLOW_COOKIE,SESSION_SECONDS,checkLocalRequest,sessionFor,requireSession,readCookie,cookie,beginGoogle,finishGoogle,endSession,recordAuthEvent} from '../../../lib/auth.ts';
 import {buildUpdateDraft,renderUpdateDraft} from '../../../lib/update-draft.mjs';
 import {localToday} from '../../../lib/urgency.mjs';
 import {HOSTED,POSTGRES_SECRETS,CLOUD_JOBS} from '../../../lib/runtime.mjs';

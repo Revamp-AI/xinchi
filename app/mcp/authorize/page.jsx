@@ -1,5 +1,5 @@
 import { cookies } from 'next/headers';
-import { sessionFor, SESSION_COOKIE } from '../../../lib/auth.mjs';
+import { sessionFor, SESSION_COOKIE } from '../../../lib/auth.ts';
 import { validateAuthorization } from '../../../lib/mcp-auth.ts';
 import McpConsent from './screen';
 export const dynamic = 'force-dynamic';

@@ -8,7 +8,7 @@ const temp=mkdtempSync(join(tmpdir(),'xin-sqlite-test-'));process.env.XIN_DATA_D
 const {openDatabase}=await import('../lib/sqlite.mjs');
 const locked=()=>Object.assign(new Error('database is locked'),{code:'ERR_SQLITE_ERROR',errcode:5,errstr:'database is locked'});
 function fake(failures){const calls=[];return{calls,Database:class{exec(sql){calls.push(sql);if(sql.includes('journal_mode')&&failures-->0)throw locked();}}};}
-const modules=['db','auth'].map(name=>JSON.stringify(new URL('../lib/'+name+'.mjs',import.meta.url).href));
+const modules=['db.mjs','auth.ts'].map(name=>JSON.stringify(new URL('../lib/'+name,import.meta.url).href));
 const boot=()=>new Promise(resolve=>{let err='';const child=spawn(process.execPath,['--input-type=module','-e',modules.map(m=>'await import('+m+');').join('')],{env:{...process.env,XIN_DATA_DIR:join(temp,'boot'),XIN_ALLOWED_EMAIL:'owner@example.com'},stdio:['ignore','ignore','pipe']});child.stderr.on('data',d=>err+=d);child.on('exit',code=>resolve({code,err:err.trim()}));});
 test('a fresh database opens in WAL mode with the busy timeout set',()=>{
  const db=openDatabase(join(temp,'fresh.sqlite3'));
