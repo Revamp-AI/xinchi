@@ -1,6 +1,6 @@
 # Automatic commitment review
 
-Focus reviews new source pages and rechecks open suggestions daily. Hosted reviews run through the existing authenticated minute cron without an open browser. Each maintenance job receives at most ten versioned suggestions; subsequent jobs continue the remaining due backlog. A failed maintenance review backs off for an hour. Local mode drains reviews when a worker runs; it does not install an operating-system scheduler.
+Focus reviews new source pages and rechecks open suggestions daily. Hosted reviews run through the existing authenticated minute cron without an open browser. Each maintenance job receives at most three versioned suggestions; subsequent jobs continue the remaining due backlog. A failed or incomplete check backs off for an hour. Only cited updates, reconciliations or explicit evidence-backed retained checks mark a suggestion reviewed. Targeted source windows reach promises late in long transcripts without exhausting the reading budget. Local mode drains reviews when a worker runs; it does not install an operating-system scheduler.
 
 ## What reaches the shortlist
 
@@ -26,6 +26,6 @@ Review tools report connection state and freshness. An event can support a sugge
 
 ## Deployment and verification
 
-Apply migration `015_commitment_triage.sql` before deploying the code. It adds versions, priority scores, stable keys, the deferred state, review batches and event history. Existing accepted/dismissed records are preserved; overflow pending suggestions move to deferred until reviewed.
+Apply migrations `015_commitment_triage.sql` and `016_proposal_review_coverage.sql` before deploying the code. It adds versions, priority scores, stable keys, the deferred state, review batches and event history. Existing accepted/dismissed records are preserved; overflow pending suggestions move to deferred until reviewed.
 
 Regression coverage: `commitment-triage.test.mjs`, `calendar-sync.test.mjs`, `scheduled-sync.test.mjs`, Google partial-consent/auth tests, and `commitment-proposals.spec.ts`. Use only the disposable test databases and fictional credentials. Ingestion changes also require the compiled Workflow smoke test documented in [Vercel deployment](vercel.md).

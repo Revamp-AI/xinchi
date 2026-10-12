@@ -58,9 +58,9 @@ test('maintenance scheduling is exclusive, backs off failures, and resumes old s
  await saveResult(await job(),{...empty,proposals:[await proposal('daily')]});await run('TRUNCATE review_queue CASCADE');
  const runs=await Promise.all([takePendingImportReview(),takePendingImportReview()]);assert.equal(runs.filter(Boolean).length,1);
  await run("UPDATE jobs SET status='failed' WHERE id=?",runs.find(Boolean));assert.equal(await takePendingImportReview(),null);
- await run("UPDATE jobs SET updated_at=? WHERE id=?",new Date(Date.now()-2*3600000).toISOString(),runs.find(Boolean));
+ await run("UPDATE jobs SET updated_at=? WHERE id=?",new Date(Date.now()-2*3600000).toISOString(),runs.find(Boolean));await run("UPDATE proposals SET review_attempted_at=now()-interval '2 hours'");
  const next=await takePendingImportReview();assert.ok(next);await saveResult(next,empty);
- await run("UPDATE proposals SET reviewed_at=now()-interval '25 hours'");assert.ok(await takePendingImportReview());
+ await run("UPDATE proposals SET reviewed_at=now()-interval '25 hours',review_attempted_at=now()-interval '25 hours'");assert.ok(await takePendingImportReview());
 });
 test('fresh proposal versions can be updated; stale acceptance and stale pruning cannot win',async()=>{
  const p=await proposal('versioned');await saveResult(await job(),{...empty,proposals:[p]});const old=await one('SELECT * FROM proposals');
@@ -71,4 +71,18 @@ test('fresh proposal versions can be updated; stale acceptance and stale pruning
  assert.equal((await one('SELECT status FROM proposals')).status,'pending');
  const {dismissProposal,restoreProposal}=await import('../lib/proposals.mjs');await dismissProposal(old.id);const dismissed=await one('SELECT version FROM proposals');
  await restoreProposal(old.id,dismissed.version);assert.equal((await one('SELECT status FROM proposals')).status,'pending');await assert.rejects(restoreProposal(old.id,dismissed.version),/changed/);
+});
+test('an incomplete review cannot mark unchecked suggestions reviewed or immediately loop on them',async()=>{
+ for(let i=0;i<4;i++)await saveResult(await job(),{...empty,proposals:[await proposal('bounded-'+i)]});await run('TRUNCATE review_queue CASCADE');
+ const id=await takePendingImportReview();assert.equal((await all('SELECT * FROM proposal_review_batches WHERE job_id=?',id)).length,3);
+ await saveResult(id,empty);assert.equal((await one('SELECT count(*) n FROM proposals WHERE reviewed_at IS NOT NULL')).n,0);
+ const next=await takePendingImportReview();assert.ok(next);assert.equal((await all('SELECT * FROM proposal_review_batches WHERE job_id=?',next)).length,1);
+ await saveResult(next,empty);assert.equal(await takePendingImportReview(),null);
+});
+test('targeted proposal evidence includes a late transcript promise without reading the whole meeting',async()=>{
+ const p=await proposal('late');await upsertSource({provider:'granola',external_id:'meeting-late',title:'Long meeting',occurred_at:stamp(),coverage:'transcript',body:'Transcript\n'+('Earlier unrelated discussion. '.repeat(7000))+p.qualification.commitment_quote+'\nAvery: Please send the customer specification first.'});
+ await saveResult(await job(),{...empty,proposals:[p]});const row=await one('SELECT * FROM proposals');
+ const evidence=await callContextTool('read_proposal_evidence',{id:row.id});assert.ok(evidence.sources[0].body.includes(p.qualification.commitment_quote));assert.ok(evidence.sources[0].offset>100000);assert.ok(JSON.stringify(evidence).length<12000);
+ await run('TRUNCATE review_queue CASCADE');const id=await takePendingImportReview();await saveResult(id,{...empty,proposal_checks:[{proposal_id:row.id,version:row.version,explanation:'The promised output remains open; no newer completion evidence was found in the scoped search.',citations:p.citations}]});
+ assert.equal((await one('SELECT count(*) n FROM proposals WHERE reviewed_at IS NOT NULL')).n,1);assert.equal(await takePendingImportReview(),null);
 });
