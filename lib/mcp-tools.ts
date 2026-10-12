@@ -11,6 +11,8 @@ import {
   queuePriorityContext,
 } from './priorities.ts';
 import { z } from 'zod';
+import { and, desc, eq, ilike } from 'drizzle-orm';
+import { db } from './postgres.ts';
 import {
   all,
   one,
@@ -69,6 +71,15 @@ import { stripMarks } from './marks.mjs';
 import { APP_ORIGIN, CLOUD_JOBS } from './runtime.mjs';
 import { MCP_URL } from './mcp-auth.ts';
 import { allowedEmail } from './auth.ts';
+import {
+  events,
+  items,
+  jobs,
+  message_drafts,
+  proposals,
+  source_versions,
+  sync_runs,
+} from './schema/index.ts';
 
 const id = z.string().min(1).max(300),
   text = z.string().max(12000),
@@ -222,9 +233,13 @@ function write<S extends z.ZodRawShape>(
     { write: true, destructive: true, ...options },
   );
 }
-const parseRow = <T extends { payload?: string; result_json?: string | null }>(
-  row: T | null | undefined,
-) =>
+// Proposal payloads and job results are stored as JSON text.
+type Row = {
+  [column: string]: unknown;
+  payload?: string;
+  result_json?: string | null;
+};
+const parseRow = <T extends Row>(row: T | null | undefined) =>
   row
     ? {
         ...row,
@@ -237,18 +252,12 @@ async function found(sql: string, ...args: unknown[]) {
   if (!row) throw Error('Record not found.');
   return row;
 }
-async function paged(
-  sql: string,
-  args: unknown[],
-  offset: number,
-  limit: number,
+// Reads one row past the page to tell whether another page follows.
+async function paged<T extends Row>(
+  { offset, limit }: { offset: number; limit: number },
+  rows: (limit: number, offset: number) => PromiseLike<T[]>,
 ) {
-  const records = await all(
-    sql + ' LIMIT ? OFFSET ?',
-    ...args,
-    limit + 1,
-    offset,
-  );
+  const records = await rows(limit + 1, offset);
   return {
     records: records.slice(0, limit).map(parseRow),
     offset,
@@ -365,22 +374,21 @@ read(
   'list_commitments',
   'Find commitments by status or title. candidate means To decide; now means active. Dates and ownership are explicit, not inferred.',
   { ...page, status: status.optional(), query: short.default('') },
-  async (a) => {
-    const where = ['title ILIKE ?'],
-      args = ['%' + a.query + '%'];
-    if (a.status) {
-      where.push('status=?');
-      args.push(a.status);
-    }
-    return paged(
-      'SELECT * FROM items WHERE ' +
-        where.join(' AND ') +
-        ' ORDER BY updated_at DESC,id',
-      args,
-      a.offset,
-      a.limit,
-    );
-  },
+  (a) =>
+    paged(a, (limit, offset) =>
+      db
+        .select()
+        .from(items)
+        .where(
+          and(
+            ilike(items.title, '%' + a.query + '%'),
+            a.status ? eq(items.status, a.status) : undefined,
+          ),
+        )
+        .orderBy(desc(items.updated_at), items.id)
+        .limit(limit)
+        .offset(offset),
+    ),
 );
 read(
   'read_commitment',
@@ -398,11 +406,14 @@ read(
   'Read the recorded decisions and changes for a commitment.',
   { id, ...page },
   (a) =>
-    paged(
-      'SELECT * FROM events WHERE item_id=? ORDER BY created_at DESC,id',
-      [a.id],
-      a.offset,
-      a.limit,
+    paged(a, (limit, offset) =>
+      db
+        .select()
+        .from(events)
+        .where(eq(events.item_id, a.id))
+        .orderBy(desc(events.created_at), events.id)
+        .limit(limit)
+        .offset(offset),
     ),
 );
 write(
@@ -421,11 +432,18 @@ read(
       .default('pending'),
   },
   (a) =>
-    paged(
-      'SELECT * FROM proposals WHERE status=? ORDER BY priority_score DESC,created_at DESC,id',
-      [a.status],
-      a.offset,
-      a.limit,
+    paged(a, (limit, offset) =>
+      db
+        .select()
+        .from(proposals)
+        .where(eq(proposals.status, a.status))
+        .orderBy(
+          desc(proposals.priority_score),
+          desc(proposals.created_at),
+          proposals.id,
+        )
+        .limit(limit)
+        .offset(offset),
     ),
 );
 read(
@@ -719,11 +737,21 @@ read(
   'List private message drafts for a contact. No message is sent by Focus.',
   { contact_id: id, ...page },
   (a) =>
-    paged(
-      'SELECT id,contact_id,subject,version,created_at,updated_at FROM message_drafts WHERE contact_id=? ORDER BY created_at DESC,id',
-      [a.contact_id],
-      a.offset,
-      a.limit,
+    paged(a, (limit, offset) =>
+      db
+        .select({
+          id: message_drafts.id,
+          contact_id: message_drafts.contact_id,
+          subject: message_drafts.subject,
+          version: message_drafts.version,
+          created_at: message_drafts.created_at,
+          updated_at: message_drafts.updated_at,
+        })
+        .from(message_drafts)
+        .where(eq(message_drafts.contact_id, a.contact_id))
+        .orderBy(desc(message_drafts.created_at), message_drafts.id)
+        .limit(limit)
+        .offset(offset),
     ),
 );
 read(
@@ -795,11 +823,18 @@ read(
   'List preserved versions of a source; use read_source with version_id to retrieve one.',
   { id, ...page },
   (a) =>
-    paged(
-      'SELECT id AS source_version_id,source_id,fetched_at FROM source_versions WHERE source_id=? ORDER BY fetched_at DESC,id',
-      [a.id],
-      a.offset,
-      a.limit,
+    paged(a, (limit, offset) =>
+      db
+        .select({
+          source_version_id: source_versions.id,
+          source_id: source_versions.source_id,
+          fetched_at: source_versions.fetched_at,
+        })
+        .from(source_versions)
+        .where(eq(source_versions.source_id, a.id))
+        .orderBy(desc(source_versions.fetched_at), source_versions.id)
+        .limit(limit)
+        .offset(offset),
     ),
 );
 read(
@@ -810,13 +845,23 @@ read(
     status: z.enum(['queued', 'running', 'complete', 'failed']).optional(),
   },
   (a) =>
-    paged(
-      'SELECT id,kind,status,prompt,progress,error,created_at,updated_at FROM jobs' +
-        (a.status ? ' WHERE status=?' : '') +
-        ' ORDER BY created_at DESC,id',
-      a.status ? [a.status] : [],
-      a.offset,
-      a.limit,
+    paged(a, (limit, offset) =>
+      db
+        .select({
+          id: jobs.id,
+          kind: jobs.kind,
+          status: jobs.status,
+          prompt: jobs.prompt,
+          progress: jobs.progress,
+          error: jobs.error,
+          created_at: jobs.created_at,
+          updated_at: jobs.updated_at,
+        })
+        .from(jobs)
+        .where(a.status ? eq(jobs.status, a.status) : undefined)
+        .orderBy(desc(jobs.created_at), jobs.id)
+        .limit(limit)
+        .offset(offset),
     ),
 );
 read(
@@ -925,13 +970,24 @@ read(
       .optional(),
   },
   (a) =>
-    paged(
-      'SELECT id,provider,started_at,finished_at,state,imported,message,updated_at,changed FROM sync_runs' +
-        (a.provider ? ' WHERE provider=?' : '') +
-        ' ORDER BY started_at DESC,id',
-      a.provider ? [a.provider] : [],
-      a.offset,
-      a.limit,
+    paged(a, (limit, offset) =>
+      db
+        .select({
+          id: sync_runs.id,
+          provider: sync_runs.provider,
+          started_at: sync_runs.started_at,
+          finished_at: sync_runs.finished_at,
+          state: sync_runs.state,
+          imported: sync_runs.imported,
+          message: sync_runs.message,
+          updated_at: sync_runs.updated_at,
+          changed: sync_runs.changed,
+        })
+        .from(sync_runs)
+        .where(a.provider ? eq(sync_runs.provider, a.provider) : undefined)
+        .orderBy(desc(sync_runs.started_at), sync_runs.id)
+        .limit(limit)
+        .offset(offset),
     ),
 );
 read(
