@@ -1,7 +1,7 @@
 import { ToolLoopAgent, Output, jsonSchema, tool } from 'ai';
 import type { LanguageModel } from 'ai';
 import { and, eq, sql } from 'drizzle-orm';
-import { AgentResult, saveResult, addProgress } from './agent.mjs';
+import { AgentResult, saveResult, addProgress } from './agent.ts';
 import { agentPolicy } from './agent-policy.mjs';
 import { contextTools, callContextTool } from './context-tools.ts';
 import type { ToolArgs } from './context-tools.ts';

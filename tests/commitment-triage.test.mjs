@@ -6,7 +6,7 @@ process.env.XIN_SECRET_STORAGE='postgres';process.env.XIN_SECRETS_KEY=randomByte
 import assert from 'node:assert/strict';
 process.env.XIN_AGENT_MODE='cloud';
 const {upsertSource,one,all,run,uid,stamp,saveItem}=await import('../lib/db.mjs');
-const {saveResult,takePendingImportReview}=await import('../lib/agent.mjs');
+const {saveResult,takePendingImportReview}=await import('../lib/agent.ts');
 const {callContextTool}=await import('../lib/context-tools.ts');
 const empty={brief:'Review complete.',findings:[],proposals:[],questions:[],coverage_note:'Fictional fixtures only.'};
 async function job(kind='import_review'){const id=uid();await run('INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at) VALUES(?,?,?,?,?,?)',id,kind,'queued','Review the current evidence',stamp(),stamp());return id;}

@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {spawn} from 'node:child_process';
 const temp=mkdtempSync(join(tmpdir(),'xin-agent-loop-test-'));process.env.XIN_DATA_DIR=temp;process.env.XIN_CODEX_BIN=join(temp,'codex-is-not-installed');
 const m=await import('../lib/db.mjs');
-const agent=await import('../lib/agent.mjs');
+const agent=await import('../lib/agent.ts');
 const spawned=[];
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const alive=pid=>{try{process.kill(pid,0);return true;}catch(e){return e.code!=='ESRCH';}};

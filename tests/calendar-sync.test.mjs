@@ -47,7 +47,7 @@ test('rescheduled events outside the rolling window remain current, and minimal 
  await sync(t,[{items:[{id:event.id,status:'cancelled'}]}]);const row=await one("SELECT body FROM sources WHERE id='calendar:primary:fixture-event'");assert.match(row.body,/Status: cancelled/);assert.match(row.body,/Recurring event: series-1/);assert.match(row.body,/Original instance start:/);
 });
 test('calendar deadlines reject hard deadlines, obsolete snapshots, tentative attendance and stale coverage',async t=>{
- const {validateResult}=await import('../lib/agent.mjs');
+ const {validateResult}=await import('../lib/agent.ts');
  await sync(t,[{items:[event]}]);const c=await one("SELECT v.id FROM sources s JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE s.id='calendar:primary:fixture-event'");
  const quote='Avery: I will prepare the implementation plan for the project review.';
  await upsertSource({provider:'granola',external_id:'promise',title:'Promise',coverage:'transcript',body:'Transcript\n'+quote});

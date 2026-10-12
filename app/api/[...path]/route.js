@@ -8,7 +8,7 @@ import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,merge
 import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.ts';
 import {autoMatchStatus,runAutoContactMatching,setAutoMatchEnabled} from '../../../lib/contact-auto-match.ts';
 import {dashboard,searchSources,readSource,readSourceVersion,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.mjs';
-import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.mjs';
+import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.ts';
 import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.ts';
 import {importDocuments,importResearchArchive} from '../../../lib/imports.mjs';
 import {authMessages,gmailMessages} from '../../../lib/auth-messages.mjs';

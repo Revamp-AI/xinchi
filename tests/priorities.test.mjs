@@ -6,7 +6,7 @@ import {MockLanguageModelV4} from 'ai/test';
 process.env.XIN_AGENT_MODE='cloud';
 const {all,one,run,upsertSource,stamp}=await import('../lib/db.mjs');
 const {prioritiesState,savePriority,priorityDetail,reorderPriorities,addPriorityUpdate,queuePriorityContext,decidePrioritySuggestion,readPriorities}=await import('../lib/priorities.ts');
-const {takePendingImportReview,saveResult,validateResult}=await import('../lib/agent.mjs');
+const {takePendingImportReview,saveResult,validateResult}=await import('../lib/agent.ts');
 const {readReviewBatch}=await import('../lib/review-batches.ts');
 const {runCloudAgent}=await import('../lib/cloud-agent.ts');
 const empty={brief:'Reviewed the assigned meeting.',findings:[],proposals:[],drafts:[],questions:[],coverage_note:'Only cited source pages.'};

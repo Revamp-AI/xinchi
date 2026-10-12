@@ -5,7 +5,7 @@ import {
   priorityDetail,
   prioritiesState,
 } from '../../lib/priorities.ts';
-import { saveResult } from '../../lib/agent.mjs';
+import { saveResult } from '../../lib/agent.ts';
 
 test.afterEach(async () => {
   await run(
