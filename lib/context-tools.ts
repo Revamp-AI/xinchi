@@ -1,4 +1,5 @@
 import type { JSONSchema7 } from 'ai';
+import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { readCalendar } from './calendar.ts';
 import { readProposals, readProposalEvidence } from './proposals.ts';
 import { readPriorities } from './priorities.ts';
@@ -8,16 +9,18 @@ import {
   readInteractions,
   contactStatus,
 } from './contacts.ts';
+import { readSource, searchSources, getSetting, stamp } from './db.mjs';
+import { db, transaction } from './postgres.ts';
 import {
-  all,
-  one,
-  readSource,
-  searchSources,
-  getSetting,
-  run,
-  stamp,
-  transaction,
-} from './db.mjs';
+  events,
+  items,
+  job_events,
+  jobs,
+  owner,
+  proposals,
+  sources,
+  sync_runs,
+} from './schema/index.ts';
 import { readReviewBatch } from './review-batches.ts';
 
 type ContextTool = {
@@ -247,11 +250,16 @@ export async function callContextTool(
   else if (name === 'read_commitments') {
     const offset = Math.max(0, Number(a.offset) || 0),
       limit = 20;
-    const rows = await all(
-      "SELECT * FROM items ORDER BY CASE status WHEN 'now' THEN 0 WHEN 'waiting' THEN 1 WHEN 'candidate' THEN 2 ELSE 3 END,updated_at DESC,id LIMIT ? OFFSET ?",
-      limit + 1,
-      offset,
-    );
+    const rows = await db
+      .select()
+      .from(items)
+      .orderBy(
+        sql`CASE ${items.status} WHEN 'now' THEN 0 WHEN 'waiting' THEN 1 WHEN 'candidate' THEN 2 ELSE 3 END`,
+        desc(items.updated_at),
+        items.id,
+      )
+      .limit(limit + 1)
+      .offset(offset);
     const compact = [];
     let characters = 0;
     for (const row of rows.slice(0, limit)) {
@@ -267,7 +275,12 @@ export async function callContextTool(
       characters += size;
     }
     result = {
-      owner: await one('SELECT name,email FROM focus_auth.owner WHERE id=1'),
+      owner: (
+        await db
+          .select({ name: owner.name, email: owner.email })
+          .from(owner)
+          .where(eq(owner.id, 1))
+      )[0],
       time_zone: process.env.XIN_TIME_ZONE || 'UTC',
       available_hours: await readSetting('available_hours', 0),
       focus: String(await readSetting('focus', 'Not yet chosen')).slice(
@@ -278,21 +291,62 @@ export async function callContextTool(
       offset,
       next_offset:
         rows.length > compact.length ? offset + compact.length : null,
-      recent_agent_requests: await all(
-        'SELECT id,left(prompt,600) prompt,status,created_at FROM jobs ORDER BY created_at DESC LIMIT 3',
-      ),
-      pending_proposals: await all(
-        "SELECT id,version,status,deliverable_key,left(payload::jsonb->>'title',200) title,payload::jsonb->>'existing_item_id' existing_item_id FROM proposals WHERE status IN ('pending','deferred') ORDER BY priority_score DESC,created_at DESC LIMIT 20",
-      ),
-      recent_imports: await all(
-        'SELECT DISTINCT ON(provider) provider,state,message,started_at,updated_at FROM sync_runs ORDER BY provider,started_at DESC',
-      ),
-      recent_changes: await all(
-        'SELECT id,item_id,action,left(reason,400) reason,created_at FROM events ORDER BY created_at DESC LIMIT 10',
-      ),
-      coverage: await all(
-        'SELECT provider,coverage,count(*) AS count FROM sources GROUP BY provider,coverage',
-      ),
+      recent_agent_requests: await db
+        .select({
+          id: jobs.id,
+          prompt: sql<string>`left(${jobs.prompt}, 600)`,
+          status: jobs.status,
+          created_at: jobs.created_at,
+        })
+        .from(jobs)
+        .orderBy(desc(jobs.created_at))
+        .limit(3),
+      pending_proposals: await db
+        .select({
+          id: proposals.id,
+          version: proposals.version,
+          status: proposals.status,
+          deliverable_key: proposals.deliverable_key,
+          title: sql<
+            string | null
+          >`left(${proposals.payload}::jsonb->>'title', 200)`,
+          existing_item_id: sql<
+            string | null
+          >`${proposals.payload}::jsonb->>'existing_item_id'`,
+        })
+        .from(proposals)
+        .where(inArray(proposals.status, ['pending', 'deferred']))
+        .orderBy(desc(proposals.priority_score), desc(proposals.created_at))
+        .limit(20),
+      recent_imports: await db
+        .selectDistinctOn([sync_runs.provider], {
+          provider: sync_runs.provider,
+          state: sync_runs.state,
+          message: sync_runs.message,
+          started_at: sync_runs.started_at,
+          updated_at: sync_runs.updated_at,
+        })
+        .from(sync_runs)
+        .orderBy(sync_runs.provider, desc(sync_runs.started_at)),
+      recent_changes: await db
+        .select({
+          id: events.id,
+          item_id: events.item_id,
+          action: events.action,
+          reason: sql<string>`left(${events.reason}, 400)`,
+          created_at: events.created_at,
+        })
+        .from(events)
+        .orderBy(desc(events.created_at))
+        .limit(10),
+      coverage: await db
+        .select({
+          provider: sources.provider,
+          coverage: sources.coverage,
+          count: count(),
+        })
+        .from(sources)
+        .groupBy(sources.provider, sources.coverage),
     };
   } else throw Error('Unknown tool');
   if (jobId) {
@@ -304,23 +358,24 @@ export async function callContextTool(
           : 'Checking your commitments and decisions';
     await transaction(async () => {
       // Acquire the write lock directly: parallel readers must not upgrade shared locks.
-      const updated = await run(
-        "UPDATE jobs SET progress=?,updated_at=? WHERE id=? AND status='running' AND lease_until>now()" +
-          (leaseToken ? ' AND lease_owner=?' : ''),
-        label,
-        stamp(),
-        jobId,
-        ...(leaseToken ? [leaseToken] : []),
-      );
-      if (leaseToken && !updated.changes)
+      const updated = await db
+        .update(jobs)
+        .set({ progress: label, updated_at: stamp() })
+        .where(
+          and(
+            eq(jobs.id, jobId),
+            eq(jobs.status, 'running'),
+            sql`${jobs.lease_until} > now()`,
+            leaseToken ? eq(jobs.lease_owner, leaseToken) : undefined,
+          ),
+        )
+        .returning({ id: jobs.id });
+      if (leaseToken && !updated.length)
         throw Error('This worker no longer owns the run.');
-      if (updated.changes)
-        await run(
-          'INSERT INTO job_events(job_id,label,created_at) VALUES(?,?,?)',
-          jobId,
-          label,
-          stamp(),
-        );
+      if (updated.length)
+        await db
+          .insert(job_events)
+          .values({ job_id: jobId, label, created_at: stamp() });
     });
   }
   return result;
