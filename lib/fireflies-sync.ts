@@ -1,4 +1,7 @@
-import { getSetting, one, stamp } from './db.mjs';
+import { and, desc, eq, sql } from 'drizzle-orm';
+import { getSetting, stamp } from './db.mjs';
+import { db } from './postgres.ts';
+import { durable_runs, sync_runs } from './schema/index.ts';
 
 // A Fireflies import window: transcripts up to boundary (and after since),
 // read one at a time from skip.
@@ -36,12 +39,25 @@ async function lastCompletion(participant: string): Promise<Completion | null> {
     return saved;
   // Existing durable imports already recorded their snapshot boundary and scope.
   // Adopt only a confirmed completion, never infer coverage from the newest source.
-  const previous = await one(
-    "SELECT d.cursor FROM durable_runs d JOIN sync_runs s ON s.id=d.run_id WHERE d.kind='sync' AND d.completed=true AND s.provider='fireflies' AND s.state='complete' AND d.cursor->>'phase'='done' AND d.cursor->>'participant'=? ORDER BY s.finished_at DESC LIMIT 1",
-    participant,
-  );
-  return validDate(previous?.cursor?.boundary)
-    ? { participant, through: previous.cursor.boundary }
+  const [previous] = await db
+    .select({ cursor: durable_runs.cursor })
+    .from(durable_runs)
+    .innerJoin(sync_runs, eq(sync_runs.id, durable_runs.run_id))
+    .where(
+      and(
+        eq(durable_runs.kind, 'sync'),
+        eq(durable_runs.completed, true),
+        eq(sync_runs.provider, 'fireflies'),
+        eq(sync_runs.state, 'complete'),
+        sql`${durable_runs.cursor}->>'phase' = 'done'`,
+        sql`${durable_runs.cursor}->>'participant' = ${participant}`,
+      ),
+    )
+    .orderBy(desc(sync_runs.finished_at))
+    .limit(1);
+  const cursor = previous?.cursor as { boundary?: unknown } | null | undefined;
+  return validDate(cursor?.boundary)
+    ? { participant, through: cursor.boundary }
     : null;
 }
 export async function firefliesWindow({
