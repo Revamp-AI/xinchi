@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 // Counts and legacy millisecond timestamps fit safely in JS numbers. Refuse loss of precision.
 pg.types.setTypeParser(20, (value) => {
@@ -11,9 +12,21 @@ pg.types.setTypeParser(20, (value) => {
 pg.types.setTypeParser(1082, (value) => value);
 pg.types.setTypeParser(1184, (value) => new Date(value).toISOString());
 
-type Transaction = { client: pg.PoolClient; pending: Promise<unknown> };
+// Drizzle's node-postgres driver reads timestamptz as raw text; keep the ISO
+// strings the rest of the app (and the parser above) uses.
+const codecs = {
+  'timestamptz:string': {
+    normalize: (value: string) => new Date(value).toISOString(),
+  },
+};
+
+type Transaction = {
+  client: pg.PoolClient;
+  pending: Promise<unknown>;
+  db?: NodePgDatabase;
+};
 const context = new AsyncLocalStorage<Transaction>();
-let pool: pg.Pool | undefined;
+let pool: pg.Pool | undefined, poolDb: NodePgDatabase | undefined;
 export function getPool() {
   if (!pool) {
     if (!process.env.DATABASE_URL)
@@ -62,7 +75,12 @@ export async function query(
 ): Promise<pg.QueryResult> {
   const tx = context.getStore();
   if (!tx) return getPool().query(parameters(sql), args);
-  const result = tx.pending.then(() => tx.client.query(parameters(sql), args));
+  return enqueue(tx, () => tx.client.query(parameters(sql), args));
+}
+// Statements in a transaction run one at a time on its connection, and every
+// one settles before COMMIT or ROLLBACK, even after an earlier one fails.
+function enqueue<T>(tx: Transaction, statement: () => Promise<T>) {
+  const result = tx.pending.then(statement);
   tx.pending = result.then(
     () => undefined,
     () => undefined,
@@ -105,7 +123,35 @@ export async function closeDatabase() {
   if (pool) {
     const old = pool;
     pool = undefined;
+    poolDb = undefined;
     await old.end();
   }
 }
-export const db = { close: closeDatabase };
+
+// The Drizzle database for the current context: the pool outside
+// transaction(), or the transaction's own connection inside it.
+function current() {
+  const tx = context.getStore();
+  if (!tx) return (poolDb ??= drizzle({ client: getPool(), codecs }));
+  return (tx.db ??= drizzle({ client: queued(tx), codecs }));
+}
+// A client that sends Drizzle's statements through the transaction's queue.
+function queued(tx: Transaction) {
+  return {
+    query: (config: pg.QueryConfig, values?: unknown[]) =>
+      enqueue(tx, () => tx.client.query(config, values)),
+  } as unknown as pg.PoolClient;
+}
+export type Database = Omit<NodePgDatabase, 'transaction'> & {
+  /** Runs fn inside transaction(); nested calls join the enclosing transaction. */
+  transaction<T>(fn: (tx: Database) => Promise<T>): Promise<T>;
+};
+export const db: Database = new Proxy({} as Database, {
+  get(_, key) {
+    if (key === 'transaction')
+      return <T>(fn: (tx: Database) => Promise<T>) => transaction(() => fn(db));
+    const target = current();
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  },
+});
