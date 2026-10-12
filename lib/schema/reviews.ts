@@ -34,7 +34,7 @@ export const jobs = pgTable(
   },
   (table) => [
     uniqueIndex('jobs_single_active')
-      .using('btree', sql`true`)
+      .using('btree', sql`(true)`)
       .where(sql`(status = ANY (ARRAY['queued'::text, 'running'::text]))`),
   ],
 );
@@ -45,7 +45,7 @@ export const job_events = pgTable(
     id: bigserial({ mode: 'number' }).primaryKey(),
     job_id: text()
       .notNull()
-      .references(() => jobs.id),
+      .references(() => jobs.id, { name: 'job_events_job_id_fkey' }),
     label: text().notNull(),
     created_at: text().notNull(),
   },
@@ -64,12 +64,14 @@ export const proposals = pgTable(
     id: text().primaryKey(),
     job_id: text()
       .notNull()
-      .references(() => jobs.id),
+      .references(() => jobs.id, { name: 'proposals_job_id_fkey' }),
     fingerprint: text().notNull(),
     status: text().default('pending').notNull(),
     payload: text().notNull(),
     created_at: text().notNull(),
-    item_id: text().references(() => items.id),
+    item_id: text().references(() => items.id, {
+      name: 'proposals_item_id_fkey',
+    }),
     version: integer().default(1).notNull(),
     deliverable_key: text().default('').notNull(),
     priority_score: integer().default(0).notNull(),
@@ -93,8 +95,14 @@ export const proposal_events = pgTable('proposal_events', {
   id: text().primaryKey(),
   proposal_id: text()
     .notNull()
-    .references(() => proposals.id, { onDelete: 'cascade' }),
-  job_id: text().references(() => jobs.id, { onDelete: 'set null' }),
+    .references(() => proposals.id, {
+      name: 'proposal_events_proposal_id_fkey',
+      onDelete: 'cascade',
+    }),
+  job_id: text().references(() => jobs.id, {
+    name: 'proposal_events_job_id_fkey',
+    onDelete: 'set null',
+  }),
   action: text().notNull(),
   reason: text().notNull(),
   detail: jsonb().default({}).notNull(),
@@ -108,10 +116,16 @@ export const proposal_review_batches = pgTable(
   {
     job_id: text()
       .notNull()
-      .references(() => jobs.id, { onDelete: 'cascade' }),
+      .references(() => jobs.id, {
+        name: 'proposal_review_batches_job_id_fkey',
+        onDelete: 'cascade',
+      }),
     proposal_id: text()
       .notNull()
-      .references(() => proposals.id, { onDelete: 'cascade' }),
+      .references(() => proposals.id, {
+        name: 'proposal_review_batches_proposal_id_fkey',
+        onDelete: 'cascade',
+      }),
     version: integer().notNull(),
   },
   (table) => [
@@ -127,12 +141,16 @@ export const review_queue = pgTable(
   {
     source_id: text()
       .primaryKey()
-      .references(() => sources.id),
+      .references(() => sources.id, { name: 'review_queue_source_id_fkey' }),
     source_version_id: text()
       .notNull()
-      .references(() => source_versions.id),
+      .references(() => source_versions.id, {
+        name: 'review_queue_source_version_id_fkey',
+      }),
     next_offset: integer().default(0).notNull(),
-    job_id: text().references(() => jobs.id),
+    job_id: text().references(() => jobs.id, {
+      name: 'review_queue_job_id_fkey',
+    }),
     completed: boolean().default(false).notNull(),
     attempts: integer().default(0).notNull(),
     retry_after: timestamp({ withTimezone: true, mode: 'string' }),
@@ -151,6 +169,6 @@ export const review_queue = pgTable(
 export const review_batches = pgTable('review_batches', {
   job_id: text()
     .primaryKey()
-    .references(() => jobs.id),
+    .references(() => jobs.id, { name: 'review_batches_job_id_fkey' }),
   pages: jsonb().notNull(),
 });

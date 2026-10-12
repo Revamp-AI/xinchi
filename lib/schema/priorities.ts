@@ -34,14 +34,18 @@ export const priorities = pgTable(
     id: text().primaryKey(),
     stack_id: text()
       .notNull()
-      .references(() => priority_stacks.id),
+      .references(() => priority_stacks.id, {
+        name: 'priorities_stack_id_fkey',
+      }),
     title: text().notNull(),
     owner: text().default('You').notNull(),
     financials: text().default('').notNull(),
     notes: text().default('').notNull(),
     keywords: text().default('').notNull(),
     next_decision: text().default('').notNull(),
-    commitment_id: text().references(() => items.id),
+    commitment_id: text().references(() => items.id, {
+      name: 'priorities_commitment_id_fkey',
+    }),
     status: text().default('active').notNull(),
     position: integer().notNull(),
     version: integer().default(1).notNull(),
@@ -73,8 +77,12 @@ export const priority_suggestions = pgTable(
   'priority_suggestions',
   {
     id: text().primaryKey(),
-    priority_id: text().references(() => priorities.id),
-    job_id: text().references(() => jobs.id),
+    priority_id: text().references(() => priorities.id, {
+      name: 'priority_suggestions_priority_id_fkey',
+    }),
+    job_id: text().references(() => jobs.id, {
+      name: 'priority_suggestions_job_id_fkey',
+    }),
     payload: jsonb().notNull(),
     fingerprint: text().notNull(),
     status: text().default('pending').notNull(),
@@ -97,12 +105,16 @@ export const priority_updates = pgTable(
     id: text().primaryKey(),
     priority_id: text()
       .notNull()
-      .references(() => priorities.id),
+      .references(() => priorities.id, {
+        name: 'priority_updates_priority_id_fkey',
+      }),
     body: text().notNull(),
     origin: text().notNull(),
     citations: jsonb().default([]).notNull(),
     fingerprint: text().notNull(),
-    job_id: text().references(() => jobs.id),
+    job_id: text().references(() => jobs.id, {
+      name: 'priority_updates_job_id_fkey',
+    }),
     occurred_at: text().notNull(),
     created_at: timestamp({ withTimezone: true, mode: 'string' })
       .default(sql`now()`)

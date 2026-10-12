@@ -78,7 +78,7 @@ export const import_uploads = pgTable(
   {
     run_id: text()
       .primaryKey()
-      .references(() => sync_runs.id),
+      .references(() => sync_runs.id, { name: 'import_uploads_run_id_fkey' }),
     format: text().notNull(),
     title: text().notNull(),
     expected_bytes: bigint({ mode: 'number' }).notNull(),
@@ -103,7 +103,10 @@ export const import_chunks = pgTable(
   {
     run_id: text()
       .notNull()
-      .references(() => import_uploads.run_id, { onDelete: 'cascade' }),
+      .references(() => import_uploads.run_id, {
+        name: 'import_chunks_run_id_fkey',
+        onDelete: 'cascade',
+      }),
     part: integer().notNull(),
     content: text().notNull(),
   },
@@ -121,7 +124,7 @@ export const import_records = pgTable(
   {
     run_id: text()
       .notNull()
-      .references(() => sync_runs.id),
+      .references(() => sync_runs.id, { name: 'import_records_run_id_fkey' }),
     ordinal: integer().notNull(),
     payload: jsonb().notNull(),
   },
@@ -137,10 +140,12 @@ export const import_records = pgTable(
 export const beeper_uploads = pgTable('beeper_uploads', {
   run_id: text()
     .primaryKey()
-    .references(() => sync_runs.id),
+    .references(() => sync_runs.id, { name: 'beeper_uploads_run_id_fkey' }),
   device_id: text()
     .notNull()
-    .references(() => beeper_devices.id),
+    .references(() => beeper_devices.id, {
+      name: 'beeper_uploads_device_id_fkey',
+    }),
   part_count: integer().default(0).notNull(),
   record_count: integer().default(0).notNull(),
   last_part_hash: text().default('').notNull(),

@@ -70,13 +70,17 @@ export const contact_identities = pgTable(
     id: text().primaryKey(),
     contact_id: text()
       .notNull()
-      .references(() => contacts.id),
+      .references(() => contacts.id, {
+        name: 'contact_identities_contact_id_fkey',
+      }),
     provider: text().notNull(),
     account: text().notNull(),
     external_key: text().notNull(),
     display_name: text().default('').notNull(),
     address: text().default('').notNull(),
-    source_id: text().references(() => sources.id),
+    source_id: text().references(() => sources.id, {
+      name: 'contact_identities_source_id_fkey',
+    }),
   },
   (table) => [
     index('contact_identities_exact_email')
@@ -97,7 +101,9 @@ export const contact_identities = pgTable(
 export const contact_insights = pgTable('contact_insights', {
   contact_id: text()
     .primaryKey()
-    .references(() => contacts.id),
+    .references(() => contacts.id, {
+      name: 'contact_insights_contact_id_fkey',
+    }),
   input_hash: text().notNull(),
   result: jsonb().notNull(),
   model: text().default('').notNull(),
@@ -113,7 +119,7 @@ export const contact_queue = pgTable(
   {
     source_id: text()
       .primaryKey()
-      .references(() => sources.id),
+      .references(() => sources.id, { name: 'contact_queue_source_id_fkey' }),
     content_hash: text().notNull(),
     state: text().default('pending').notNull(),
     attempts: integer().default(0).notNull(),
@@ -150,7 +156,7 @@ export const contact_runs = pgTable(
   },
   (table) => [
     uniqueIndex('contact_single_active')
-      .using('btree', sql`true`)
+      .using('btree', sql`(true)`)
       .where(sql`(state = ANY (ARRAY['queued'::text, 'running'::text]))`),
   ],
 );
@@ -159,7 +165,9 @@ export const contact_state_history = pgTable('contact_state_history', {
   id: text().primaryKey(),
   contact_id: text()
     .notNull()
-    .references(() => contacts.id),
+    .references(() => contacts.id, {
+      name: 'contact_state_history_contact_id_fkey',
+    }),
   from_state: text(),
   to_state: text().notNull(),
   reason: text().notNull(),
@@ -173,7 +181,7 @@ export const contact_state_history = pgTable('contact_state_history', {
 export const contact_states = pgTable('contact_states', {
   contact_id: text()
     .primaryKey()
-    .references(() => contacts.id),
+    .references(() => contacts.id, { name: 'contact_states_contact_id_fkey' }),
   state: text().notNull(),
   basis: jsonb().notNull(),
   evaluated_at: timestamp({ withTimezone: true, mode: 'string' })
@@ -202,10 +210,12 @@ export const affiliations = pgTable(
     id: text().primaryKey(),
     contact_id: text()
       .notNull()
-      .references(() => contacts.id),
+      .references(() => contacts.id, { name: 'affiliations_contact_id_fkey' }),
     organization_id: text()
       .notNull()
-      .references(() => organizations.id),
+      .references(() => organizations.id, {
+        name: 'affiliations_organization_id_fkey',
+      }),
     role: text().default('').notNull(),
     started_on: date(),
     ended_on: date(),
@@ -235,10 +245,12 @@ export const identity_decisions = pgTable('identity_decisions', {
   kind: text().notNull(),
   left_id: text()
     .notNull()
-    .references(() => contacts.id),
+    .references(() => contacts.id, { name: 'identity_decisions_left_id_fkey' }),
   right_id: text()
     .notNull()
-    .references(() => contacts.id),
+    .references(() => contacts.id, {
+      name: 'identity_decisions_right_id_fkey',
+    }),
   before_snapshot: jsonb().notNull(),
   after_hash: text().notNull(),
   undone_at: timestamp({ withTimezone: true, mode: 'string' }),
@@ -253,10 +265,12 @@ export const identity_reviews = pgTable(
     id: text().primaryKey(),
     left_id: text()
       .notNull()
-      .references(() => contacts.id),
+      .references(() => contacts.id, { name: 'identity_reviews_left_id_fkey' }),
     right_id: text()
       .notNull()
-      .references(() => contacts.id),
+      .references(() => contacts.id, {
+        name: 'identity_reviews_right_id_fkey',
+      }),
     reason: text().notNull(),
     status: text().default('pending').notNull(),
     created_at: timestamp({ withTimezone: true, mode: 'string' })
@@ -275,7 +289,9 @@ export const interactions = pgTable(
   'interactions',
   {
     id: text().primaryKey(),
-    source_id: text().references(() => sources.id),
+    source_id: text().references(() => sources.id, {
+      name: 'interactions_source_id_fkey',
+    }),
     kind: text().notNull(),
     title: text().notNull(),
     occurred_at: timestamp({ withTimezone: true, mode: 'string' }),
@@ -309,7 +325,9 @@ export const interaction_decisions = pgTable('interaction_decisions', {
   id: text().primaryKey(),
   interaction_id: text()
     .notNull()
-    .references(() => interactions.id),
+    .references(() => interactions.id, {
+      name: 'interaction_decisions_interaction_id_fkey',
+    }),
   action: text().notNull(),
   before_snapshot: jsonb().notNull(),
   after_snapshot: jsonb().notNull(),
@@ -323,10 +341,14 @@ export const interaction_participants = pgTable(
   {
     interaction_id: text()
       .notNull()
-      .references(() => interactions.id),
+      .references(() => interactions.id, {
+        name: 'interaction_participants_interaction_id_fkey',
+      }),
     contact_id: text()
       .notNull()
-      .references(() => contacts.id),
+      .references(() => contacts.id, {
+        name: 'interaction_participants_contact_id_fkey',
+      }),
     role: text().default('').notNull(),
   },
   (table) => [
@@ -347,13 +369,19 @@ export const interaction_sources = pgTable(
   {
     interaction_id: text()
       .notNull()
-      .references(() => interactions.id),
+      .references(() => interactions.id, {
+        name: 'interaction_sources_interaction_id_fkey',
+      }),
     source_version_id: text()
       .notNull()
-      .references(() => source_versions.id),
+      .references(() => source_versions.id, {
+        name: 'interaction_sources_source_version_id_fkey',
+      }),
     source_id: text()
       .notNull()
-      .references(() => sources.id),
+      .references(() => sources.id, {
+        name: 'interaction_sources_source_id_fkey',
+      }),
     quote: text().default('').notNull(),
   },
   (table) => [
@@ -369,10 +397,10 @@ export const item_contacts = pgTable(
   {
     item_id: text()
       .notNull()
-      .references(() => items.id),
+      .references(() => items.id, { name: 'item_contacts_item_id_fkey' }),
     contact_id: text()
       .notNull()
-      .references(() => contacts.id),
+      .references(() => contacts.id, { name: 'item_contacts_contact_id_fkey' }),
   },
   (table) => [
     primaryKey({
@@ -386,8 +414,10 @@ export const message_drafts = pgTable('message_drafts', {
   id: text().primaryKey(),
   contact_id: text()
     .notNull()
-    .references(() => contacts.id),
-  job_id: text().references(() => jobs.id),
+    .references(() => contacts.id, { name: 'message_drafts_contact_id_fkey' }),
+  job_id: text().references(() => jobs.id, {
+    name: 'message_drafts_job_id_fkey',
+  }),
   subject: text().default('').notNull(),
   body: text().notNull(),
   citations: jsonb().default([]).notNull(),

@@ -47,7 +47,7 @@ export const source_versions = pgTable(
     id: text().primaryKey(),
     source_id: text()
       .notNull()
-      .references(() => sources.id),
+      .references(() => sources.id, { name: 'source_versions_source_id_fkey' }),
     content_hash: text().notNull(),
     raw_json: text().notNull(),
     fetched_at: text().notNull(),
@@ -80,7 +80,9 @@ export const items = pgTable('items', {
   dependency: text().default('').notNull(),
   evidence: text().default('').notNull(),
   reason: text().default('').notNull(),
-  source_id: text().references(() => sources.id),
+  source_id: text().references(() => sources.id, {
+    name: 'items_source_id_fkey',
+  }),
   source_quote: text().default('').notNull(),
   shared: integer().default(0).notNull(),
   created_at: text().notNull(),
@@ -88,7 +90,9 @@ export const items = pgTable('items', {
   version: integer().default(1).notNull(),
   last_action: text().default('').notNull(),
   fallback: text().default('').notNull(),
-  source_version_id: text().references(() => source_versions.id),
+  source_version_id: text().references(() => source_versions.id, {
+    name: 'items_source_version_id_fkey',
+  }),
 });
 
 export const events = pgTable(
@@ -97,7 +101,7 @@ export const events = pgTable(
     id: text().primaryKey(),
     item_id: text()
       .notNull()
-      .references(() => items.id),
+      .references(() => items.id, { name: 'events_item_id_fkey' }),
     action: text().notNull(),
     before_json: text(),
     after_json: text().notNull(),

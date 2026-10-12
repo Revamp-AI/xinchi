@@ -64,7 +64,7 @@ export const mcp_codes = focus_auth.table('mcp_codes', {
   token_hash: text().primaryKey(),
   grant_id: text()
     .notNull()
-    .references(() => mcp_grants.id),
+    .references(() => mcp_grants.id, { name: 'mcp_codes_grant_id_fkey' }),
   redirect_uri: text().notNull(),
   challenge: text().notNull(),
   expires_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
@@ -74,7 +74,7 @@ export const mcp_grants = focus_auth.table('mcp_grants', {
   id: text().primaryKey(),
   client_id: text()
     .notNull()
-    .references(() => mcp_clients.id),
+    .references(() => mcp_clients.id, { name: 'mcp_grants_client_id_fkey' }),
   owner_sub: text().notNull(),
   owner_email: text().notNull(),
   scope: text().notNull(),
@@ -92,7 +92,9 @@ export const mcp_operations = focus_auth.table(
   {
     grant_id: text()
       .notNull()
-      .references(() => mcp_grants.id),
+      .references(() => mcp_grants.id, {
+        name: 'mcp_operations_grant_id_fkey',
+      }),
     tool: text().notNull(),
     request_key: text().notNull(),
     args_hash: text().notNull(),
@@ -121,7 +123,7 @@ export const mcp_tokens = focus_auth.table(
     token_hash: text().primaryKey(),
     grant_id: text()
       .notNull()
-      .references(() => mcp_grants.id),
+      .references(() => mcp_grants.id, { name: 'mcp_tokens_grant_id_fkey' }),
     kind: text().notNull(),
     expires_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
     used_at: timestamp({ withTimezone: true, mode: 'string' }),
