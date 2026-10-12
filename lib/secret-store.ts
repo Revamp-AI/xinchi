@@ -1,7 +1,10 @@
 import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
-import { dataDir, one, run, transaction } from './db.mjs';
+import { eq, sql } from 'drizzle-orm';
+import { dataDir } from './db.mjs';
+import { db, transaction } from './postgres.ts';
+import { provider_secrets } from './schema/index.ts';
 import { POSTGRES_SECRETS } from './runtime.mjs';
 
 type GoogleGrant = {
@@ -79,10 +82,11 @@ export function decryptSecrets(value: EncryptedSecrets): Secrets {
 export async function secrets(): Promise<Secrets> {
   if (!POSTGRES_SECRETS) return localSecrets();
   key();
-  const row = await one(
-    'SELECT payload FROM focus_auth.provider_secrets WHERE id=1',
-  );
-  return row ? decryptSecrets(row.payload) : {};
+  const [row] = await db
+    .select({ payload: provider_secrets.payload })
+    .from(provider_secrets)
+    .where(eq(provider_secrets.id, 1));
+  return row ? decryptSecrets(row.payload as EncryptedSecrets) : {};
 }
 export async function updateSecrets<T>(
   update: (current: Secrets) => T | Promise<T>,
@@ -98,15 +102,18 @@ export async function updateSecrets<T>(
     return pending;
   }
   return transaction(async () => {
-    await one(
-      "SELECT pg_advisory_xact_lock(hashtext('focus-provider-secrets'))",
+    await db.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('focus-provider-secrets'))`,
     );
     const current = await secrets(),
       result = await update(current);
-    await run(
-      'INSERT INTO focus_auth.provider_secrets(id,payload) VALUES(1,?::jsonb) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,updated_at=now()',
-      JSON.stringify(encryptSecrets(current)),
-    );
+    await db
+      .insert(provider_secrets)
+      .values({ id: 1, payload: encryptSecrets(current) })
+      .onConflictDoUpdate({
+        target: provider_secrets.id,
+        set: { payload: sql`excluded.payload`, updated_at: sql`now()` },
+      });
     return result;
   });
 }
