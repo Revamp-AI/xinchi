@@ -1,9 +1,7 @@
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
+import { and, eq, gte, inArray, or, sql } from 'drizzle-orm';
 import {
-  all,
-  one,
-  run,
   transaction,
   lockWorkspace,
   uid,
@@ -12,6 +10,8 @@ import {
   setSetting,
   getSetting,
 } from './db.mjs';
+import { db } from './postgres.ts';
+import { contact_queue, contact_runs, sources } from './schema/index.ts';
 import { expireLeases } from './leases.ts';
 import { REMOTE_WORKERS } from './runtime.mjs';
 export async function startContactProjection({
@@ -40,27 +40,55 @@ export async function startContactProjection({
   const id = await transaction(async () => {
     await lockWorkspace();
     await expireLeases('contact_runs');
-    const active = await one(
-      "SELECT id FROM contact_runs WHERE state IN ('queued','running')",
-    );
+    const [active] = await db
+      .select({ id: contact_runs.id })
+      .from(contact_runs)
+      .where(inArray(contact_runs.state, ['queued', 'running']));
     if (active) return active.id;
     if (retry)
-      await run(
-        "UPDATE contact_queue SET state='pending',attempts=0,error='' WHERE state='failed'",
-      );
+      await db
+        .update(contact_queue)
+        .set({ state: 'pending', attempts: 0, error: '' })
+        .where(eq(contact_queue.state, 'failed'));
     else if (!drain) {
-      await run(
-        `INSERT INTO contact_queue(source_id,content_hash) SELECT id,content_hash FROM sources WHERE ${full ? 'true' : "occurred_at>=? OR provider='manual'"} ON CONFLICT(source_id) DO UPDATE SET state='pending',attempts=0,error='',content_hash=excluded.content_hash`,
-        ...(full ? [] : [new Date(Date.now() - 90 * 86400000).toISOString()]),
-      );
+      await db
+        .insert(contact_queue)
+        .select(
+          db
+            .select({
+              source_id: sources.id,
+              content_hash: sources.content_hash,
+            })
+            .from(sources)
+            .where(
+              full
+                ? undefined
+                : or(
+                    gte(
+                      sources.occurred_at,
+                      new Date(Date.now() - 90 * 86400000).toISOString(),
+                    ),
+                    eq(sources.provider, 'manual'),
+                  ),
+            ),
+        )
+        .onConflictDoUpdate({
+          target: contact_queue.source_id,
+          set: {
+            state: 'pending',
+            attempts: 0,
+            error: '',
+            content_hash: sql`excluded.content_hash`,
+          },
+        });
     }
     const id = uid();
-    await run(
-      "INSERT INTO contact_runs(id,state,started_at,updated_at) VALUES(?,'queued',?,?)",
+    await db.insert(contact_runs).values({
       id,
-      stamp(),
-      stamp(),
-    );
+      state: 'queued',
+      started_at: stamp(),
+      updated_at: stamp(),
+    });
     return id;
   });
   if (REMOTE_WORKERS) return { id };
@@ -76,18 +104,21 @@ export async function startContactProjection({
   );
   child.unref();
   child.on('error', () =>
-    run(
-      "UPDATE contact_runs SET state='failed',message='Could not start extraction' WHERE id=? AND state='queued'",
-      id,
-    ).catch(() => {}),
+    db
+      .update(contact_runs)
+      .set({ state: 'failed', message: 'Could not start extraction' })
+      .where(and(eq(contact_runs.id, id), eq(contact_runs.state, 'queued')))
+      .catch(() => {}),
   );
   return { id };
 }
 export async function recoverContactRuns() {
   await expireLeases('contact_runs');
-  return all(
-    "SELECT source_id,error FROM contact_queue WHERE state='failed' LIMIT 10",
-  );
+  return db
+    .select({ source_id: contact_queue.source_id, error: contact_queue.error })
+    .from(contact_queue)
+    .where(eq(contact_queue.state, 'failed'))
+    .limit(10);
 }
 
 // Discover historical sources once, then always drain new source revisions.
@@ -95,17 +126,33 @@ export async function scheduleContactHistory() {
   return transaction(async () => {
     await lockWorkspace();
     if (!(await getSetting('contact_history_backfill_v1'))) {
-      await run(
-        "INSERT INTO contact_queue(source_id,content_hash) SELECT id,content_hash FROM sources WHERE provider IN ('gmail','fireflies','granola','beeper') ON CONFLICT(source_id) DO NOTHING",
-      );
+      await db
+        .insert(contact_queue)
+        .select(
+          db
+            .select({
+              source_id: sources.id,
+              content_hash: sources.content_hash,
+            })
+            .from(sources)
+            .where(
+              inArray(sources.provider, [
+                'gmail',
+                'fireflies',
+                'granola',
+                'beeper',
+              ]),
+            ),
+        )
+        .onConflictDoNothing({ target: contact_queue.source_id });
       await setSetting('contact_history_backfill_v1', stamp());
     }
-    if (
-      !(await one(
-        "SELECT source_id FROM contact_queue WHERE state='pending' LIMIT 1",
-      ))
-    )
-      return null;
+    const [pending] = await db
+      .select({ source_id: contact_queue.source_id })
+      .from(contact_queue)
+      .where(eq(contact_queue.state, 'pending'))
+      .limit(1);
+    if (!pending) return null;
     return startContactProjection({ drain: true });
   });
 }
