@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { db, lockWorkspace, transaction as dbTransaction } from './postgres.ts';
 import { one, run, stamp, uid, setSetting, upsertSource } from './db.mjs';
 import {
+  contact_queue,
   contact_runs,
   durable_runs,
   import_uploads,
@@ -36,6 +37,15 @@ type Adapters = {
   advance?: (provider: string, cursor: unknown) => Promise<Step>;
   project?: (sourceId: string, guard: () => Promise<void>) => Promise<unknown>;
 };
+type DurableRun = typeof durable_runs.$inferSelect;
+// A durable run's parent row. Only sync runs have a provider and a changed
+// count, and only contact runs a review request.
+type Parent =
+  | (typeof sync_runs.$inferSelect & { review_requested?: undefined })
+  | (typeof contact_runs.$inferSelect & {
+      provider?: undefined;
+      changed?: undefined;
+    });
 // Properties a failed step or projection may carry.
 type StepError = Error & {
   lostUnit?: boolean;
@@ -61,6 +71,33 @@ const transaction = <T>(fn: () => Promise<T>) =>
 // The durable_runs row for one run.
 const durableRun = (kind: string, id: string) =>
   and(eq(durable_runs.kind, kind), eq(durable_runs.run_id, id));
+// Rows are read FOR UPDATE; callers hold the workspace lock.
+const lockDurableRun = async (
+  kind: string,
+  id: string,
+): Promise<DurableRun | undefined> =>
+  (
+    await db
+      .select()
+      .from(durable_runs)
+      .where(durableRun(kind, id))
+      .for('update')
+  )[0];
+function parentTable(kind: string) {
+  const table = (
+    parents as Record<
+      string,
+      (typeof parents)[keyof typeof parents] | undefined
+    >
+  )[kind];
+  if (!table) throw Error('Unknown ingestion queue.');
+  return table;
+}
+const lockParent = async (
+  table: ReturnType<typeof parentTable>,
+  id: string,
+): Promise<Parent | undefined> =>
+  (await db.select().from(table).where(eq(table.id, id)).for('update'))[0];
 function tableFor(kind: string) {
   if (!tables[kind]) throw Error('Unknown ingestion queue.');
   return tables[kind];
@@ -185,16 +222,9 @@ export async function resumeDurable(
 ) {
   return transaction(async () => {
     await lockWorkspace();
-    const table = tableFor(kind),
-      parent = await one(
-        'SELECT * FROM ' + table + ' WHERE id=? FOR UPDATE',
-        id,
-      ),
-      row = await one(
-        'SELECT * FROM durable_runs WHERE kind=? AND run_id=? FOR UPDATE',
-        kind,
-        id,
-      );
+    const table = parentTable(kind),
+      parent = await lockParent(table, id),
+      row = await lockDurableRun(kind, id);
     if (!row) return null;
     if (
       !parent ||
@@ -202,33 +232,49 @@ export async function resumeDurable(
       (provider && parent.provider !== provider)
     )
       throw Error('Only a failed import can be resumed.');
-    if (
-      await one(
-        'SELECT id FROM ' +
-          table +
-          " WHERE state IN ('queued','running','uploading')" +
-          (kind === 'sync' ? ' AND provider=?' : ''),
-        ...(kind === 'sync' ? [parent.provider] : []),
-      )
-    )
+    const active = await db
+      .select({ id: table.id })
+      .from(table)
+      .where(
+        and(
+          inArray(table.state, ['queued', 'running', 'uploading']),
+          kind === 'sync'
+            ? eq(sync_runs.provider, parent.provider!)
+            : undefined,
+        ),
+      );
+    if (active.length)
       throw Error('An import for this connection is already running.');
     if (kind === 'contacts')
-      await run(
-        "UPDATE contact_queue SET state='pending',attempts=0,error='' WHERE state='failed'",
-      );
-    await run(
-      "UPDATE durable_runs SET workflow_id='',dispatch_token='',dispatch_until=NULL,unit_token='',unit_until=NULL,attempts=0,completed=false,outcome=?::jsonb,updated_at=now() WHERE kind=? AND run_id=?",
-      JSON.stringify({ done: false, revision: row.revision }),
-      kind,
-      id,
-    );
-    await run(
-      'UPDATE ' +
-        table +
-        " SET state='queued',finished_at=NULL,lease_owner='',lease_until=NULL,updated_at=?,message='Resuming from saved progress' WHERE id=?",
-      stamp(),
-      id,
-    );
+      await db
+        .update(contact_queue)
+        .set({ state: 'pending', attempts: 0, error: '' })
+        .where(eq(contact_queue.state, 'failed'));
+    await db
+      .update(durable_runs)
+      .set({
+        workflow_id: '',
+        dispatch_token: '',
+        dispatch_until: null,
+        unit_token: '',
+        unit_until: null,
+        attempts: 0,
+        completed: false,
+        outcome: { done: false, revision: row.revision },
+        updated_at: sql`now()`,
+      })
+      .where(durableRun(kind, id));
+    await db
+      .update(table)
+      .set({
+        state: 'queued',
+        finished_at: null,
+        lease_owner: '',
+        lease_until: null,
+        updated_at: stamp(),
+        message: 'Resuming from saved progress',
+      })
+      .where(eq(table.id, id));
     return { id };
   });
 }
