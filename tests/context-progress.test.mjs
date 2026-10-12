@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {upsertSource,one,all,run} from '../lib/db.mjs';
 import {createJob} from '../lib/agent.mjs';
-import {claimLease,cancelLease} from '../lib/leases.mjs';
+import {claimLease,cancelLease} from '../lib/leases.ts';
 import {callContextTool} from '../lib/context-tools.mjs';
 
 test('parallel source reads record progress without upgrading conflicting shared locks',async()=>{

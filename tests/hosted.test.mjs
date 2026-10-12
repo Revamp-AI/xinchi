@@ -14,7 +14,7 @@ const runtime=await import('../lib/runtime.mjs');
 const {one,run,exportData,stamp}=await import('../lib/db.mjs');
 const route=await import('../app/api/[...path]/route.js');
 const cron=await import('../app/api/internal/jobs/route.js');
-const {expireLeases}=await import('../lib/leases.mjs');
+const {expireLeases}=await import('../lib/leases.ts');
 const request=(path,host='focus.example',extra={})=>new Request('https://focus.example/api/'+path,{headers:{host,...extra}});
 test('hosted origin and cookies fail closed; forwarded hosts cannot bypass origin checks',()=>{
  assert.equal(auth.CALLBACK,'https://focus.example/api/auth/google/callback');
