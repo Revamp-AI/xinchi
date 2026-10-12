@@ -7,7 +7,7 @@ import { db, transaction } from './postgres.ts';
 import { provider_secrets } from './schema/index.ts';
 import { POSTGRES_SECRETS } from './runtime.mjs';
 
-type GoogleGrant = {
+export type GoogleGrant = {
   access_token?: string;
   refresh_token?: string;
   scope?: string;

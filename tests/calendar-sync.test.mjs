@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 process.env.XIN_AGENT_MODE='cloud';
 const {upsertSource,all,one,run,setSetting}=await import('../lib/db.mjs');
 const {secrets,saveSecrets}=await import('../lib/secret-store.ts');
-const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.mjs');
+const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.ts');
 const {callContextTool}=await import('../lib/context-tools.mjs');
 const day=new Date(Date.now()+86400000).toISOString().slice(0,10);
 const event={id:'fixture-event',summary:'Project delivery review',status:'confirmed',start:{dateTime:day+'T10:00:00+08:00',timeZone:'Asia/Singapore'},end:{dateTime:day+'T11:00:00+08:00',timeZone:'Asia/Singapore'},attendees:[{email:'owner@example.com',self:true,responseStatus:'accepted'}],description:'Review the promised implementation plan.'};

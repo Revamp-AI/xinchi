@@ -9,7 +9,7 @@ const privateDir=mkdtempSync(join(tmpdir(),'focus-ingestion-providers-'));proces
 delete process.env.VERCEL;delete process.env.XIN_SECRET_STORAGE;
 process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 process.env.GOOGLE_CLIENT_ID='fixture-client.apps.googleusercontent.com';process.env.GOOGLE_CLIENT_SECRET='fixture-client-secret';
-const {initialProviderCursor:initialWithFreshness,advanceProvider}=await import('../lib/ingestion-providers.mjs');
+const {initialProviderCursor:initialWithFreshness,advanceProvider}=await import('../lib/ingestion-providers.ts');
 const {saveSecrets,secrets,updateSecrets}=await import('../lib/secret-store.ts');
 const {getSetting,setSetting,transaction,upsertSource,one}=await import('../lib/db.mjs');
 // Core checkpoint tests start after the independently tested recent-mail pass.
