@@ -1,4 +1,6 @@
-import { one } from './db.mjs';
+import { and, eq } from 'drizzle-orm';
+import { db } from './postgres.ts';
+import { contact_runs, jobs, sync_runs } from './schema/index.ts';
 import { CLOUD_JOBS } from './runtime.mjs';
 export async function workerStatus() {
   return {
@@ -13,10 +15,21 @@ export const queues = {
   sync_runs: { state: 'state', script: 'sync-worker.mjs' },
   contact_runs: { state: 'state', script: 'contact-worker.mjs' },
 };
+// Each queue's table and the column queues[table].state names.
+const queueTables = {
+  jobs: [jobs, jobs.status],
+  sync_runs: [sync_runs, sync_runs.state],
+  contact_runs: [contact_runs, contact_runs.state],
+} as const;
 export async function queuedWork(table: string) {
   const q: { state: string } | undefined = queues[table as keyof typeof queues];
   if (!q) throw Error('Unknown worker queue.');
-  return one(
-    `SELECT id FROM ${table} WHERE ${q.state}='queued' AND lease_owner='' ORDER BY updated_at,id LIMIT 1`,
-  );
+  const [t, state] = queueTables[table as keyof typeof queueTables];
+  const [row] = await db
+    .select({ id: t.id })
+    .from(t)
+    .where(and(eq(state, 'queued'), eq(t.lease_owner, '')))
+    .orderBy(t.updated_at, t.id)
+    .limit(1);
+  return row;
 }
