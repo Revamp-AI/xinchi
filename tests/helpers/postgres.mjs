@@ -1,4 +1,4 @@
-import {migrateDatabase} from '../../lib/migrations.mjs';
+import {migrateDatabase} from '../../lib/migrations.ts';
 import pg from 'pg';
 import {randomUUID} from 'node:crypto';
 import {after} from 'node:test';

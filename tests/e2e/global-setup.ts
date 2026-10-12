@@ -67,7 +67,7 @@ export default async function globalSetup(config: FullConfig) {
   process.env.XIN_DATA_DIR = dataDir;
   process.env.XIN_ALLOWED_EMAIL = ownerEmail;
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
-  const { migrateDatabase } = await import('../../lib/migrations.mjs');
+  const { migrateDatabase } = await import('../../lib/migrations.ts');
   await migrateDatabase();
   const db = await import('../../lib/db.mjs');
   if(process.env.FOCUS_E2E_DURABLE === '1') {

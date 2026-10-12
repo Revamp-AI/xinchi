@@ -1,4 +1,4 @@
-import {migrateDatabase} from '../lib/migrations.mjs';
+import {migrateDatabase} from '../lib/migrations.ts';
 import {DatabaseSync,backup} from 'node:sqlite';
 import {mkdirSync,existsSync,chmodSync} from 'node:fs';
 import {resolve,join} from 'node:path';

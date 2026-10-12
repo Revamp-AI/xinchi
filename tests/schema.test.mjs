@@ -1,4 +1,4 @@
-import {migrateDatabase} from '../lib/migrations.mjs';
+import {migrateDatabase} from '../lib/migrations.ts';
 import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
