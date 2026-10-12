@@ -160,10 +160,14 @@ export async function finishManualUpload({
   return transaction(async () => {
     const upload = await uploadRun(id);
     if (upload.state !== 'uploading') return { id, queued: true };
-    const chunks = await all(
-      'SELECT part,octet_length(content) AS bytes FROM import_chunks WHERE run_id=? ORDER BY part',
-      id,
-    );
+    const chunks = await db
+      .select({
+        part: import_chunks.part,
+        bytes: sql<number>`octet_length(${import_chunks.content})`,
+      })
+      .from(import_chunks)
+      .where(eq(import_chunks.run_id, id))
+      .orderBy(import_chunks.part);
     if (
       chunks.length !== parts ||
       chunks.some((chunk, index) => chunk.part !== index)
@@ -174,29 +178,36 @@ export async function finishManualUpload({
       upload.expected_bytes
     )
       fail('The uploaded file size does not match. Choose the file again.');
-    await run(
-      "UPDATE sync_runs SET state='queued',message='File uploaded; import queued',updated_at=? WHERE id=?",
-      stamp(),
-      id,
-    );
+    await db
+      .update(sync_runs)
+      .set({
+        state: 'queued',
+        message: 'File uploaded; import queued',
+        updated_at: stamp(),
+      })
+      .where(eq(sync_runs.id, id));
     return { id, queued: true };
   });
 }
 
 export async function cancelManualUpload({ id }: { id: string }) {
   return transaction(async () => {
-    const row = await one(
-      "SELECT state FROM sync_runs WHERE id=? AND provider='manual' FOR UPDATE",
-      id,
-    );
+    const [row] = await db
+      .select({ state: sync_runs.state })
+      .from(sync_runs)
+      .where(and(eq(sync_runs.id, id), eq(sync_runs.provider, 'manual')))
+      .for('update');
     if (row?.state === 'uploading') {
-      await run(
-        "UPDATE sync_runs SET state='failed',message='Upload cancelled; choose the file again',updated_at=?,finished_at=? WHERE id=?",
-        stamp(),
-        stamp(),
-        id,
-      );
-      await run('DELETE FROM import_uploads WHERE run_id=?', id);
+      await db
+        .update(sync_runs)
+        .set({
+          state: 'failed',
+          message: 'Upload cancelled; choose the file again',
+          updated_at: stamp(),
+          finished_at: stamp(),
+        })
+        .where(eq(sync_runs.id, id));
+      await db.delete(import_uploads).where(eq(import_uploads.run_id, id));
     }
     return { id, cancelled: row?.state === 'uploading' };
   });
