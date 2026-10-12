@@ -1,12 +1,17 @@
 import { parse } from 'csv-parse/sync';
-import { eq, getColumns, isNull, sql } from 'drizzle-orm';
-import { db, run, transaction, lockWorkspace } from './postgres.ts';
+import { and, eq, getColumns, isNull, notExists, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import { db, transaction, lockWorkspace } from './postgres.ts';
 import { uid, hash, stamp, dateOK } from './db.mjs';
 import { emailAddress, personalEmail } from './contact-email.mjs';
 import { evaluateContacts as evaluate } from './contacts.mjs';
 import {
+  affiliations,
   contact_identities,
   contacts as contactsTable,
+  identity_reviews,
+  organizations,
+  source_versions,
   sources as sourcesTable,
 } from './schema/index.ts';
 
@@ -15,6 +20,11 @@ import {
 const evaluateContacts = evaluate as unknown as (
   ids: string[],
 ) => Promise<void>;
+// Binds rows as one jsonb parameter and reads them back as the record x.
+const recordset = (rows: object[], columns: string) =>
+  sql`jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS x(${sql.raw(columns)})`;
+// A column of the recordset x, aliased so Drizzle accepts it in an insert.
+const field = (column: string) => sql.raw('x.' + column).as(column);
 export type LinkedinConnection = {
   name: string;
   email: string;
@@ -398,26 +408,89 @@ export async function importLinkedinBatch(records: LinkedinConnection[]) {
     const { summary, changed, newContacts, updates, reviews } =
       await plan(records);
     if (newContacts.length)
-      await run(
-        'INSERT INTO contacts(id,name,email,role,confirmed) SELECT id,name,email,role,false FROM jsonb_to_recordset(?::jsonb) AS x(id text,name text,email text,role text)',
-        JSON.stringify(newContacts),
+      await db.insert(contactsTable).select(
+        db
+          .select({
+            id: field('id'),
+            name: field('name'),
+            email: field('email'),
+            role: field('role'),
+            confirmed: sql`false`.as('confirmed'),
+          })
+          .from(
+            recordset(newContacts, 'id text,name text,email text,role text'),
+          ),
       );
     if (updates.length)
-      await run(
-        'UPDATE contacts c SET email=x.email,role=x.role,version=c.version+1,updated_at=now() FROM jsonb_to_recordset(?::jsonb) AS x(id text,email text,role text) WHERE c.id=x.id',
-        JSON.stringify(updates),
-      );
+      await db
+        .update(contactsTable)
+        .set({
+          email: sql`x.email`,
+          role: sql`x.role`,
+          version: sql`${contactsTable.version} + 1`,
+          updated_at: sql`now()`,
+        })
+        .from(recordset(updates, 'id text,email text,role text'))
+        .where(sql`${contactsTable.id} = x.id`);
     if (changed.length) {
       const time = stamp(),
         docs = changed.map(({ doc }) => ({ ...doc, version_id: uid(), time }));
-      await run(
-        "INSERT INTO sources(id,provider,external_id,title,occurred_at,body,url,coverage,content_hash,imported_at,updated_at) SELECT id,'manual',external_id,title,occurred_at,body,url,coverage,content_hash,time,time FROM jsonb_to_recordset(?::jsonb) AS x(id text,external_id text,title text,occurred_at text,body text,url text,coverage text,content_hash text,time text) ON CONFLICT(id) DO UPDATE SET title=excluded.title,body=excluded.body,url=excluded.url,content_hash=excluded.content_hash,updated_at=excluded.updated_at",
-        JSON.stringify(docs),
-      );
-      await run(
-        'INSERT INTO source_versions(id,source_id,content_hash,raw_json,fetched_at,normalized_body) SELECT version_id,id,content_hash,raw_json,time,body FROM jsonb_to_recordset(?::jsonb) AS x(version_id text,id text,content_hash text,raw_json text,time text,body text) ON CONFLICT(source_id,content_hash) DO NOTHING',
-        JSON.stringify(docs),
-      );
+      await db
+        .insert(sourcesTable)
+        .select(
+          db
+            .select({
+              id: field('id'),
+              provider: sql`'manual'`.as('provider'),
+              external_id: field('external_id'),
+              title: field('title'),
+              occurred_at: field('occurred_at'),
+              body: field('body'),
+              url: field('url'),
+              coverage: field('coverage'),
+              content_hash: field('content_hash'),
+              imported_at: field('time'),
+              updated_at: field('time'),
+            })
+            .from(
+              recordset(
+                docs,
+                'id text,external_id text,title text,occurred_at text,body text,url text,coverage text,content_hash text,time text',
+              ),
+            ),
+        )
+        .onConflictDoUpdate({
+          target: sourcesTable.id,
+          set: {
+            title: sql`excluded.title`,
+            body: sql`excluded.body`,
+            url: sql`excluded.url`,
+            content_hash: sql`excluded.content_hash`,
+            updated_at: sql`excluded.updated_at`,
+          },
+        });
+      await db
+        .insert(source_versions)
+        .select(
+          db
+            .select({
+              id: field('version_id'),
+              source_id: field('id'),
+              content_hash: field('content_hash'),
+              raw_json: field('raw_json'),
+              fetched_at: field('time'),
+              normalized_body: field('body'),
+            })
+            .from(
+              recordset(
+                docs,
+                'version_id text,id text,content_hash text,raw_json text,time text,body text',
+              ),
+            ),
+        )
+        .onConflictDoNothing({
+          target: [source_versions.source_id, source_versions.content_hash],
+        });
       const bindings = changed.map(({ record: r, doc, contact_id }) => ({
         id: uid(),
         contact_id,
@@ -426,10 +499,39 @@ export async function importLinkedinBatch(records: LinkedinConnection[]) {
         email: personalEmail(r.email),
         source_id: doc.id,
       }));
-      await run(
-        "INSERT INTO contact_identities(id,contact_id,provider,account,external_key,display_name,address,source_id) SELECT id,contact_id,'linkedin','workspace',key,name,email,source_id FROM jsonb_to_recordset(?::jsonb) AS x(id text,contact_id text,key text,name text,email text,source_id text) ON CONFLICT(provider,account,external_key) DO UPDATE SET display_name=excluded.display_name,address=CASE WHEN excluded.address<>'' THEN excluded.address ELSE contact_identities.address END,source_id=excluded.source_id",
-        JSON.stringify(bindings),
-      );
+      await db
+        .insert(contact_identities)
+        .select(
+          db
+            .select({
+              id: field('id'),
+              contact_id: field('contact_id'),
+              provider: sql`'linkedin'`.as('provider'),
+              account: sql`'workspace'`.as('account'),
+              external_key: field('key'),
+              display_name: field('name'),
+              address: field('email'),
+              source_id: field('source_id'),
+            })
+            .from(
+              recordset(
+                bindings,
+                'id text,contact_id text,key text,name text,email text,source_id text',
+              ),
+            ),
+        )
+        .onConflictDoUpdate({
+          target: [
+            contact_identities.provider,
+            contact_identities.account,
+            contact_identities.external_key,
+          ],
+          set: {
+            display_name: sql`excluded.display_name`,
+            address: sql`CASE WHEN excluded.address<>'' THEN excluded.address ELSE ${contact_identities.address} END`,
+            source_id: sql`excluded.source_id`,
+          },
+        });
       const companies = [
         ...new Set(
           changed
@@ -444,11 +546,11 @@ export async function importLinkedinBatch(records: LinkedinConnection[]) {
           .record.company,
       }));
       if (orgs.length) {
-        await run(
-          'INSERT INTO organizations(id,name) SELECT id,name FROM jsonb_to_recordset(?::jsonb) AS x(id text,name text) ON CONFLICT(lower(name)) DO NOTHING',
-          JSON.stringify(orgs),
+        // Drizzle conflict targets are columns; organizations are unique by lower(name).
+        await db.execute(
+          sql`INSERT INTO ${organizations} (id, name) SELECT id, name FROM ${recordset(orgs, 'id text,name text')} ON CONFLICT (lower(name)) DO NOTHING`,
         );
-        const affiliations = [
+        const rows = [
           ...new Map(
             changed
               .filter((c) => c.record.company)
@@ -467,20 +569,63 @@ export async function importLinkedinBatch(records: LinkedinConnection[]) {
               ]),
           ).values(),
         ];
-        await run(
-          'INSERT INTO affiliations(id,contact_id,organization_id,role) SELECT x.id,x.contact_id,o.id,x.role FROM jsonb_to_recordset(?::jsonb) AS x(id text,contact_id text,company text,role text) JOIN organizations o ON lower(o.name)=lower(x.company) WHERE NOT EXISTS(SELECT 1 FROM affiliations a WHERE a.contact_id=x.contact_id AND a.organization_id=o.id AND a.role=x.role)',
-          JSON.stringify(affiliations),
+        const a = alias(affiliations, 'a');
+        await db.insert(affiliations).select(
+          db
+            .select({
+              id: field('id'),
+              contact_id: field('contact_id'),
+              organization_id: organizations.id,
+              role: field('role'),
+            })
+            .from(
+              recordset(rows, 'id text,contact_id text,company text,role text'),
+            )
+            .innerJoin(
+              organizations,
+              sql`lower(${organizations.name}) = lower(x.company)`,
+            )
+            .where(
+              notExists(
+                db
+                  .select({ one: sql`1` })
+                  .from(a)
+                  .where(
+                    and(
+                      sql`${a.contact_id} = x.contact_id`,
+                      eq(a.organization_id, organizations.id),
+                      sql`${a.role} = x.role`,
+                    ),
+                  ),
+              ),
+            ),
         );
       }
       // Profile metadata is not an interaction and must never enter the activity queue.
       await evaluateContacts([...new Set(changed.map((c) => c.contact_id))]);
     }
     if (reviews.length) {
-      const inserted = await run(
-        'INSERT INTO identity_reviews(id,left_id,right_id,reason) SELECT id,left_id,right_id,reason FROM jsonb_to_recordset(?::jsonb) AS x(id text,left_id text,right_id text,reason text) ON CONFLICT(left_id,right_id) DO NOTHING',
-        JSON.stringify(reviews),
-      );
-      summary.review_pairs = inserted.changes!;
+      const inserted = await db
+        .insert(identity_reviews)
+        .select(
+          db
+            .select({
+              id: field('id'),
+              left_id: field('left_id'),
+              right_id: field('right_id'),
+              reason: field('reason'),
+            })
+            .from(
+              recordset(
+                reviews,
+                'id text,left_id text,right_id text,reason text',
+              ),
+            ),
+        )
+        .onConflictDoNothing({
+          target: [identity_reviews.left_id, identity_reviews.right_id],
+        });
+      summary.review_pairs = inserted.rowCount!;
     }
     return summary;
   });
