@@ -1,4 +1,5 @@
 import { parse } from 'csv-parse/sync';
+import { and, desc, eq, getColumns, isNull, sql } from 'drizzle-orm';
 import {
   emailAddress,
   exactEmailContacts,
@@ -24,6 +25,24 @@ import {
   SEGMENTS,
   RULE_VERSION,
 } from './relationship-rules.mjs';
+import { db } from './postgres.ts';
+import {
+  affiliations,
+  contact_identities,
+  contact_insights,
+  contact_state_history,
+  contact_states,
+  contacts,
+  interaction_participants,
+  interaction_sources,
+  interactions,
+  item_contacts,
+  items,
+  message_drafts,
+  organizations,
+  source_versions,
+  sources,
+} from './schema/index.ts';
 
 // Request bodies, MCP tools and importers pass these fields unchecked; each
 // one is validated or coerced where it is used.
@@ -69,10 +88,10 @@ const text = (v: unknown, max = 2000) =>
     .trim()
     .slice(0, max);
 export async function existingContact(id: string | undefined) {
-  const row = await one(
-    'SELECT * FROM contacts WHERE id=? AND merged_into IS NULL',
-    id || '',
-  );
+  const [row] = await db
+    .select()
+    .from(contacts)
+    .where(and(eq(contacts.id, id || ''), isNull(contacts.merged_into)));
   if (!row) throw Error('Contact not found.');
   return row;
 }
@@ -142,7 +161,7 @@ export async function saveContact(input: ContactInput) {
     if ('snoozed_until' in input) {
       if (input.snoozed_until && !dateOK(input.snoozed_until))
         throw Error('Choose a valid snooze date.');
-      row.snoozed_until = input.snoozed_until || null;
+      row.snoozed_until = (input.snoozed_until as string) || null;
     }
     if ('tags' in input) {
       if (!Array.isArray(input.tags)) throw Error('Tags must be a list.');
@@ -357,15 +376,50 @@ export async function suggestIdentityMatches(
     );
   }
 }
+// cc, mentioned and uncertain participants were not part of the conversation.
+const participantQualified = sql<boolean>`CASE WHEN ${interaction_participants.role} IN ('cc','mentioned','uncertain') THEN false ELSE ${interactions.qualified} END`;
 export async function readInteractions(
   id: string,
   limit: unknown = 300,
   offset: unknown = 0,
 ) {
-  return all(
-    `SELECT i.*,CASE WHEN p.role IN ('cc','mentioned','uncertain') THEN false ELSE i.qualified END AS qualified,COALESCE((SELECT jsonb_agg(jsonb_build_object('source_id',s.source_id,'source_version_id',s.source_version_id,'quote',s.quote)) FROM interaction_sources s JOIN source_versions v ON v.id=s.source_version_id JOIN sources src ON src.id=s.source_id WHERE s.interaction_id=i.id AND v.content_hash=src.content_hash),'[]'::jsonb) AS citations FROM interactions i JOIN interaction_participants p ON p.interaction_id=i.id WHERE p.contact_id=? ORDER BY occurred_at DESC NULLS LAST,i.id ${limit ? 'LIMIT ' + Math.min(1000, Math.max(1, Number(limit) || 300)) + ' OFFSET ' + Math.max(0, Math.floor(Number(offset) || 0)) : ''}`,
-    id,
-  );
+  const citations = db
+    .select({
+      citations: sql`jsonb_agg(jsonb_build_object('source_id',${interaction_sources.source_id},'source_version_id',${interaction_sources.source_version_id},'quote',${interaction_sources.quote}))`,
+    })
+    .from(interaction_sources)
+    .innerJoin(
+      source_versions,
+      eq(source_versions.id, interaction_sources.source_version_id),
+    )
+    .innerJoin(sources, eq(sources.id, interaction_sources.source_id))
+    .where(
+      and(
+        eq(interaction_sources.interaction_id, interactions.id),
+        eq(source_versions.content_hash, sources.content_hash),
+      ),
+    );
+  const query = db
+    .select({
+      ...getColumns(interactions),
+      qualified: participantQualified,
+      citations: sql<
+        { source_id: string; source_version_id: string; quote: string }[]
+      >`COALESCE((${citations}),'[]'::jsonb)`,
+    })
+    .from(interactions)
+    .innerJoin(
+      interaction_participants,
+      eq(interaction_participants.interaction_id, interactions.id),
+    )
+    .where(eq(interaction_participants.contact_id, id))
+    .orderBy(sql`${interactions.occurred_at} DESC NULLS LAST`, interactions.id)
+    .$dynamic();
+  return limit
+    ? query
+        .limit(Math.min(1000, Math.max(1, Number(limit) || 300)))
+        .offset(Math.max(0, Math.floor(Number(offset) || 0)))
+    : query;
 }
 export async function evaluateContacts(ids: string[] | null = null) {
   if (!ids) {
@@ -550,35 +604,74 @@ export async function contactDetail(id: string, evaluate = true) {
   if (evaluate) await evaluateContacts([id]);
   return {
     ...contact,
-    insight: await one(
-      'SELECT result,reviewed_at,dismissed FROM contact_insights WHERE contact_id=?',
-      id,
-    ),
-    relationship: await one(
-      'SELECT * FROM contact_states WHERE contact_id=?',
-      id,
-    ),
-    identities: await all(
-      "SELECT i.*,CASE WHEN i.provider='linkedin' THEN s.url END AS profile_url,CASE WHEN i.provider='linkedin' THEN v.raw_json::jsonb #>> '{linkedin_connection,connected_on}' END AS connected_on,v.id AS source_version_id FROM contact_identities i LEFT JOIN sources s ON s.id=i.source_id LEFT JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE i.contact_id=?",
-      id,
-    ),
-    affiliations: await all(
-      'SELECT a.*,o.name AS organization FROM affiliations a JOIN organizations o ON o.id=a.organization_id WHERE contact_id=? ORDER BY ended_on NULLS FIRST,started_on DESC NULLS LAST',
-      id,
-    ),
+    insight: (
+      await db
+        .select({
+          result: contact_insights.result,
+          reviewed_at: contact_insights.reviewed_at,
+          dismissed: contact_insights.dismissed,
+        })
+        .from(contact_insights)
+        .where(eq(contact_insights.contact_id, id))
+    )[0],
+    relationship: (
+      await db
+        .select()
+        .from(contact_states)
+        .where(eq(contact_states.contact_id, id))
+    )[0],
+    identities: await db
+      .select({
+        ...getColumns(contact_identities),
+        profile_url: sql<
+          string | null
+        >`CASE WHEN ${contact_identities.provider}='linkedin' THEN ${sources.url} END`,
+        connected_on: sql<
+          string | null
+        >`CASE WHEN ${contact_identities.provider}='linkedin' THEN ${source_versions.raw_json}::jsonb #>> '{linkedin_connection,connected_on}' END`,
+        source_version_id: source_versions.id,
+      })
+      .from(contact_identities)
+      .leftJoin(sources, eq(sources.id, contact_identities.source_id))
+      .leftJoin(
+        source_versions,
+        and(
+          eq(source_versions.source_id, sources.id),
+          eq(source_versions.content_hash, sources.content_hash),
+        ),
+      )
+      .where(eq(contact_identities.contact_id, id)),
+    affiliations: await db
+      .select({ ...getColumns(affiliations), organization: organizations.name })
+      .from(affiliations)
+      .innerJoin(
+        organizations,
+        eq(organizations.id, affiliations.organization_id),
+      )
+      .where(eq(affiliations.contact_id, id))
+      .orderBy(
+        sql`${affiliations.ended_on} NULLS FIRST`,
+        sql`${affiliations.started_on} DESC NULLS LAST`,
+      ),
     interactions: await readInteractions(id),
-    history: await all(
-      'SELECT * FROM contact_state_history WHERE contact_id=? ORDER BY changed_at DESC LIMIT 40',
-      id,
-    ),
-    items: await all(
-      'SELECT i.* FROM items i JOIN item_contacts c ON c.item_id=i.id WHERE c.contact_id=? ORDER BY i.created_at DESC',
-      id,
-    ),
-    drafts: await all(
-      'SELECT * FROM message_drafts WHERE contact_id=? ORDER BY created_at DESC LIMIT 20',
-      id,
-    ),
+    history: await db
+      .select()
+      .from(contact_state_history)
+      .where(eq(contact_state_history.contact_id, id))
+      .orderBy(desc(contact_state_history.changed_at))
+      .limit(40),
+    items: await db
+      .select(getColumns(items))
+      .from(items)
+      .innerJoin(item_contacts, eq(item_contacts.item_id, items.id))
+      .where(eq(item_contacts.contact_id, id))
+      .orderBy(desc(items.created_at)),
+    drafts: await db
+      .select()
+      .from(message_drafts)
+      .where(eq(message_drafts.contact_id, id))
+      .orderBy(desc(message_drafts.created_at))
+      .limit(20),
     profile_source_id: 'manual:contact-profile-' + id,
   };
 }
