@@ -1,4 +1,4 @@
-import {repairBeeperContactNames} from '../lib/beeper-contact-repair.mjs';
+import {repairBeeperContactNames} from '../lib/beeper-contact-repair.ts';
 import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';
 
 try{
