@@ -1,5 +1,14 @@
 import { parse } from 'csv-parse/sync';
-import { and, desc, eq, getColumns, isNull, ne, sql } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  getColumns,
+  isNull,
+  ne,
+  sql,
+  type SQLWrapper,
+} from 'drizzle-orm';
 import {
   emailAddress,
   exactEmailContacts,
@@ -30,6 +39,7 @@ import {
   affiliations,
   contact_identities,
   contact_insights,
+  contact_queue,
   contact_state_history,
   contact_states,
   contacts,
@@ -41,8 +51,10 @@ import {
   items,
   message_drafts,
   organizations,
+  settings as settingsTable,
   source_versions,
   sources,
+  sync_runs,
 } from './schema/index.ts';
 
 // Request bodies, MCP tools and importers pass these fields unchecked; each
@@ -82,6 +94,9 @@ type DraftInput = {
   body?: unknown;
 };
 type Coverage = { fresh: boolean; reason: string; checked_at?: string };
+type ContactState = typeof contact_states.$inferSelect & {
+  basis: { last_meaningful_at?: string | null };
+};
 
 export { emailAddress } from './contact-email.ts';
 const text = (v: unknown, max = 2000) =>
@@ -468,6 +483,9 @@ export async function readInteractions(
         .offset(Math.max(0, Math.floor(Number(offset) || 0)))
     : query;
 }
+// One array parameter, however many contacts are evaluated.
+const anyOf = (column: SQLWrapper, values: string[]) =>
+  sql`${column}=ANY(${sql.param(values)}::text[])`;
 export async function evaluateContacts(ids: string[] | null = null) {
   if (!ids) {
     const last = await getSetting('contacts_last_evaluation');
@@ -475,37 +493,58 @@ export async function evaluateContacts(ids: string[] | null = null) {
     if (
       last &&
       Date.now() - Date.parse(last) < 900000 &&
-      !(await one(
-        'SELECT c.id FROM contacts c LEFT JOIN contact_states s ON s.contact_id=c.id WHERE c.merged_into IS NULL AND c.archived=false AND s.rule_version IS DISTINCT FROM ? LIMIT 1',
-        RULE_VERSION,
-      ))
+      !(
+        await db
+          .select({ id: contacts.id })
+          .from(contacts)
+          .leftJoin(contact_states, eq(contact_states.contact_id, contacts.id))
+          .where(
+            and(
+              isNull(contacts.merged_into),
+              eq(contacts.archived, false),
+              sql`${contact_states.rule_version} IS DISTINCT FROM ${RULE_VERSION}`,
+            ),
+          )
+          .limit(1)
+      ).length
     )
       return;
   }
   await transaction(async () => {
     await lockWorkspace();
-    const contacts = ids
-      ? await all(
-          'SELECT * FROM contacts WHERE id=ANY(?::text[]) AND merged_into IS NULL',
-          ids,
-        )
-      : await all(
-          'SELECT * FROM contacts WHERE merged_into IS NULL AND archived=false',
-        );
-    if (!contacts.length) return;
-    const contactIds = contacts.map((c) => c.id),
+    const people = ids
+      ? await db
+          .select()
+          .from(contacts)
+          .where(and(anyOf(contacts.id, ids), isNull(contacts.merged_into)))
+      : await db
+          .select()
+          .from(contacts)
+          .where(
+            and(isNull(contacts.merged_into), eq(contacts.archived, false)),
+          );
+    if (!people.length) return;
+    const contactIds = people.map((c) => c.id),
       oldStates = new Map(
         (
-          await all(
-            'SELECT * FROM contact_states WHERE contact_id=ANY(?::text[])',
-            contactIds,
-          )
-        ).map((r) => [r.contact_id, r]),
+          await db
+            .select()
+            .from(contact_states)
+            .where(anyOf(contact_states.contact_id, contactIds))
+        ).map((r) => [r.contact_id, r as ContactState]),
       );
-    const events = await all(
-      "SELECT p.contact_id,i.*,CASE WHEN p.role IN ('cc','mentioned','uncertain') THEN false ELSE i.qualified END AS qualified FROM interactions i JOIN interaction_participants p ON p.interaction_id=i.id WHERE p.contact_id=ANY(?::text[])",
-      contactIds,
-    );
+    const events = await db
+      .select({
+        contact_id: interaction_participants.contact_id,
+        ...getColumns(interactions),
+        qualified: participantQualified,
+      })
+      .from(interactions)
+      .innerJoin(
+        interaction_participants,
+        eq(interaction_participants.interaction_id, interactions.id),
+      )
+      .where(anyOf(interaction_participants.contact_id, contactIds));
     const byContact = new Map<string, typeof events>();
     for (const e of events) {
       if (!byContact.has(e.contact_id)) byContact.set(e.contact_id, []);
@@ -513,36 +552,48 @@ export async function evaluateContacts(ids: string[] | null = null) {
     }
     const syncs = new Map(
       (
-        await all(
-          'SELECT DISTINCT ON(provider) * FROM sync_runs ORDER BY provider,started_at DESC,id DESC',
-        )
+        await db
+          .selectDistinctOn([sync_runs.provider])
+          .from(sync_runs)
+          .orderBy(
+            sync_runs.provider,
+            desc(sync_runs.started_at),
+            desc(sync_runs.id),
+          )
       ).map((r) => [r.provider, r]),
     );
     const settings = new Map(
       (
-        await all('SELECT * FROM settings WHERE key=ANY(?::text[])', [
-          'gmail_query',
-          ...contactIds.map((id) => 'contact_coverage:' + id),
-        ])
+        await db
+          .select()
+          .from(settingsTable)
+          .where(
+            anyOf(settingsTable.key, [
+              'gmail_query',
+              ...contactIds.map((id) => 'contact_coverage:' + id),
+            ]),
+          )
       ).map((r) => [r.key, JSON.parse(r.value)]),
     );
     const backlog = new Set(
       (
-        await all(
-          "SELECT DISTINCT s.provider FROM contact_queue q JOIN sources s ON s.id=q.source_id WHERE q.state<>'complete'",
-        )
+        await db
+          .selectDistinct({ provider: sources.provider })
+          .from(contact_queue)
+          .innerJoin(sources, eq(sources.id, contact_queue.source_id))
+          .where(ne(contact_queue.state, 'complete'))
       ).map((r) => r.provider),
     );
     const states = [],
       history = [];
-    for (const contact of contacts) {
+    for (const contact of people) {
       const interactions = byContact.get(contact.id) || [],
         manual = settings.get('contact_coverage:' + contact.id),
         providers = [
           ...new Set(
             interactions
               .map((i) => i.source_id?.split(':')[0])
-              .filter((p) => p && p !== 'manual'),
+              .filter((p): p is string => !!p && p !== 'manual'),
           ),
         ];
       let coverage: Coverage = {
@@ -620,7 +671,7 @@ export async function evaluateContacts(ids: string[] | null = null) {
           basis: {
             ...next.basis,
             reconnected:
-              ['Cooling', 'Dormant'].includes(old?.state) &&
+              ['Cooling', 'Dormant'].includes(old?.state as string) &&
               next.state === 'Active' &&
               Date.parse(next.basis.last_meaningful_at!) >
                 Date.parse(old?.basis.last_meaningful_at || '1970-01-01'),
@@ -628,15 +679,45 @@ export async function evaluateContacts(ids: string[] | null = null) {
           rule_version: RULE_VERSION,
         });
     }
-    await run(
-      'INSERT INTO contact_states(contact_id,state,basis,rule_version) SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(contact_id text,state text,basis jsonb,rule_version int) ON CONFLICT(contact_id) DO UPDATE SET state=excluded.state,basis=excluded.basis,evaluated_at=now(),rule_version=excluded.rule_version',
-      JSON.stringify(states),
-    );
-    if (history.length)
-      await run(
-        'INSERT INTO contact_state_history(id,contact_id,from_state,to_state,reason,basis,rule_version) SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(id text,contact_id text,from_state text,to_state text,reason text,basis jsonb,rule_version int)',
-        JSON.stringify(history),
+    // Each batch is one jsonb parameter, however many contacts it covers.
+    const stateRows = sql`jsonb_to_recordset(${JSON.stringify(states)}::jsonb) AS x(contact_id text,state text,basis jsonb,rule_version int)`;
+    await db
+      .insert(contact_states)
+      .select(
+        db
+          .select({
+            contact_id: sql<string>`x.contact_id`.as('contact_id'),
+            state: sql<string>`x.state`.as('state'),
+            basis: sql`x.basis`.as('basis'),
+            rule_version: sql<number>`x.rule_version`.as('rule_version'),
+          })
+          .from(stateRows),
+      )
+      .onConflictDoUpdate({
+        target: contact_states.contact_id,
+        set: {
+          state: sql`excluded.state`,
+          basis: sql`excluded.basis`,
+          evaluated_at: sql`now()`,
+          rule_version: sql`excluded.rule_version`,
+        },
+      });
+    if (history.length) {
+      const historyRows = sql`jsonb_to_recordset(${JSON.stringify(history)}::jsonb) AS x(id text,contact_id text,from_state text,to_state text,reason text,basis jsonb,rule_version int)`;
+      await db.insert(contact_state_history).select(
+        db
+          .select({
+            id: sql<string>`x.id`.as('id'),
+            contact_id: sql<string>`x.contact_id`.as('contact_id'),
+            from_state: sql<string | null>`x.from_state`.as('from_state'),
+            to_state: sql<string>`x.to_state`.as('to_state'),
+            reason: sql<string>`x.reason`.as('reason'),
+            basis: sql`x.basis`.as('basis'),
+            rule_version: sql<number>`x.rule_version`.as('rule_version'),
+          })
+          .from(historyRows),
       );
+    }
     if (!ids) await setSetting('contacts_last_evaluation', stamp());
   });
 }
