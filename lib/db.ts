@@ -4,7 +4,9 @@ import {
   desc,
   eq,
   getColumns,
+  getTableName,
   inArray,
+  is,
   isNull,
   ne,
   or,
@@ -12,12 +14,13 @@ import {
   type AnyColumn,
   type SQL,
 } from 'drizzle-orm';
+import { getTableConfig, PgTable } from 'drizzle-orm/pg-core';
 import { CONTACT_TABLES } from './contact-tables.mjs';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { MARK_START, MARK_END } from './marks.mjs';
-import { all, one, run, transaction, lockWorkspace, db } from './postgres.ts';
+import { transaction, lockWorkspace, db } from './postgres.ts';
 import { SERVERLESS } from './runtime.mjs';
 import { queueSourceReview } from './review-batches.ts';
 import {
@@ -34,6 +37,7 @@ import {
   sources,
   sync_runs,
 } from './schema/index.ts';
+import * as schema from './schema/index.ts';
 export {
   all,
   one,
@@ -743,14 +747,23 @@ export const exportTables = [
   'priority_updates',
   'priority_suggestions',
 ];
+// Public tables by name for the export list; focus_auth is never exported.
+const publicTables = new Map(
+  Object.values(schema as Record<string, unknown>)
+    .filter((t): t is PgTable => is(t, PgTable) && !getTableConfig(t).schema)
+    .map((t) => [getTableName(t), t]),
+);
 export async function exportData() {
   return transaction(async () => {
-    await run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await db.execute(
+      sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`,
+    );
     const data: Record<string, unknown> = {
       schema_version: 3,
       exported_at: stamp(),
     };
-    for (const t of exportTables) data[t] = await all('SELECT * FROM ' + t);
+    for (const t of exportTables)
+      data[t] = await db.select().from(publicTables.get(t)!);
     return data;
   });
 }
