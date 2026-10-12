@@ -22,6 +22,7 @@ import {
   sync_runs,
 } from './schema/index.ts';
 import { readReviewBatch } from './review-batches.ts';
+import { stripMarks } from './marks.mjs';
 
 type ContextTool = {
   name: string;
@@ -50,7 +51,6 @@ const readSetting = getSetting as (
   key: string,
   fallback: unknown,
 ) => Promise<unknown>;
-import { stripMarks } from './marks.mjs';
 export const contextTools: ContextTool[] = [
   {
     name: 'read_proposal_evidence',
