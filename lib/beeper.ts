@@ -217,38 +217,54 @@ export async function requireBeeperDevice(req: Request) {
   const value = (req.headers.get('authorization') || '').match(
     /^Bearer ([A-Za-z0-9_-]{43})$/,
   )?.[1];
-  const d =
-    value &&
-    (await one(
-      'SELECT id FROM focus_auth.beeper_devices WHERE token_hash=? AND revoked_at IS NULL AND owner_email=?',
-      hash(value),
-      owner(),
-    ));
+  const [d] = value
+    ? await db
+        .select({ id: beeper_devices.id })
+        .from(beeper_devices)
+        .where(
+          and(
+            eq(beeper_devices.token_hash, hash(value)),
+            isNull(beeper_devices.revoked_at),
+            eq(beeper_devices.owner_email, owner()),
+          ),
+        )
+    : [];
   if (!d)
     fail('Companion access expired or was revoked. Pair again in Focus.', 401);
   return d.id;
 }
 async function deviceFor(id: string) {
-  const d = await one(
-    'SELECT * FROM focus_auth.beeper_devices WHERE id=? AND revoked_at IS NULL AND owner_email=? FOR UPDATE',
-    id,
-    owner(),
-  );
+  const [d] = await db
+    .select()
+    .from(beeper_devices)
+    .where(
+      and(
+        eq(beeper_devices.id, id),
+        isNull(beeper_devices.revoked_at),
+        eq(beeper_devices.owner_email, owner()),
+      ),
+    )
+    .for('update');
   if (!d) fail('Companion access was revoked.', 401);
   return d;
 }
 export async function requestBeeperSync() {
   return transaction(async () => {
     await lockWorkspace();
-    const d = await one(
-      'SELECT id FROM focus_auth.beeper_devices WHERE revoked_at IS NULL AND owner_email=?',
-      owner(),
-    );
+    const [d] = await db
+      .select({ id: beeper_devices.id })
+      .from(beeper_devices)
+      .where(
+        and(
+          isNull(beeper_devices.revoked_at),
+          eq(beeper_devices.owner_email, owner()),
+        ),
+      );
     if (!d) fail('Pair your Mac first.');
-    await run(
-      'UPDATE focus_auth.beeper_devices SET requested=true WHERE id=?',
-      d.id,
-    );
+    await db
+      .update(beeper_devices)
+      .set({ requested: true })
+      .where(eq(beeper_devices.id, d.id));
     return { queued: true };
   });
 }
@@ -258,15 +274,23 @@ export async function beeperHeartbeat(
 ) {
   return transaction(async () => {
     const d = await deviceFor(id);
-    await run(
-      'UPDATE focus_auth.beeper_devices SET last_seen=now(),issue=? WHERE id=?',
-      issues[issue] ? issue : '',
-      id,
-    );
-    const active = await one(
-      'SELECT s.id,s.state,s.message,s.started_at,u.part_count FROM sync_runs s JOIN beeper_uploads u ON u.run_id=s.id WHERE u.device_id=? ORDER BY s.started_at DESC LIMIT 1',
-      id,
-    );
+    await db
+      .update(beeper_devices)
+      .set({ last_seen: sql`now()`, issue: issues[issue] ? issue : '' })
+      .where(eq(beeper_devices.id, id));
+    const [active] = await db
+      .select({
+        id: sync_runs.id,
+        state: sync_runs.state,
+        message: sync_runs.message,
+        started_at: sync_runs.started_at,
+        part_count: beeper_uploads.part_count,
+      })
+      .from(sync_runs)
+      .innerJoin(beeper_uploads, eq(beeper_uploads.run_id, sync_runs.id))
+      .where(eq(beeper_uploads.device_id, id))
+      .orderBy(desc(sync_runs.started_at))
+      .limit(1);
     return { requested: d.requested, active: active || null };
   });
 }
@@ -279,33 +303,44 @@ export async function beginBeeperUpload(
   return transaction(async () => {
     await lockWorkspace();
     await deviceFor(id);
-    const old = await one(
-      'SELECT s.id,s.state,s.started_at,u.part_count FROM sync_runs s JOIN beeper_uploads u ON u.run_id=s.id WHERE s.id=? AND u.device_id=?',
-      request_id,
-      id,
-    );
+    const [old] = await db
+      .select({
+        id: sync_runs.id,
+        state: sync_runs.state,
+        started_at: sync_runs.started_at,
+        part_count: beeper_uploads.part_count,
+      })
+      .from(sync_runs)
+      .innerJoin(beeper_uploads, eq(beeper_uploads.run_id, sync_runs.id))
+      .where(
+        and(eq(sync_runs.id, request_id), eq(beeper_uploads.device_id, id)),
+      );
     if (old) return old;
-    if (
-      await one(
-        "SELECT id FROM sync_runs WHERE provider='beeper' AND state IN ('uploading','queued','running')",
-      )
-    )
-      fail('Beeper is still processing the previous import.', 409);
-    await run(
-      "INSERT INTO sync_runs(id,provider,state,started_at,updated_at,message) VALUES(?,'beeper','uploading',?,?,'Receiving selected conversations from your Mac')",
-      request_id,
-      stamp(),
-      stamp(),
-    );
-    await run(
-      'INSERT INTO beeper_uploads(run_id,device_id) VALUES(?,?)',
-      request_id,
-      id,
-    );
-    await run(
-      'UPDATE focus_auth.beeper_devices SET requested=false WHERE id=?',
-      id,
-    );
+    const [active] = await db
+      .select({ id: sync_runs.id })
+      .from(sync_runs)
+      .where(
+        and(
+          eq(sync_runs.provider, 'beeper'),
+          inArray(sync_runs.state, ['uploading', 'queued', 'running']),
+        ),
+      );
+    if (active) fail('Beeper is still processing the previous import.', 409);
+    await db.insert(sync_runs).values({
+      id: request_id,
+      provider: 'beeper',
+      state: 'uploading',
+      started_at: stamp(),
+      updated_at: stamp(),
+      message: 'Receiving selected conversations from your Mac',
+    });
+    await db
+      .insert(beeper_uploads)
+      .values({ run_id: request_id, device_id: id });
+    await db
+      .update(beeper_devices)
+      .set({ requested: false })
+      .where(eq(beeper_devices.id, id));
     return {
       id: request_id,
       state: 'uploading',
@@ -449,7 +484,7 @@ export async function appendBeeperBatch(
       fail('This import exceeds 100,000 messages. Choose fewer conversations.');
     for (const r of normalized) {
       if (
-        !d.selection.some(
+        !(d.selection as SelectedChat[]).some(
           (c: SelectedChat) =>
             c.id === r.raw.chat.id && c.accountID === r.raw.chat.accountID,
         )
