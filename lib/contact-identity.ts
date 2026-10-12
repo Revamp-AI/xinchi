@@ -46,6 +46,14 @@ type Snapshot = {
   message_drafts: (typeof message_drafts.$inferSelect)[];
   identity_reviews: (typeof identity_reviews.$inferSelect)[];
 };
+// What identity_decisions.before_snapshot holds.
+type DecisionSnapshot = Snapshot & {
+  automatic_email?: string;
+  automatic_match?: unknown;
+  bulk_contact_ids?: string[];
+  bulk_review_ids?: string[];
+  bulk_token?: string;
+};
 type EmailGroup = {
   contact: Contact | null;
   merged: number;
@@ -295,6 +303,9 @@ async function applyMerge(
     return id;
   }
 }
+// Updates the cadence alone, without bumping the version.
+const setCadence = (id: string, cadence_days: number) =>
+  db.update(contacts).set({ cadence_days }).where(eq(contacts.id, id));
 export async function mergeContacts({
   target_id,
   source_id,
@@ -467,17 +478,19 @@ export async function mergeReviewGroup(input: {
     throw Error('Preview the selected matches before merging.');
   return transaction(async () => {
     await lockWorkspace();
-    const previous = await one(
-      "SELECT * FROM identity_decisions WHERE before_snapshot->>'bulk_token'=?",
-      input.token,
-    );
+    const [previous] = await db
+      .select()
+      .from(identity_decisions)
+      .where(
+        sql`${identity_decisions.before_snapshot}->>'bulk_token' = ${input.token}`,
+      );
     if (previous) {
+      const prior = previous.before_snapshot as DecisionSnapshot;
       if (previous.undone_at)
         throw Error('This merge was undone. Preview the matches again.');
       if (
         previous.left_id !== input.target_id ||
-        JSON.stringify(previous.before_snapshot.bulk_review_ids) !==
-          JSON.stringify(ids)
+        JSON.stringify(prior.bulk_review_ids) !== JSON.stringify(ids)
       )
         throw Error(
           'This preview has already been used. Preview the matches again.',
@@ -485,7 +498,7 @@ export async function mergeReviewGroup(input: {
       return {
         id: previous.id,
         contact_id: previous.left_id,
-        merged: previous.before_snapshot.bulk_contact_ids.length - 1,
+        merged: prior.bulk_contact_ids!.length - 1,
         replayed: true,
       };
     }
@@ -513,14 +526,14 @@ export async function mergeReviewGroup(input: {
         bulk_review_ids: ids,
         bulk_token: input.token,
       };
-    await run(
-      "INSERT INTO identity_decisions(id,kind,left_id,right_id,before_snapshot,after_hash) VALUES(?,'merge',?,?,?::jsonb,?)",
+    await db.insert(identity_decisions).values({
       id,
-      target.id,
-      sources[0]!.id,
-      JSON.stringify(before),
-      hash(await snapshot(group.contact_ids)),
-    );
+      kind: 'merge',
+      left_id: target.id,
+      right_id: sources[0]!.id,
+      before_snapshot: before,
+      after_hash: hash(await snapshot(group.contact_ids)),
+    });
     await evaluateContacts([target.id]);
     return { id, contact_id: target.id, merged: sources.length };
   });
@@ -616,16 +629,11 @@ export async function mergeVerifiedEmployerContacts(
     const [target, source] = contacts as [Contact, Contact];
     const id = await applyMerge(target, source, evidence);
     if (target.cadence_days === 30 && source.cadence_days !== 30) {
-      await run(
-        'UPDATE contacts SET cadence_days=? WHERE id=?',
-        source.cadence_days,
-        target.id,
-      );
-      await run(
-        'UPDATE identity_decisions SET after_hash=? WHERE id=?',
-        hash(await snapshot(ids)),
-        id,
-      );
+      await setCadence(target.id, source.cadence_days);
+      await db
+        .update(identity_decisions)
+        .set({ after_hash: hash(await snapshot(ids)) })
+        .where(eq(identity_decisions.id, id!));
     }
     await evaluateContacts([target.id]);
     return { id, contact_id: target.id };
@@ -654,16 +662,11 @@ async function reconcileEmailGroup(
       // Its original value must be in the audit snapshot, so update after the merge.
       const decision = await applyMerge(target, source, email);
       if (target.cadence_days === 30 && source.cadence_days !== 30) {
-        await run(
-          'UPDATE contacts SET cadence_days=? WHERE id=?',
-          source.cadence_days,
-          target.id,
-        );
-        await run(
-          'UPDATE identity_decisions SET after_hash=? WHERE id=?',
-          hash(await snapshot([target.id, source.id])),
-          decision,
-        );
+        await setCadence(target.id, source.cadence_days);
+        await db
+          .update(identity_decisions)
+          .set({ after_hash: hash(await snapshot([target.id, source.id])) })
+          .where(eq(identity_decisions.id, decision!));
       }
       target = await existingContact(target.id);
     }
