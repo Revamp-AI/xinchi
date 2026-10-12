@@ -47,6 +47,8 @@ export async function schemaDrift(url){
  const schema=await import('../../lib/schema/index.ts');
  // Introspection reads int8 catalog values such as sequence maxima, which the app's parser rejects as unsafe.
  const pool=new pg.Pool({connectionString:url}),int8=pg.types.getTypeParser(20);pg.types.setTypeParser(20,v=>v);
+ // pool.end() resolves before sockets close, so a test's forced DROP DATABASE can still reach them; without a listener that error would be uncaught.
+ pool.on('error',()=>{});
  try{return (await pushSchema(schema,drizzle({client:pool}),{schemas:['public','focus_auth'],tables:['!focus_schema_migrations'],entities:undefined,extensions:undefined})).sqlStatements;}
  finally{pg.types.setTypeParser(20,int8);await pool.end();}
 }
