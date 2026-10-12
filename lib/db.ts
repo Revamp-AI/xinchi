@@ -1,4 +1,15 @@
-import { and, desc, eq, getColumns, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  getColumns,
+  inArray,
+  isNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import { CONTACT_TABLES } from './contact-tables.mjs';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -9,11 +20,15 @@ import { SERVERLESS } from './runtime.mjs';
 import { queueSourceReview } from './review-batches.ts';
 import {
   contact_queue,
+  contacts,
+  events,
+  item_contacts,
+  items,
+  proposals,
   settings,
   source_versions,
   sources,
 } from './schema/index.ts';
-import type { items } from './schema/index.ts';
 export {
   all,
   one,
@@ -352,40 +367,52 @@ async function event(
   after: unknown,
   reason = '',
 ) {
-  await run(
-    'INSERT INTO events VALUES(?,?,?,?,?,?,?)',
-    uid(),
-    id,
+  await db.insert(events).values({
+    id: uid(),
+    item_id: id,
     action,
-    before ? JSON.stringify(before) : null,
-    JSON.stringify(after),
+    before_json: before ? JSON.stringify(before) : null,
+    after_json: JSON.stringify(after),
     reason,
-    stamp(),
-  );
+    created_at: stamp(),
+  });
 }
 export async function saveItem(input: ItemInput) {
   return await transaction(async () => {
     await lockWorkspace();
     if (
       input.proposal_id &&
-      !(await one(
-        "SELECT id FROM proposals WHERE id=? AND status IN ('pending','deferred')",
-        input.proposal_id,
-      ))
+      !(
+        await db
+          .select({ id: proposals.id })
+          .from(proposals)
+          .where(
+            and(
+              eq(proposals.id, input.proposal_id),
+              inArray(proposals.status, ['pending', 'deferred']),
+            ),
+          )
+      ).length
     )
       throw Error('This proposal was already resolved.');
     if (
       input.proposal_id &&
       input.proposal_version! > 0 &&
-      !(await one(
-        'SELECT id FROM proposals WHERE id=? AND version=?',
-        input.proposal_id,
-        input.proposal_version,
-      ))
+      !(
+        await db
+          .select({ id: proposals.id })
+          .from(proposals)
+          .where(
+            and(
+              eq(proposals.id, input.proposal_id),
+              eq(proposals.version, input.proposal_version!),
+            ),
+          )
+      ).length
     )
       throw Error('This suggestion changed. Reopen it before deciding.');
     const before = input.id
-      ? await one('SELECT * FROM items WHERE id=?', input.id)
+      ? (await db.select().from(items).where(eq(items.id, input.id)))[0]
       : null;
     if (input.id && !before) throw Error('Item not found.');
     if (before && before.version !== input.version)
@@ -435,28 +462,31 @@ export async function saveItem(input: ItemInput) {
     for (const k of ['checkpoint', 'hard_deadline'] as const)
       if (row[k] && !dateOK(row[k])) throw Error('Choose a valid date.');
     if (row.source_id) {
-      const s = await one(
-        'SELECT body,content_hash FROM sources WHERE id=?',
-        row.source_id,
-      );
+      const [s] = await db
+        .select({ body: sources.body, content_hash: sources.content_hash })
+        .from(sources)
+        .where(eq(sources.id, row.source_id));
       if (!s) throw Error('Source not found.');
-      const v = row.source_version_id
-        ? await one(
-            'SELECT * FROM source_versions WHERE id=? AND source_id=?',
-            row.source_version_id,
-            row.source_id,
-          )
-        : await one(
-            'SELECT * FROM source_versions WHERE source_id=? AND content_hash=?',
-            row.source_id,
-            s.content_hash,
-          );
+      const [v] = await db
+        .select()
+        .from(source_versions)
+        .where(
+          row.source_version_id
+            ? and(
+                eq(source_versions.id, row.source_version_id),
+                eq(source_versions.source_id, row.source_id),
+              )
+            : and(
+                eq(source_versions.source_id, row.source_id),
+                eq(source_versions.content_hash, s.content_hash),
+              ),
+        );
       const body =
         v?.normalized_body ??
         (v?.content_hash === s.content_hash ? s.body : null);
       if (row.source_quote && (!body || !body.includes(row.source_quote)))
         throw Error('The excerpt must match the source text.');
-      if (row.source_quote) row.source_version_id = v.id;
+      if (row.source_quote) row.source_version_id = v!.id;
     } else row.source_version_id = null;
     if (row.status === 'now') {
       for (const k of [
@@ -470,18 +500,21 @@ export async function saveItem(input: ItemInput) {
             'Accepting needs a defined output, next action, owner, and checkpoint.',
           );
       if (
-        (
-          await one(
-            "SELECT count(*) AS n FROM items WHERE status='now' AND id<>?",
-            row.id,
-          )
-        ).n >= 3
+        (await db.$count(
+          items,
+          and(eq(items.status, 'now'), ne(items.id, row.id)),
+        )) >= 3
       ) {
-        const r = await one(
-          "SELECT * FROM items WHERE id=? AND status='now' AND id<>?",
-          input.replace_id || '',
-          row.id,
-        );
+        const [r] = await db
+          .select()
+          .from(items)
+          .where(
+            and(
+              eq(items.id, input.replace_id || ''),
+              eq(items.status, 'now'),
+              ne(items.id, row.id),
+            ),
+          );
         if (
           !r ||
           !input.tradeoff_reason ||
@@ -498,15 +531,16 @@ export async function saveItem(input: ItemInput) {
           updated_at: stamp(),
           version: r.version + 1,
         };
-        await run(
-          'UPDATE items SET status=?,reason=?,checkpoint=?,updated_at=?,version=? WHERE id=?',
-          a.status,
-          a.reason,
-          a.checkpoint,
-          a.updated_at,
-          a.version,
-          r.id,
-        );
+        await db
+          .update(items)
+          .set({
+            status: a.status,
+            reason: a.reason,
+            checkpoint: a.checkpoint,
+            updated_at: a.updated_at,
+            version: a.version,
+          })
+          .where(eq(items.id, r.id));
         await event(r.id, 'displaced', r, a, a.reason);
       }
       if (!row.original_checkpoint) row.original_checkpoint = row.checkpoint;
@@ -531,26 +565,36 @@ export async function saveItem(input: ItemInput) {
       throw Error('Record why this commitment changed.');
     row.updated_at = stamp();
     row.version++;
-    const cols = Object.keys(row);
-    await run(
-      `INSERT INTO items (${cols}) VALUES (${cols.map(() => '?')}) ON CONFLICT(id) DO UPDATE SET ${cols.filter((k) => k !== 'id').map((k) => `${k}=excluded.${k}`)}`,
-      ...cols.map((k) => (row as Record<string, unknown>)[k]),
-    );
+    await db
+      .insert(items)
+      .values(row)
+      .onConflictDoUpdate({
+        target: items.id,
+        set: Object.fromEntries(
+          Object.keys(row)
+            .filter((k) => k !== 'id')
+            .map((k) => [k, sql`excluded.${sql.identifier(k)}`]),
+        ),
+      });
     if (input.contact_ids !== undefined) {
       if (!Array.isArray(input.contact_ids) || input.contact_ids.length > 20)
         throw Error('Choose up to 20 related contacts.');
       const ids = [...new Set(input.contact_ids)];
       for (const id of ids)
         if (
-          !(await one(
-            'SELECT id FROM contacts WHERE id=? AND merged_into IS NULL',
-            id,
-          ))
+          !(
+            await db
+              .select({ id: contacts.id })
+              .from(contacts)
+              .where(and(eq(contacts.id, id), isNull(contacts.merged_into)))
+          ).length
         )
           throw Error('Related contact not found.');
-      await run('DELETE FROM item_contacts WHERE item_id=?', row.id);
+      await db.delete(item_contacts).where(eq(item_contacts.item_id, row.id));
       for (const id of ids)
-        await run('INSERT INTO item_contacts VALUES(?,?)', row.id, id);
+        await db
+          .insert(item_contacts)
+          .values({ item_id: row.id, contact_id: id });
     }
     await event(
       row.id,
@@ -562,11 +606,14 @@ export async function saveItem(input: ItemInput) {
     if (input.proposal_id) {
       const { proposalEvent, rebalanceProposals } =
         await import('./proposals.ts');
-      await run(
-        "UPDATE proposals SET status='accepted',item_id=?,version=version+1 WHERE id=?",
-        row.id,
-        input.proposal_id,
-      );
+      await db
+        .update(proposals)
+        .set({
+          status: 'accepted',
+          item_id: row.id,
+          version: sql`${proposals.version} + 1`,
+        })
+        .where(eq(proposals.id, input.proposal_id));
       await proposalEvent(input.proposal_id, 'accepted', 'user_decision', {
         item_id: row.id,
       });
