@@ -356,7 +356,7 @@ export async function callContextTool(
   if (jobId) {
     const label =
       name === 'read_source'
-        ? 'Reading: ' + (result.title || a.id)
+        ? 'Reading: ' + ((result as { title?: string }).title || a.id)
         : name === 'search_context'
           ? 'Searching context: ' + (a.query || 'recent material')
           : 'Checking your commitments and decisions';

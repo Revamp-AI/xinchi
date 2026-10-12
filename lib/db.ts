@@ -1,3 +1,4 @@
+import { and, desc, eq, getColumns, sql, type SQL } from 'drizzle-orm';
 import { CONTACT_TABLES } from './contact-tables.mjs';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -6,6 +7,7 @@ import { MARK_START, MARK_END } from './marks.mjs';
 import { all, one, run, transaction, lockWorkspace, db } from './postgres.ts';
 import { SERVERLESS } from './runtime.mjs';
 import { queueSourceReview } from './review-batches.ts';
+import { settings, source_versions, sources } from './schema/index.ts';
 import type { items } from './schema/index.ts';
 export {
   all,
@@ -42,15 +44,21 @@ export const hash = (x: unknown) =>
     .update(typeof x === 'string' ? x : JSON.stringify(x))
     .digest('hex');
 export async function getSetting(k: string, d: unknown = null) {
-  const r = await one('SELECT value FROM settings WHERE key=?', k);
+  const [r] = await db
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, k));
   return r ? JSON.parse(r.value) : d;
 }
 export async function setSetting(k: string, v: unknown) {
-  return await run(
-    'INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-    k,
-    JSON.stringify(v),
-  );
+  const r = await db
+    .insert(settings)
+    .values({ key: k, value: JSON.stringify(v) })
+    .onConflictDoUpdate({
+      target: settings.key,
+      set: { value: sql`excluded.value` },
+    });
+  return { changes: r.rowCount, rows: r.rows };
 }
 export async function upsertSource(doc: SourceInput, raw: unknown = doc) {
   return await transaction(async () => {
@@ -162,36 +170,32 @@ export async function searchSources(
   offset: unknown = 0,
 ) {
   const tokens: string[] = String(q).match(/[\p{L}\p{N}_]+/gu) || [],
-    args: unknown[] = [],
-    where: string[] = [];
-  if (provider) {
-    where.push('s.provider=?');
-    args.push(provider);
-  }
+    where: SQL[] = [];
+  if (provider) where.push(eq(sources.provider, provider));
   const query = tokens.join(' ');
-  if (tokens.length) {
-    where.push(
-      "to_tsvector('simple',s.title || ' ' || s.body) @@ plainto_tsquery('simple',?)",
-    );
-    args.push(query);
-  }
-  const clause = where.length ? ' WHERE ' + where.join(' AND ') : '';
-  const total = (
-    await one('SELECT count(*) AS n FROM sources s' + clause, ...args)
-  ).n;
-  const order = tokens.length
-    ? "ts_rank(to_tsvector('simple',s.title || ' ' || s.body),plainto_tsquery('simple',?)) DESC,s.occurred_at DESC,s.id"
-    : 's.occurred_at DESC,s.id';
-  const rows = await all(
-    'SELECT s.id,s.provider,s.title,s.occurred_at,s.coverage,s.body FROM sources s' +
-      clause +
-      ' ORDER BY ' +
-      order +
-      ' LIMIT 40 OFFSET ?',
-    ...args,
-    ...(tokens.length ? [query] : []),
-    Math.max(0, Number(offset) || 0),
-  );
+  // The same expression as the source_search index.
+  const document = sql`to_tsvector('simple', ${sources.title} || ' ' || ${sources.body})`,
+    terms = sql`plainto_tsquery('simple', ${query})`;
+  if (tokens.length) where.push(sql`${document} @@ ${terms}`);
+  const total = await db.$count(sources, and(...where));
+  const rows = await db
+    .select({
+      id: sources.id,
+      provider: sources.provider,
+      title: sources.title,
+      occurred_at: sources.occurred_at,
+      coverage: sources.coverage,
+      body: sources.body,
+    })
+    .from(sources)
+    .where(and(...where))
+    .orderBy(
+      ...(tokens.length ? [sql`ts_rank(${document}, ${terms}) DESC`] : []),
+      desc(sources.occurred_at),
+      sources.id,
+    )
+    .limit(40)
+    .offset(Math.max(0, Number(offset) || 0));
   return {
     total,
     records: rows.map(({ body, ...row }) => ({
@@ -226,10 +230,17 @@ export function sourceExcerpt(body: string, tokens: string[]) {
   );
 }
 export async function readSource(id: string, offset = 0, limit = 14000) {
-  const s = await one(
-    'SELECT s.*,v.id AS source_version_id FROM sources s LEFT JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE s.id=?',
-    id,
-  );
+  const [s] = await db
+    .select({ ...getColumns(sources), source_version_id: source_versions.id })
+    .from(sources)
+    .leftJoin(
+      source_versions,
+      and(
+        eq(source_versions.source_id, sources.id),
+        eq(source_versions.content_hash, sources.content_hash),
+      ),
+    )
+    .where(eq(sources.id, id));
   if (!s) throw Error('Source not found.');
   return {
     ...s,
@@ -240,10 +251,18 @@ export async function readSource(id: string, offset = 0, limit = 14000) {
   };
 }
 export async function readSourceVersion(id: string) {
-  const v = await one(
-    'SELECT v.*,s.provider,s.title,s.occurred_at,s.coverage,s.url FROM source_versions v JOIN sources s ON s.id=v.source_id WHERE v.id=?',
-    id,
-  );
+  const [v] = await db
+    .select({
+      ...getColumns(source_versions),
+      provider: sources.provider,
+      title: sources.title,
+      occurred_at: sources.occurred_at,
+      coverage: sources.coverage,
+      url: sources.url,
+    })
+    .from(source_versions)
+    .innerJoin(sources, eq(sources.id, source_versions.source_id))
+    .where(eq(source_versions.id, id));
   if (!v) throw Error('Source snapshot not found.');
   return {
     id: v.source_id,
