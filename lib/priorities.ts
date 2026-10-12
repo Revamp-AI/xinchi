@@ -421,48 +421,50 @@ export async function addPriorityUpdate({
   const text = z.string().trim().min(1).max(4000).parse(body);
   return transaction(async () => {
     await lockWorkspace();
-    await priorityDetail(id);
+    const { title } = await priorityDetail(id);
     const updateId = uid(),
       time = stamp();
     const source = await upsertSource(
       {
         provider: 'manual',
         external_id: 'priority-update-' + updateId,
-        title:
-          'Priority update: ' +
-          (await one('SELECT title FROM priorities WHERE id=?', id)).title,
+        title: 'Priority update: ' + title,
         body: text,
         occurred_at: time,
         coverage: 'note',
       },
       { priority_id: id, origin: 'User update', body: text },
     );
-    const version = await one(
-      'SELECT id FROM source_versions WHERE source_id=? ORDER BY fetched_at DESC LIMIT 1',
-      source.id,
-    );
+    const [version] = await db
+      .select({ id: source_versions.id })
+      .from(source_versions)
+      .where(eq(source_versions.source_id, source.id))
+      .orderBy(desc(source_versions.fetched_at))
+      .limit(1);
     const citations = [
       {
         source_id: source.id,
-        source_version_id: version.id,
+        source_version_id: version!.id,
         quote: text.slice(0, 1000),
       },
     ];
-    await run(
-      "INSERT INTO priority_updates(id,priority_id,body,origin,citations,fingerprint,occurred_at) VALUES(?,?,?,'user',?::jsonb,?,?)",
-      updateId,
-      id,
-      text,
-      JSON.stringify(citations),
-      updateId,
-      time,
-    );
-    await run(
-      'UPDATE priorities SET latest_summary=?,last_context_at=?,updated_at=now() WHERE id=?',
-      text,
-      time,
-      id,
-    );
+    await db.insert(priority_updates).values({
+      id: updateId,
+      priority_id: id,
+      body: text,
+      origin: 'user',
+      citations,
+      fingerprint: updateId,
+      occurred_at: time,
+    });
+    await db
+      .update(priorities)
+      .set({
+        latest_summary: text,
+        last_context_at: time,
+        updated_at: sql`now()`,
+      })
+      .where(eq(priorities.id, id));
     return priorityDetail(id);
   });
 }
