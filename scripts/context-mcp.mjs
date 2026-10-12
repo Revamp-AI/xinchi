@@ -1,4 +1,5 @@
 import readline from 'node:readline';
+import {databaseErrorCode} from '../lib/postgres.ts';
 import {contextTools as tools,callContextTool} from '../lib/context-tools.mjs';
 const reply=(id,result,error)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,...(error?{error}:{result})})+'\n');
 for await(const line of readline.createInterface({input:process.stdin})){
@@ -12,5 +13,5 @@ for await(const line of readline.createInterface({input:process.stdin})){
   const {name,arguments:a={}}=m.params;const result=await callContextTool(name,a,{jobId:process.env.XIN_JOB_ID});
   reply(m.id,{content:[{type:'text',text:JSON.stringify(result)}]});
  }else reply(m.id,null,{code:-32601,message:'Method not found'});
- }catch(e){reply(m.id,{isError:true,content:[{type:'text',text:e.code?'The context database is unavailable.':e.message}]});}
+ }catch(e){reply(m.id,{isError:true,content:[{type:'text',text:databaseErrorCode(e)?'The context database is unavailable.':e.message}]});}
 }

@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { DrizzleQueryError } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 // Counts and legacy millisecond timestamps fit safely in JS numbers. Refuse loss of precision.
@@ -115,6 +116,16 @@ export async function transaction<T>(fn: () => T | Promise<T>): Promise<T> {
   } finally {
     client.release();
   }
+}
+// The Postgres or connection error code behind e, including failures Drizzle
+// wraps; undefined for application errors. Show a fixed message when it is set:
+// a wrapped error's message contains the SQL and its parameters.
+export function databaseErrorCode(e: unknown): string | undefined {
+  const code = (e as { code?: unknown } | null | undefined)?.code;
+  if (code) return String(code);
+  if (e instanceof DrizzleQueryError)
+    return databaseErrorCode(e.cause) ?? 'query';
+  return undefined;
 }
 export async function lockWorkspace() {
   await one('SELECT id FROM workspace_lock WHERE id=1 FOR UPDATE');

@@ -1,4 +1,5 @@
 import {dismissProposal,restoreProposal} from '../../../lib/proposals.mjs';
+import {databaseErrorCode} from '../../../lib/postgres.ts';
 import {prioritiesState,priorityDetail,savePriority,reorderPriorities,addPriorityUpdate,decidePrioritySuggestion,queuePriorityContext} from '../../../lib/priorities.mjs';
 import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntelligence,dismissContactInsight,runContactIntelligence} from '../../../lib/contact-intelligence.mjs';
 import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.mjs';
@@ -27,7 +28,7 @@ import {reviewSettings,startChatGPTLogin,pollChatGPTLogin,cancelChatGPTLogin,dis
 export const maxDuration=800;
 function scheduleWork(){if(CLOUD_JOBS)after(async()=>{try{await drainCloudWork((...args)=>start(ingestionWorkflow,args),id=>getRun(id).status);}catch{console.error('Background work interrupted; pending dispatch will retry.');}});}
 export const runtime='nodejs';export const dynamic='force-dynamic';
-function publicError(e){return e.code?'The database could not complete this request. Check its connection and migrations, then retry.':e.message;}
+function publicError(e){return databaseErrorCode(e)?'The database could not complete this request. Check its connection and migrations, then retry.':e.message;}
 function json(v,status=200){return Response.json(v,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}});}
 export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.url),path=decodeURIComponent(u.pathname.slice(5));
  if(path==='auth/status')return json({configured:!!googleClient(),user:(await sessionFor(readCookie(req,SESSION_COOKIE)))});

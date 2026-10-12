@@ -1,6 +1,6 @@
 import {readFile} from 'node:fs/promises';
 import {parseLinkedinConnections,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.mjs';
-import {closeDatabase} from '../lib/postgres.ts';
+import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';
 
 try{
  const args=process.argv.slice(2),apply=args.includes('--apply'),paths=args.filter(a=>a!=='--apply');
@@ -16,5 +16,5 @@ try{
   }
   console.log(JSON.stringify(result,null,2));
  }
-}catch(error){console.error(error.code?'LinkedIn import failed ('+error.code+').':error.message);process.exitCode=1;}
+}catch(error){const code=databaseErrorCode(error);console.error(code?'LinkedIn import failed ('+code+').':error.message);process.exitCode=1;}
 finally{await closeDatabase();}

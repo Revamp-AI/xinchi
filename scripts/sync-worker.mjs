@@ -1,4 +1,5 @@
 import {pathToFileURL} from 'node:url';
+import {databaseErrorCode} from '../lib/postgres.ts';
 import {run,stamp,transaction} from '../lib/db.mjs';
 import {syncProvider,clearGmailIssue,recordGmailIssue} from '../lib/connectors.mjs';
 import {startContactProjection} from '../lib/contact-jobs.mjs';
@@ -17,7 +18,7 @@ export async function runSyncWorker(id){
   if(s.provider==='gmail')await clearGmailIssue();if((s.changed||0)+result.changed){await startContactProjection({drain:true});await queueImportReview();}
  }catch(e){
   if(e.yieldJob){await run("UPDATE sync_runs SET state='queued',lease_owner='',lease_until=NULL,pid=NULL,updated_at=?,message='Import checkpoint saved; continuing in the next cloud invocation' WHERE id=? AND state='running' AND lease_owner=? AND lease_until>now()",stamp(),id,token);return;}
-  const r=await run("UPDATE sync_runs SET state='failed',finished_at=?,message=? WHERE id=? AND state='running' AND lease_owner=? AND lease_until>now()",stamp(),e.code?'Import interrupted. Check the connection and retry.':e.message.slice(0,1200),id,token);
+  const r=await run("UPDATE sync_runs SET state='failed',finished_at=?,message=? WHERE id=? AND state='running' AND lease_owner=? AND lease_until>now()",stamp(),databaseErrorCode(e)?'Import interrupted. Check the connection and retry.':e.message.slice(0,1200),id,token);
   if(r.changes&&s.provider==='gmail')await recordGmailIssue(e);
  }finally{clearInterval(beat);}
 }

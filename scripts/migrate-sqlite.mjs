@@ -4,7 +4,7 @@ import {mkdirSync,existsSync,chmodSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {all,one,run,transaction,lockWorkspace,exportTables,hash,stamp} from '../lib/db.mjs';
-import {closeDatabase} from '../lib/postgres.ts';
+import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';
 const legacyTables=['sources','source_versions','items','events','settings','jobs','proposals','job_events','sync_runs'];
 const read=(db,table)=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)?db.prepare('SELECT * FROM '+table).all():[];
 // Source files are read-only; callers stop all old writers before taking the cutover snapshot.
@@ -52,5 +52,5 @@ export async function migrateSqlite({sourceDir,backupDir,apply=false,writersStop
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
  const args=process.argv.slice(2),value=flag=>args[args.indexOf(flag)+1];
  try{const report=await migrateSqlite({sourceDir:args.includes('--source-dir')?value('--source-dir'):null,backupDir:args.includes('--backup-dir')?value('--backup-dir'):null,apply:args.includes('--apply'),writersStopped:args.includes('--writers-stopped')});console.log(JSON.stringify(report,null,2));}
- catch(e){console.error(e.code?'Database migration failed; no imported records were committed.':e.message);process.exitCode=1;}finally{await closeDatabase();}
+ catch(e){console.error(databaseErrorCode(e)?'Database migration failed; no imported records were committed.':e.message);process.exitCode=1;}finally{await closeDatabase();}
 }
