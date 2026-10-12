@@ -1,11 +1,6 @@
 import addresses from 'email-addresses';
 import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import {
-  all,
-  one,
-  run,
-  transaction,
-  lockWorkspace,
   uid,
   stamp,
   hash,
@@ -19,14 +14,16 @@ import {
   existingContact,
 } from './contacts.mjs';
 import { resolveExactEmailContact } from './contact-identity.mjs';
-import { db } from './postgres.ts';
+import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   contact_identities,
   contact_queue,
   contacts,
+  interaction_decisions,
   interaction_participants,
   interaction_sources,
   interactions,
+  settings,
   source_versions,
   sources,
 } from './schema/index.ts';
@@ -651,65 +648,87 @@ export async function reviewInteraction(input: {
 }) {
   await transaction(async () => {
     await lockWorkspace();
-    const i = await one(
-      'SELECT * FROM interactions WHERE id=? FOR UPDATE',
-      input.id,
-    );
+    const [i] = await db
+      .select()
+      .from(interactions)
+      .where(eq(interactions.id, input.id))
+      .for('update');
     if (!i) throw Error('Interaction not found.');
     if (input.version !== i.version)
       throw Error('This interaction changed. Reopen it.');
     if (input.action === 'duplicate' || input.action === 'separate') {
       if (!i.duplicate_of)
         throw Error('This interaction has no duplicate candidate.');
-      await run(
-        'UPDATE interactions SET duplicate_of=?,duplicate_status=?,version=version+1 WHERE id=?',
-        input.action === 'duplicate' ? i.duplicate_of : null,
-        input.action === 'duplicate' ? 'confirmed' : 'separate',
-        i.id,
-      );
+      await db
+        .update(interactions)
+        .set({
+          duplicate_of: input.action === 'duplicate' ? i.duplicate_of : null,
+          duplicate_status:
+            input.action === 'duplicate' ? 'confirmed' : 'separate',
+          version: sql`${interactions.version} + 1`,
+        })
+        .where(eq(interactions.id, i.id));
     } else if (input.action === 'include' || input.action === 'exclude') {
       if (!i.occurred_at)
         throw Error(
           'An interaction needs an actual date before it can affect the map.',
         );
-      await run(
-        'UPDATE interactions SET qualified=?,exclusion=?,version=version+1 WHERE id=?',
-        input.action === 'include',
-        input.action === 'include' ? '' : 'Excluded by you',
-        i.id,
-      );
+      await db
+        .update(interactions)
+        .set({
+          qualified: input.action === 'include',
+          exclusion: input.action === 'include' ? '' : 'Excluded by you',
+          version: sql`${interactions.version} + 1`,
+        })
+        .where(eq(interactions.id, i.id));
       if (input.action === 'include')
-        await run(
-          "UPDATE interaction_participants SET role='participant' WHERE interaction_id=? AND role='uncertain'",
-          i.id,
-        );
+        await db
+          .update(interaction_participants)
+          .set({ role: 'participant' })
+          .where(
+            and(
+              eq(interaction_participants.interaction_id, i.id),
+              eq(interaction_participants.role, 'uncertain'),
+            ),
+          );
     } else throw Error('Choose a valid review action.');
-    await run(
-      'INSERT INTO interaction_decisions(id,interaction_id,action,before_snapshot,after_snapshot) VALUES(?,?,?,?::jsonb,?::jsonb)',
-      uid(),
-      i.id,
-      input.action,
-      JSON.stringify(i),
-      JSON.stringify(await one('SELECT * FROM interactions WHERE id=?', i.id)),
-    );
-    await run(
-      'INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-      'interaction_review:' + i.id,
-      JSON.stringify({
-        action: input.action,
-        at: stamp(),
-        content_hash: (
-          await one('SELECT content_hash FROM sources WHERE id=?', i.source_id)
-        )?.content_hash,
-      }),
-    );
+    const decisionId = uid(),
+      [after] = await db
+        .select()
+        .from(interactions)
+        .where(eq(interactions.id, i.id));
+    await db.insert(interaction_decisions).values({
+      id: decisionId,
+      interaction_id: i.id,
+      action: input.action,
+      before_snapshot: i,
+      after_snapshot: after,
+    });
+    const value = JSON.stringify({
+      action: input.action,
+      at: stamp(),
+      content_hash: (
+        await db
+          .select({ content_hash: sources.content_hash })
+          .from(sources)
+          // A null source_id binds NULL and matches nothing.
+          .where(sql`${sources.id} = ${i.source_id}`)
+      )[0]?.content_hash,
+    });
+    await db
+      .insert(settings)
+      .values({ key: 'interaction_review:' + i.id, value })
+      .onConflictDoUpdate({
+        target: settings.key,
+        set: { value: sql`excluded.value` },
+      });
   });
   await evaluateContacts(
     (
-      await all(
-        'SELECT contact_id FROM interaction_participants WHERE interaction_id=?',
-        input.id,
-      )
+      await db
+        .select({ contact_id: interaction_participants.contact_id })
+        .from(interaction_participants)
+        .where(eq(interaction_participants.interaction_id, input.id))
     ).map((p) => p.contact_id),
   );
   return { saved: true };
