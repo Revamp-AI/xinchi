@@ -109,4 +109,4 @@ test('GET update-draft builds the window from the database for the signed-in own
 test('GET update-draft rejects overflow and out-of-range dates',async()=>{
  for(const bad of ['2026-02-30','2026-13-01']){const r=await get('update-draft?since='+bad,token);assert.equal(r.status,400,bad);assert.deepEqual(await r.json(),{error:'Choose a valid date.'},bad);}
 });
-test.after(async ()=>{(await auth.authDb.close());(await db.db.close());rmSync(temp,{recursive:true,force:true});});
+test.after(async ()=>{(await auth.authDb.close());(await db.closeDatabase());rmSync(temp,{recursive:true,force:true});});

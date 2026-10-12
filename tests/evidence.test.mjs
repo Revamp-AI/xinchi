@@ -59,4 +59,4 @@ test('saved citations survive later source edits and cannot borrow another sourc
  const item=await m.saveItem({title:'Snapshot-backed item',source_id:dense,source_version_id:citation.source_version_id,source_quote:quote});assert.equal(item.source_version_id,citation.source_version_id);
  historical.findings[0].citations[0].source_id=sparse;await assert.rejects(agent.validateResult(historical),/unverified/);
 });
- test.after(async ()=>{(await m.db.close());rmSync(temp,{recursive:true,force:true});});
+ test.after(async ()=>{(await m.closeDatabase());rmSync(temp,{recursive:true,force:true});});
