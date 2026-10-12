@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import {
   all,
   one,
@@ -9,6 +10,14 @@ import {
   stamp,
   hash,
 } from './db.mjs';
+import { db } from './postgres.ts';
+import {
+  beeper_devices,
+  beeper_pairings,
+  beeper_uploads,
+  import_records,
+  sync_runs,
+} from './schema/index.ts';
 
 // Companion-supplied JSON. It is untrusted: normalizeBeeper checks every field it keeps.
 type BeeperJson = any;
@@ -46,10 +55,24 @@ const issues: Record<string, string> = {
 };
 
 export async function beeperState() {
-  const d = await one(
-    'SELECT id,label,selection,last_seen,requested,issue FROM focus_auth.beeper_devices WHERE revoked_at IS NULL AND owner_email=? ORDER BY created_at DESC LIMIT 1',
-    owner(),
-  );
+  const [d] = await db
+    .select({
+      id: beeper_devices.id,
+      label: beeper_devices.label,
+      selection: beeper_devices.selection,
+      last_seen: beeper_devices.last_seen,
+      requested: beeper_devices.requested,
+      issue: beeper_devices.issue,
+    })
+    .from(beeper_devices)
+    .where(
+      and(
+        isNull(beeper_devices.revoked_at),
+        eq(beeper_devices.owner_email, owner()),
+      ),
+    )
+    .orderBy(desc(beeper_devices.created_at))
+    .limit(1);
   return d
     ? {
         configured: true,
@@ -64,33 +87,62 @@ export async function createBeeperPairing() {
   const code = token();
   await transaction(async () => {
     await lockWorkspace();
-    await run('DELETE FROM focus_auth.beeper_pairings');
-    await run(
-      "INSERT INTO focus_auth.beeper_pairings VALUES(?,?,now()+interval '10 minutes')",
-      hash(code),
-      owner(),
-    );
+    await db.delete(beeper_pairings);
+    await db.insert(beeper_pairings).values({
+      token_hash: hash(code),
+      owner_email: owner(),
+      expires_at: sql`now() + interval '10 minutes'`,
+    });
   });
   return { code, expires_at: new Date(Date.now() + 600000).toISOString() };
 }
 async function revokeDevices() {
-  await run(
-    "UPDATE sync_runs SET state='failed',message='Companion disconnected; pair again to start a new import',finished_at=?,updated_at=? WHERE id IN (SELECT u.run_id FROM beeper_uploads u JOIN focus_auth.beeper_devices d ON d.id=u.device_id WHERE d.revoked_at IS NULL) AND state='uploading'",
-    stamp(),
-    stamp(),
+  await db
+    .update(sync_runs)
+    .set({
+      state: 'failed',
+      message: 'Companion disconnected; pair again to start a new import',
+      finished_at: stamp(),
+      updated_at: stamp(),
+    })
+    .where(
+      and(
+        inArray(
+          sync_runs.id,
+          db
+            .select({ run_id: beeper_uploads.run_id })
+            .from(beeper_uploads)
+            .innerJoin(
+              beeper_devices,
+              eq(beeper_devices.id, beeper_uploads.device_id),
+            )
+            .where(isNull(beeper_devices.revoked_at)),
+        ),
+        eq(sync_runs.state, 'uploading'),
+      ),
+    );
+  await db.delete(import_records).where(
+    inArray(
+      import_records.run_id,
+      db
+        .select({ run_id: beeper_uploads.run_id })
+        .from(beeper_uploads)
+        .innerJoin(sync_runs, eq(sync_runs.id, beeper_uploads.run_id))
+        .where(
+          and(eq(sync_runs.state, 'failed'), eq(beeper_uploads.sealed, false)),
+        ),
+    ),
   );
-  await run(
-    "DELETE FROM import_records WHERE run_id IN (SELECT u.run_id FROM beeper_uploads u JOIN sync_runs s ON s.id=u.run_id WHERE s.state='failed' AND u.sealed=false)",
-  );
-  await run(
-    'UPDATE focus_auth.beeper_devices SET revoked_at=now(),requested=false WHERE revoked_at IS NULL',
-  );
+  await db
+    .update(beeper_devices)
+    .set({ revoked_at: sql`now()`, requested: false })
+    .where(isNull(beeper_devices.revoked_at));
 }
 export async function revokeBeeper() {
   return transaction(async () => {
     await lockWorkspace();
     await revokeDevices();
-    await run('DELETE FROM focus_auth.beeper_pairings');
+    await db.delete(beeper_pairings);
     return { revoked: true };
   });
 }
@@ -130,11 +182,16 @@ export async function pairBeeper({
     fail('Choose each conversation once.');
   return transaction(async () => {
     await lockWorkspace();
-    const pairing = await one(
-      'DELETE FROM focus_auth.beeper_pairings WHERE token_hash=? AND expires_at>now() AND owner_email=? RETURNING owner_email',
-      hash(code),
-      owner(),
-    );
+    const [pairing] = await db
+      .delete(beeper_pairings)
+      .where(
+        and(
+          eq(beeper_pairings.token_hash, hash(code)),
+          gt(beeper_pairings.expires_at, sql`now()`),
+          eq(beeper_pairings.owner_email, owner()),
+        ),
+      )
+      .returning({ owner_email: beeper_pairings.owner_email });
     if (!pairing)
       fail(
         'Pairing code is invalid or expired. Generate another code in Focus.',
@@ -143,14 +200,14 @@ export async function pairBeeper({
     await revokeDevices();
     const id = uid(),
       secret = token();
-    await run(
-      'INSERT INTO focus_auth.beeper_devices(id,token_hash,owner_email,label,selection,last_seen) VALUES(?,?,?,?,?::jsonb,now())',
+    await db.insert(beeper_devices).values({
       id,
-      hash(secret),
-      owner(),
-      label.trim(),
-      JSON.stringify(selected),
-    );
+      token_hash: hash(secret),
+      owner_email: owner(),
+      label: label.trim(),
+      selection: selected,
+      last_seen: sql`now()`,
+    });
     return { id, token: secret };
   });
 }
