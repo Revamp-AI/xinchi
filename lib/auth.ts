@@ -1,6 +1,9 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { and, eq, gt, lte } from 'drizzle-orm';
+import { db } from './postgres.ts';
 import { all, one, run, transaction, lockWorkspace } from './db.mjs';
+import { oauth_attempts, owner, sessions } from './schema/index.ts';
 import {
   googleClient,
   request,
@@ -84,11 +87,21 @@ export function checkLocalRequest(req: Request, write = false) {
 }
 export async function sessionFor(token: string | null | undefined) {
   if (!/^[A-Za-z0-9_-]{43}$/.test(token || '')) return null;
-  const row = await authDb
-    .prepare(
-      'SELECT o.sub,o.email,o.name,s.expires_at FROM sessions s JOIN owner o ON o.sub=s.sub WHERE s.token_hash=? AND s.expires_at>?',
-    )
-    .get(digest(token!), Date.now());
+  const [row] = await db
+    .select({
+      sub: owner.sub,
+      email: owner.email,
+      name: owner.name,
+      expires_at: sessions.expires_at,
+    })
+    .from(sessions)
+    .innerJoin(owner, eq(owner.sub, sessions.sub))
+    .where(
+      and(
+        eq(sessions.token_hash, digest(token!)),
+        gt(sessions.expires_at, Date.now()),
+      ),
+    );
   return row && row.email === allowedEmail() ? row : null;
 }
 export async function requireSession(req: Request) {
@@ -101,17 +114,13 @@ export async function requireSession(req: Request) {
 }
 export async function endSession(token: string | null | undefined) {
   if (token)
-    await authDb
-      .prepare('DELETE FROM sessions WHERE token_hash=?')
-      .run(digest(token));
+    await db.delete(sessions).where(eq(sessions.token_hash, digest(token)));
 }
 async function cleanExpired() {
-  await authDb
-    .prepare('DELETE FROM sessions WHERE expires_at<=?')
-    .run(Date.now());
-  await authDb
-    .prepare('DELETE FROM oauth_attempts WHERE expires_at<=?')
-    .run(Date.now());
+  await db.delete(sessions).where(lte(sessions.expires_at, Date.now()));
+  await db
+    .delete(oauth_attempts)
+    .where(lte(oauth_attempts.expires_at, Date.now()));
 }
 export async function beginGoogle(oldBrowser = '') {
   if (!allowedEmail())
@@ -122,23 +131,21 @@ export async function beginGoogle(oldBrowser = '') {
   if (!client) throw Error('Set up Google sign-in first.');
   await cleanExpired();
   if (oldBrowser)
-    await authDb
-      .prepare('DELETE FROM oauth_attempts WHERE browser_hash=?')
-      .run(digest(oldBrowser));
+    await db
+      .delete(oauth_attempts)
+      .where(eq(oauth_attempts.browser_hash, digest(oldBrowser)));
   const state = random(),
     browser = random(),
     verifier = randomBytes(48).toString('base64url'),
     nonce = random();
-  await authDb
-    .prepare('INSERT INTO oauth_attempts VALUES(?,?,?,?,?,?)')
-    .run(
-      digest(state),
-      digest(browser),
-      verifier,
-      nonce,
-      client.client_id,
-      Date.now() + flowSeconds * 1000,
-    );
+  await db.insert(oauth_attempts).values({
+    state_hash: digest(state),
+    browser_hash: digest(browser),
+    verifier,
+    nonce,
+    client_id: client.client_id,
+    expires_at: Date.now() + flowSeconds * 1000,
+  });
   const u = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   for (const [k, v] of Object.entries({
     client_id: client.client_id,
