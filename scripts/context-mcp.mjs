@@ -1,6 +1,6 @@
 import readline from 'node:readline';
 import {databaseErrorCode} from '../lib/postgres.ts';
-import {contextTools as tools,callContextTool} from '../lib/context-tools.mjs';
+import {contextTools as tools,callContextTool} from '../lib/context-tools.ts';
 const reply=(id,result,error)=>process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,...(error?{error}:{result})})+'\n');
 for await(const line of readline.createInterface({input:process.stdin})){
  let m;try{m=JSON.parse(line);}catch{continue;}

@@ -6,7 +6,7 @@ process.env.XIN_AGENT_MODE='cloud';
 const {upsertSource,all,one,run,stamp,uid,saveItem}=await import('../lib/db.mjs');
 const {takePendingImportReview,saveResult}=await import('../lib/agent.mjs');
 const {readReviewBatch,completeReviewBatch,releaseFailedReviewBatches}=await import('../lib/review-batches.ts');
-const {callContextTool}=await import('../lib/context-tools.mjs');
+const {callContextTool}=await import('../lib/context-tools.ts');
 const empty={brief:'Scoped review complete.',findings:[],proposals:[],drafts:[],questions:[],coverage_note:'Only assigned pages reviewed.'};
 const source=(id,body='Fictional recent meeting text.')=>({provider:'granola',external_id:id,title:'Fictional meeting '+id,occurred_at:stamp(),body,coverage:'transcript'});
 test.beforeEach(async()=>{await run('TRUNCATE review_batches,review_queue,jobs,items,sources CASCADE');});
