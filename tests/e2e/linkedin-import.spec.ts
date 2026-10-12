@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import {
   parseLinkedinConnections,
   importLinkedinBatch,
-} from '../../lib/linkedin-import.mjs';
+} from '../../lib/linkedin-import.ts';
 
 test('LinkedIn imports expose profile and source evidence without inventing activity', async ({
   page,

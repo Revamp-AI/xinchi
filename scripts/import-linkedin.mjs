@@ -1,5 +1,5 @@
 import {readFile} from 'node:fs/promises';
-import {parseLinkedinConnections,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.mjs';
+import {parseLinkedinConnections,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.ts';
 import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';
 
 try{

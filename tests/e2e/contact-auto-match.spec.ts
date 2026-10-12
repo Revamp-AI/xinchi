@@ -4,7 +4,7 @@ import { saveContact } from '../../lib/contacts.mjs';
 import {
   parseLinkedinConnections,
   importLinkedinBatch,
-} from '../../lib/linkedin-import.mjs';
+} from '../../lib/linkedin-import.ts';
 import { employerDomainCacheKey } from '../../lib/contact-auto-match.mjs';
 import { websiteCompanyEvidence } from '../../lib/company-domain.mjs';
 import { importAppleContacts } from '../../lib/apple-contacts.ts';
