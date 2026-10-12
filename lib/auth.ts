@@ -1,9 +1,14 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
-import { and, eq, gt, lte } from 'drizzle-orm';
+import { and, desc, eq, gt, lte, notInArray, sql } from 'drizzle-orm';
 import { db } from './postgres.ts';
 import { all, one, run, transaction, lockWorkspace } from './db.mjs';
-import { oauth_attempts, owner, sessions } from './schema/index.ts';
+import {
+  auth_events,
+  oauth_attempts,
+  owner,
+  sessions,
+} from './schema/index.ts';
 import {
   googleClient,
   request,
@@ -200,8 +205,8 @@ export async function verifyGoogleIdentity(
       Error('This Google account is not allowed to open this workspace.'),
       { authCode: 'account' },
     );
-  const owner = await authDb.prepare('SELECT * FROM owner WHERE id=1').get();
-  if (owner && owner.sub !== p.sub)
+  const [pinned] = await db.select().from(owner).where(eq(owner.id, 1));
+  if (pinned && pinned.sub !== p.sub)
     throw Object.assign(
       Error('This Google identity does not own the workspace.'),
       { authCode: 'account' },
@@ -237,23 +242,28 @@ export async function recordAuthEvent(
     [error.providerReason, error.providerCode, error.code].find((x) =>
       reasons.includes(x),
     ) || null;
-  await authDb
-    .prepare(
-      'INSERT INTO auth_events(created_at,stage,outcome,code,http_status,provider_reason) VALUES(?,?,?,?,?,?)',
-    )
-    .run(
-      new Date().toISOString(),
-      stage,
-      outcome,
-      code,
-      Number.isInteger(error.status) ? error.status : null,
-      reason,
+  await db.insert(auth_events).values({
+    created_at: new Date().toISOString(),
+    stage,
+    outcome,
+    code,
+    http_status: Number.isInteger(error.status)
+      ? (error.status as number)
+      : null,
+    provider_reason: reason as string | null,
+  });
+  await db
+    .delete(auth_events)
+    .where(
+      notInArray(
+        auth_events.id,
+        db
+          .select({ id: auth_events.id })
+          .from(auth_events)
+          .orderBy(desc(auth_events.id))
+          .limit(200),
+      ),
     );
-  await authDb
-    .prepare(
-      'DELETE FROM auth_events WHERE id NOT IN (SELECT id FROM auth_events ORDER BY id DESC LIMIT 200)',
-    )
-    .run();
 }
 export async function finishGoogle(
   code: string | null,
@@ -264,11 +274,16 @@ export async function finishGoogle(
   let stage = 'state';
   try {
     if (!state || !browser) throw Error('Google sign-in expired. Try again.');
-    const pending = await authDb
-      .prepare(
-        'DELETE FROM oauth_attempts WHERE state_hash=? AND browser_hash=? AND expires_at>? RETURNING *',
+    const [pending] = await db
+      .delete(oauth_attempts)
+      .where(
+        and(
+          eq(oauth_attempts.state_hash, digest(state)),
+          eq(oauth_attempts.browser_hash, digest(browser)),
+          gt(oauth_attempts.expires_at, Date.now()),
+        ),
       )
-      .get(digest(state), digest(browser), Date.now());
+      .returning();
     if (
       !pending ||
       pending.expires_at <= Date.now() ||
@@ -324,24 +339,30 @@ export async function finishGoogle(
     const token = random();
     await transaction(async () => {
       await lockWorkspace();
-      const current = await authDb
-        .prepare('SELECT sub FROM owner WHERE id=1')
-        .get();
+      const [current] = await db
+        .select({ sub: owner.sub })
+        .from(owner)
+        .where(eq(owner.id, 1));
       if (current && current.sub !== identity.sub)
         throw Error('Workspace owner changed during sign-in.');
-      await authDb
-        .prepare(
-          'INSERT INTO owner VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,name=excluded.name',
-        )
-        .run(identity.sub, identity.email, identity.name);
-      await authDb
-        .prepare('INSERT INTO sessions VALUES(?,?,?,?)')
-        .run(
-          digest(token),
-          identity.sub,
-          Date.now(),
-          Date.now() + SESSION_SECONDS * 1000,
-        );
+      await db
+        .insert(owner)
+        .values({
+          id: 1,
+          sub: identity.sub,
+          email: identity.email,
+          name: identity.name,
+        })
+        .onConflictDoUpdate({
+          target: owner.id,
+          set: { email: sql`excluded.email`, name: sql`excluded.name` },
+        });
+      await db.insert(sessions).values({
+        token_hash: digest(token),
+        sub: identity.sub,
+        created_at: Date.now(),
+        expires_at: Date.now() + SESSION_SECONDS * 1000,
+      });
     });
     await recordAuthEvent(stage, 'complete');
     return { identity, gmail, calendar, token, gmailIssue };
