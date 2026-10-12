@@ -16,7 +16,7 @@ import {APP_ORIGIN,SESSION_COOKIE,FLOW_COOKIE,SESSION_SECONDS,checkLocalRequest,
 import {buildUpdateDraft,renderUpdateDraft} from '../../../lib/update-draft.mjs';
 import {localToday} from '../../../lib/urgency.mjs';
 import {HOSTED,POSTGRES_SECRETS,CLOUD_JOBS} from '../../../lib/runtime.mjs';
-import {workerStatus} from '../../../lib/workers.mjs';
+import {workerStatus} from '../../../lib/workers.ts';
 import {after} from 'next/server.js';
 import {drainCloudWork} from '../../../lib/cloud-jobs.mjs';
 import {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUpload} from '../../../lib/manual-ingestion.mjs';
