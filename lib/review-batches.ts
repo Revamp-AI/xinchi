@@ -1,4 +1,13 @@
-import { all, one, run } from './postgres.ts';
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { db, one, run } from './postgres.ts';
+import {
+  items,
+  proposals,
+  review_batches,
+  review_queue,
+  source_versions,
+  sources,
+} from './schema/index.ts';
 
 // One assigned window of a source snapshot, as stored in review_batches.pages.
 type ReviewPage = {
@@ -20,10 +29,22 @@ export async function queueSourceReview(
   id: string,
   { force = false }: { force?: boolean } = {},
 ) {
-  const source = await one(
-    'SELECT s.*,v.id version_id FROM sources s JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE s.id=?',
-    id,
-  );
+  const [source] = await db
+    .select({
+      body: sources.body,
+      external_id: sources.external_id,
+      occurred_at: sources.occurred_at,
+      version_id: source_versions.id,
+    })
+    .from(sources)
+    .innerJoin(
+      source_versions,
+      and(
+        eq(source_versions.source_id, sources.id),
+        eq(source_versions.content_hash, sources.content_hash),
+      ),
+    )
+    .where(eq(sources.id, id));
   if (
     !source?.body ||
     source.external_id.startsWith('agent-request-') ||
@@ -36,26 +57,82 @@ export async function queueSourceReview(
   if (
     !force &&
     !(Date.parse(source.occurred_at) >= Date.now() - 30 * 86400000) &&
-    !(await one('SELECT id FROM items WHERE source_id=? LIMIT 1', id)) &&
-    !(await one(
-      "SELECT id FROM proposals WHERE status IN ('pending','deferred') AND payload::jsonb->'citations' @> jsonb_build_array(jsonb_build_object('source_id',?::text)) LIMIT 1",
-      id,
-    ))
+    !(
+      await db
+        .select({ id: items.id })
+        .from(items)
+        .where(eq(items.source_id, id))
+        .limit(1)
+    ).length &&
+    !(
+      await db
+        .select({ id: proposals.id })
+        .from(proposals)
+        .where(
+          and(
+            inArray(proposals.status, ['pending', 'deferred']),
+            sql`${proposals.payload}::jsonb->'citations' @> jsonb_build_array(jsonb_build_object('source_id', ${id}::text))`,
+          ),
+        )
+        .limit(1)
+    ).length
   )
     return;
-  await run(
-    `INSERT INTO review_queue(source_id,source_version_id) VALUES(?,?) ON CONFLICT(source_id) DO UPDATE SET source_version_id=excluded.source_version_id,next_offset=0,job_id=NULL,revisit=false,completed=false,attempts=0,retry_after=NULL,updated_at=now() WHERE review_queue.source_version_id<>excluded.source_version_id`,
-    id,
-    source.version_id,
-  );
+  await db
+    .insert(review_queue)
+    .values({ source_id: id, source_version_id: source.version_id })
+    .onConflictDoUpdate({
+      target: review_queue.source_id,
+      set: {
+        source_version_id: sql`excluded.source_version_id`,
+        next_offset: 0,
+        job_id: null,
+        revisit: false,
+        completed: false,
+        attempts: 0,
+        retry_after: null,
+        updated_at: sql`now()`,
+      },
+      setWhere: sql`${review_queue.source_version_id} <> excluded.source_version_id`,
+    });
 }
 
 export async function assignReviewBatch(jobId: string) {
-  const rows =
-    await all(`SELECT q.*,s.title,s.provider,s.occurred_at,s.coverage,v.normalized_body body
- FROM review_queue q JOIN sources s ON s.id=q.source_id JOIN source_versions v ON v.id=q.source_version_id
- WHERE q.completed=false AND q.job_id IS NULL AND q.attempts<3 AND (q.retry_after IS NULL OR q.retry_after<=now())
- ORDER BY s.occurred_at DESC,q.updated_at,q.source_id LIMIT 6 FOR UPDATE OF q`);
+  const rows = await db
+    .select({
+      source_id: review_queue.source_id,
+      source_version_id: review_queue.source_version_id,
+      next_offset: review_queue.next_offset,
+      title: sources.title,
+      provider: sources.provider,
+      occurred_at: sources.occurred_at,
+      coverage: sources.coverage,
+      body: source_versions.normalized_body,
+    })
+    .from(review_queue)
+    .innerJoin(sources, eq(sources.id, review_queue.source_id))
+    .innerJoin(
+      source_versions,
+      eq(source_versions.id, review_queue.source_version_id),
+    )
+    .where(
+      and(
+        eq(review_queue.completed, false),
+        isNull(review_queue.job_id),
+        lt(review_queue.attempts, 3),
+        or(
+          isNull(review_queue.retry_after),
+          sql`${review_queue.retry_after} <= now()`,
+        ),
+      ),
+    )
+    .orderBy(
+      desc(sources.occurred_at),
+      review_queue.updated_at,
+      review_queue.source_id,
+    )
+    .limit(6)
+    .for('update', { of: review_queue });
   const pages: ReviewPage[] = [];
   let remaining = 60000;
   for (const row of rows) {
@@ -64,10 +141,10 @@ export async function assignReviewBatch(jobId: string) {
       offset = row.next_offset,
       end = Math.min(total, offset + remaining, offset + 40000);
     if (end <= offset) {
-      await run(
-        'UPDATE review_queue SET completed=true WHERE source_id=?',
-        row.source_id,
-      );
+      await db
+        .update(review_queue)
+        .set({ completed: true })
+        .where(eq(review_queue.source_id, row.source_id));
       continue;
     }
     pages.push({
@@ -82,18 +159,13 @@ export async function assignReviewBatch(jobId: string) {
       total_characters: total,
     });
     remaining -= end - offset;
-    await run(
-      'UPDATE review_queue SET job_id=?,attempts=attempts+1 WHERE source_id=?',
-      jobId,
-      row.source_id,
-    );
+    await db
+      .update(review_queue)
+      .set({ job_id: jobId, attempts: sql`${review_queue.attempts} + 1` })
+      .where(eq(review_queue.source_id, row.source_id));
   }
   if (pages.length)
-    await run(
-      'INSERT INTO review_batches(job_id,pages) VALUES(?,?::jsonb)',
-      jobId,
-      JSON.stringify(pages),
-    );
+    await db.insert(review_batches).values({ job_id: jobId, pages });
   return pages;
 }
 
