@@ -16,7 +16,7 @@ import { db } from './postgres.ts';
 import { items, proposals, source_versions, sources } from './schema/index.ts';
 import { secrets, updateSecrets } from './secret-store.ts';
 import type { GoogleGrant } from './secret-store.ts';
-import { googleClient, normalizeGmail } from './connectors.mjs';
+import { googleClient, normalizeGmail } from './connectors.ts';
 import {
   firefliesWindow,
   firefliesCheckpoint,
@@ -104,7 +104,7 @@ type FirefliesCursor = CursorBase & {
   skip: number;
   participant: string;
 };
-type ProviderCursor =
+export type ProviderCursor =
   GmailCursor | CalendarCursor | GranolaCursor | FirefliesCursor;
 
 // These cursors are private database state, not Workflow arguments or step outputs.

@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { sessionFor, SESSION_COOKIE, allowedEmail } from '../../lib/auth.mjs';
-import { googleClient } from '../../lib/connectors.mjs';
+import { googleClient } from '../../lib/connectors.ts';
 import { APP_ORIGIN, HOSTED, POSTGRES_SECRETS } from '../../lib/runtime.mjs';
 import Login from './screen';
 export const dynamic = 'force-dynamic';

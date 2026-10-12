@@ -32,7 +32,7 @@ test('a failed or partial calendar sync cannot erase an event or claim fresh cov
  assert.equal((await callContextTool('read_calendar')).stale,true);
 });
 test('Google partial consent keeps calendar and Gmail independent',async()=>{
- const {saveCalendarGrant,connectionState}=await import('../lib/connectors.mjs');
+ const {saveCalendarGrant,connectionState}=await import('../lib/connectors.ts');
  await saveSecrets({});assert.equal(await saveCalendarGrant({scope:'openid email'}, {email:'owner@example.com'}),false);
  assert.equal(await saveCalendarGrant({scope:'https://www.googleapis.com/auth/calendar.events.readonly',access_token:'new-access',refresh_token:'new-refresh'}, {email:'owner@example.com'}),true);
  const state=await connectionState();assert.equal(state.calendar.configured,true);assert.equal(state.gmail.configured,false);assert.ok(!JSON.stringify(state).includes('new-refresh'));

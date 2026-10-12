@@ -4,7 +4,7 @@ import { getSetting } from './db.mjs';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import { durable_runs, sync_runs } from './schema/index.ts';
 import { secrets } from './secret-store.ts';
-import { startSync } from './connectors.mjs';
+import { startSync } from './connectors.ts';
 import { resumeDurable } from './durable-ingestion.mjs';
 import { CLOUD_JOBS } from './runtime.mjs';
 import { granolaConnections } from './granola-connections.mjs';
