@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {eq,inArray} from 'drizzle-orm';
 import {db,transaction,run,one,closeDatabase} from '../lib/postgres.ts';
-import {settings,auth_events,beeper_pairings} from '../lib/schema/index.ts';
+import {settings,auth_events,beeper_pairings,mcp_clients,priority_suggestions} from '../lib/schema/index.ts';
 
 test('drizzle writes inside transaction() roll back with it',async()=>{
  await assert.rejects(transaction(async()=>{await db.insert(settings).values({key:'orm-rollback',value:'true'});throw Error('stop');}),/stop/);
@@ -41,6 +41,14 @@ test('timestamptz columns come back as the same ISO strings as the raw helpers',
  const [row]=await db.select({expires_at:beeper_pairings.expires_at}).from(beeper_pairings).where(eq(beeper_pairings.token_hash,'orm-pairing'));
  assert.equal(raw.expires_at,'2026-01-02T03:04:05.678Z');
  assert.equal(row.expires_at,raw.expires_at);
+});
+
+test('jsonb arrays and objects round-trip with the driver\'s default codecs intact',async()=>{
+ await db.insert(mcp_clients).values({id:'orm-client',name:'Fictional client',redirect_uris:['https://client.example/callback']});
+ await db.insert(priority_suggestions).values({id:'orm-suggestion',payload:{title:'Atlas',rank:2},fingerprint:'orm-suggestion'});
+ assert.deepEqual((await db.select({uris:mcp_clients.redirect_uris}).from(mcp_clients).where(eq(mcp_clients.id,'orm-client')))[0].uris,['https://client.example/callback']);
+ assert.deepEqual((await one("SELECT payload FROM priority_suggestions WHERE id='orm-suggestion'")).payload,{title:'Atlas',rank:2});
+ await run("DELETE FROM focus_auth.mcp_clients WHERE id='orm-client'");await run("DELETE FROM priority_suggestions WHERE id='orm-suggestion'");
 });
 
 test('int8 columns are numbers and unsafe values are refused',async()=>{

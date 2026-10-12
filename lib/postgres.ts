@@ -1,7 +1,11 @@
 import pg from 'pg';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { DrizzleQueryError } from 'drizzle-orm';
-import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
+import {
+  drizzle,
+  nodePgCodecs,
+  type NodePgDatabase,
+} from 'drizzle-orm/node-postgres';
 
 // Counts and legacy millisecond timestamps fit safely in JS numbers. Refuse loss of precision.
 pg.types.setTypeParser(20, (value) => {
@@ -14,9 +18,12 @@ pg.types.setTypeParser(1082, (value) => value);
 pg.types.setTypeParser(1184, (value) => new Date(value).toISOString());
 
 // Drizzle's node-postgres driver reads timestamptz as raw text; keep the ISO
-// strings the rest of the app (and the parser above) uses.
+// strings the rest of the app (and the parser above) uses. A codecs option
+// replaces the driver's defaults, so extend them.
 const codecs = {
+  ...nodePgCodecs,
   'timestamptz:string': {
+    ...nodePgCodecs['timestamptz:string'],
     normalize: (value: string) => new Date(value).toISOString(),
   },
 };
