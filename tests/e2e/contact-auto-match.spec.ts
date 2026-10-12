@@ -77,7 +77,7 @@ test('automatic employer matching can be paused, run, explained and undone', asy
   ).toBeVisible();
   const linked = await one(
     "SELECT contact_id FROM contact_identities WHERE provider='linkedin' AND external_key=?",
-    records[0].key,
+    records[0]!.key,
   );
   expect(linked.contact_id).not.toBe(email.id);
   await controls.getByRole('button', { name: 'Match now' }).click();

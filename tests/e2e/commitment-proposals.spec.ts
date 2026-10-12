@@ -113,7 +113,7 @@ test('Commitments exposes pending proposals before any outcomes are saved', asyn
     const dialog = page.getByRole('dialog', { name: 'Choose an outcome' });
     await first.getByRole('button', { name: 'Review', exact: true }).click();
     await expect(dialog.getByLabel('What is the outcome?')).toHaveValue(
-      titles[0],
+      titles[0]!,
     );
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     expect(
@@ -141,7 +141,7 @@ test('Commitments exposes pending proposals before any outcomes are saved', asyn
       item_status: 'candidate',
       source_version_id: version,
     });
-    await expect(page.locator('.commitment-list')).toContainText(titles[0]);
+    await expect(page.locator('.commitment-list')).toContainText(titles[0]!);
 
     await queue.getByRole('button', { name: 'Dismiss', exact: true }).click();
     await expect(queue).toBeHidden();
@@ -150,7 +150,7 @@ test('Commitments exposes pending proposals before any outcomes are saved', asyn
       (await db.query('SELECT status FROM proposals WHERE id = $1', [ids[1]]))
         .rows[0].status,
     ).toBe('dismissed');
-    await expect(page.locator('.commitment-list')).toContainText(titles[0]);
+    await expect(page.locator('.commitment-list')).toContainText(titles[0]!);
   } finally {
     await db.end();
   }

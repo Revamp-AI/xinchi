@@ -31,7 +31,7 @@ export async function migrateDatabase(
     await client.query("SELECT pg_advisory_lock(hashtext('focus-schema'))");
     const migrations = readMigrationFiles({ migrationsFolder });
     if (await exists(client, 'public.focus_schema_migrations'))
-      await adoptLegacyDatabase(client, migrations[0]);
+      await adoptLegacyDatabase(client, migrations[0]!);
     await verifyApplied(client, migrations);
     await migrate(drizzle({ client }), { migrationsFolder });
   } finally {

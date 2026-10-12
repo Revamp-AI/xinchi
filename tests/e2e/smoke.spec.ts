@@ -11,7 +11,7 @@ const views = {
   Contacts: 'Your contacts',
   Settings: 'AI reviews',
 };
-const [fireflies] = sources;
+const fireflies = sources[0]!;
 
 function heading(page: Page, name: string) {
   return page.getByRole('heading', { level: 1, name, exact: true });
@@ -193,7 +193,7 @@ test('other connections remain available while Gmail and another provider import
  });
  await page.route('**/api/sync',async route=>{
   const {provider}=route.request().postDataJSON();requested.push(provider);
-  const row={...sync[0],id:provider+'-busy-fixture',provider,state:'queued',imported:0,changed:0};sync=[row,...sync];
+  const row={...sync[0]!,id:provider+'-busy-fixture',provider,state:'queued',imported:0,changed:0};sync=[row,...sync];
   await route.fulfill({status:202,json:{id:row.id}});
  });
  // This checks concurrent imports; navigate directly after installing the state fixture.
