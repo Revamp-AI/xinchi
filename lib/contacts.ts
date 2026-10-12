@@ -1,5 +1,5 @@
 import { parse } from 'csv-parse/sync';
-import { and, desc, eq, getColumns, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, getColumns, isNull, ne, sql } from 'drizzle-orm';
 import {
   emailAddress,
   exactEmailContacts,
@@ -33,6 +33,7 @@ import {
   contact_state_history,
   contact_states,
   contacts,
+  identity_reviews,
   interaction_participants,
   interaction_sources,
   interactions,
@@ -343,13 +344,17 @@ export async function importContactsCsv(csv: unknown) {
     await lockWorkspace();
     for (const r of records) {
       const key = hash(r);
-      if (
-        await one(
-          "SELECT id FROM contact_identities WHERE provider='csv' AND account='workspace' AND external_key=?",
-          key,
-        )
-      )
-        continue;
+      const [imported] = await db
+        .select({ id: contact_identities.id })
+        .from(contact_identities)
+        .where(
+          and(
+            eq(contact_identities.provider, 'csv'),
+            eq(contact_identities.account, 'workspace'),
+            eq(contact_identities.external_key, key),
+          ),
+        );
+      if (imported) continue;
       const existing = await resolveExactEmailContact(r.email);
       const c = await saveContact(
         existing
@@ -365,14 +370,15 @@ export async function importContactsCsv(csv: unknown) {
             }
           : r,
       );
-      await run(
-        "INSERT INTO contact_identities(id,contact_id,provider,account,external_key,display_name,address) VALUES(?,?,'csv','workspace',?,?,?)",
-        uid(),
-        c.id,
-        key,
-        r.name,
-        r.email,
-      );
+      await db.insert(contact_identities).values({
+        id: uid(),
+        contact_id: c.id,
+        provider: 'csv',
+        account: 'workspace',
+        external_key: key,
+        display_name: r.name,
+        address: r.email,
+      });
       if (existing) matched++;
       else {
         await suggestIdentityMatches(c.id, c.name, c.email);
@@ -387,24 +393,34 @@ export async function suggestIdentityMatches(
   name: string,
   email: string,
 ) {
-  const matches = await all(
-    "SELECT id,email FROM contacts WHERE id<>? AND merged_into IS NULL AND archived=false AND ((?<>'' AND lower(email)=?) OR lower(name)=lower(?)) LIMIT 20",
-    id,
-    email,
-    email,
-    name,
-  );
+  const matches = await db
+    .select({ id: contacts.id, email: contacts.email })
+    .from(contacts)
+    .where(
+      and(
+        ne(contacts.id, id),
+        isNull(contacts.merged_into),
+        eq(contacts.archived, false),
+        sql`((${email}<>'' AND lower(${contacts.email})=${email}) OR lower(${contacts.name})=lower(${name}))`,
+      ),
+    )
+    .limit(20);
   for (const other of matches) {
     const [left, right] = [id, other.id].sort();
-    await run(
-      'INSERT INTO identity_reviews(id,left_id,right_id,reason) VALUES(?,?,?,?) ON CONFLICT(left_id,right_id) DO NOTHING',
-      uid(),
-      left,
-      right,
-      email && email === other.email
-        ? 'Same address across different identity bindings.'
-        : 'Same display name; may be different people.',
-    );
+    await db
+      .insert(identity_reviews)
+      .values({
+        id: uid(),
+        left_id: left!,
+        right_id: right!,
+        reason:
+          email && email === other.email
+            ? 'Same address across different identity bindings.'
+            : 'Same display name; may be different people.',
+      })
+      .onConflictDoNothing({
+        target: [identity_reviews.left_id, identity_reviews.right_id],
+      });
   }
 }
 // cc, mentioned and uncertain participants were not part of the conversation.
