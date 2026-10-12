@@ -6,6 +6,7 @@ import {
   getColumns,
   gte,
   inArray,
+  isNull,
   ne,
   notLike,
   or,
@@ -32,6 +33,8 @@ type PriorityUpdate = Pick<
   'priority_id' | 'summary' | 'next_decision' | 'suggested_rank' | 'citations'
 >;
 type PrioritySuggestion = AgentOutput['priority_suggestions'][number];
+// What a pending suggestion for an existing priority stores in its payload.
+type PriorityChange = PriorityUpdate & { base_version: number };
 type Priority = typeof priorities.$inferSelect;
 
 export const stackId = z.enum(['deal-flow', 'product', 'go-to-market']);
@@ -72,6 +75,17 @@ const bumpOrderVersion = () =>
     .update(priority_order)
     .set({ version: sql`${priority_order.version} + 1` })
     .where(eq(priority_order.id, 1));
+const activeTitle = (title: string) =>
+  db
+    .select({ id: priorities.id })
+    .from(priorities)
+    .where(
+      and(
+        sql`lower(${priorities.title}) = lower(${title})`,
+        eq(priorities.status, 'active'),
+      ),
+    );
+
 export async function prioritiesState() {
   const [stacks, items, suggestions, order_version] = await Promise.all([
     stacksInOrder(),
@@ -473,16 +487,31 @@ export async function savePriorityEnrichment(
   updates: PriorityUpdate[] = [],
   suggestions: PrioritySuggestion[] = [],
 ) {
+  const touch = (id: string) =>
+    db
+      .update(priorities)
+      .set({ updated_at: sql`now()` })
+      .where(eq(priorities.id, id));
   for (const update of updates) {
-    const p = await one(
-      "SELECT * FROM priorities WHERE id=? AND status='active'",
-      update.priority_id,
-    );
+    const [p] = await db
+      .select()
+      .from(priorities)
+      .where(
+        and(
+          eq(priorities.id, update.priority_id),
+          eq(priorities.status, 'active'),
+        ),
+      );
     if (!p) continue;
-    const dated = await all(
-      'SELECT occurred_at FROM sources WHERE id=ANY(?::text[])',
-      update.citations.map((c) => c.source_id),
-    );
+    const dated = await db
+      .select({ occurred_at: sources.occurred_at })
+      .from(sources)
+      .where(
+        inArray(
+          sources.id,
+          update.citations.map((c) => c.source_id),
+        ),
+      );
     const time =
       dated
         .map((d) => d.occurred_at)
@@ -497,78 +526,81 @@ export async function savePriorityEnrichment(
       ].sort(),
       quotes: update.citations.map((c) => c.quote).sort(),
     });
-    const inserted = await run(
-      "INSERT INTO priority_updates(id,priority_id,body,origin,citations,fingerprint,job_id,occurred_at) VALUES(?,?,?,'context',?::jsonb,?,?,?) ON CONFLICT(fingerprint) DO NOTHING",
-      uid(),
-      p.id,
-      update.summary,
-      JSON.stringify(update.citations),
-      fingerprint,
-      jobId,
-      time,
-    );
-    if (inserted.changes)
-      await run('UPDATE priorities SET updated_at=now() WHERE id=?', p.id);
+    const inserted = await db
+      .insert(priority_updates)
+      .values({
+        id: uid(),
+        priority_id: p.id,
+        body: update.summary,
+        origin: 'context',
+        citations: update.citations,
+        fingerprint,
+        job_id: jobId,
+        occurred_at: time,
+      })
+      .onConflictDoNothing({ target: priority_updates.fingerprint })
+      .returning({ id: priority_updates.id });
+    if (inserted.length) await touch(p.id);
     if (
-      inserted.changes &&
+      inserted.length &&
       (!p.latest_summary ||
         (time &&
           (!p.last_context_at ||
             Date.parse(time) >= Date.parse(p.last_context_at))))
     )
-      await run(
-        'UPDATE priorities SET latest_summary=?,last_context_at=?,updated_at=now() WHERE id=?',
-        update.summary,
-        time,
-        p.id,
-      );
+      await db
+        .update(priorities)
+        .set({
+          latest_summary: update.summary,
+          last_context_at: time,
+          updated_at: sql`now()`,
+        })
+        .where(eq(priorities.id, p.id));
     if (
       (update.next_decision && update.next_decision !== p.next_decision) ||
       update.suggested_rank !== null
     ) {
-      const payload = { ...update, base_version: p.version };
-      await run(
-        'INSERT INTO priority_suggestions(id,priority_id,job_id,payload,fingerprint) VALUES(?,?,?,?::jsonb,?) ON CONFLICT(fingerprint) DO NOTHING',
-        uid(),
-        p.id,
-        jobId,
-        JSON.stringify(payload),
-        hash({
-          priority: p.id,
-          decision: update.next_decision,
-          rank: update.suggested_rank,
-          version: p.version,
-        }),
-      );
-      await run('UPDATE priorities SET updated_at=now() WHERE id=?', p.id);
+      const payload: PriorityChange = { ...update, base_version: p.version };
+      await db
+        .insert(priority_suggestions)
+        .values({
+          id: uid(),
+          priority_id: p.id,
+          job_id: jobId,
+          payload,
+          fingerprint: hash({
+            priority: p.id,
+            decision: update.next_decision,
+            rank: update.suggested_rank,
+            version: p.version,
+          }),
+        })
+        .onConflictDoNothing({ target: priority_suggestions.fingerprint });
+      await touch(p.id);
     }
   }
   for (const suggestion of suggestions) {
-    if (
-      (
-        await one(
-          "SELECT count(*) n FROM priority_suggestions WHERE priority_id IS NULL AND status='pending'",
-        )
-      ).n >= 6
-    )
-      break;
-    if (
-      await one(
-        "SELECT id FROM priorities WHERE lower(title)=lower(?) AND status='active'",
-        suggestion.title,
-      )
-    )
-      continue;
-    await run(
-      'INSERT INTO priority_suggestions(id,job_id,payload,fingerprint) VALUES(?,?,?::jsonb,?) ON CONFLICT(fingerprint) DO NOTHING',
-      uid(),
-      jobId,
-      JSON.stringify(suggestion),
-      hash({
-        stack: suggestion.stack_id,
-        title: suggestion.title.toLowerCase(),
-      }),
+    const pending = await db.$count(
+      priority_suggestions,
+      and(
+        isNull(priority_suggestions.priority_id),
+        eq(priority_suggestions.status, 'pending'),
+      ),
     );
+    if (pending >= 6) break;
+    if ((await activeTitle(suggestion.title)).length) continue;
+    await db
+      .insert(priority_suggestions)
+      .values({
+        id: uid(),
+        job_id: jobId,
+        payload: suggestion,
+        fingerprint: hash({
+          stack: suggestion.stack_id,
+          title: suggestion.title.toLowerCase(),
+        }),
+      })
+      .onConflictDoNothing({ target: priority_suggestions.fingerprint });
   }
 }
 export async function decidePrioritySuggestion({
