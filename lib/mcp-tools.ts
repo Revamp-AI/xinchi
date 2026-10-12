@@ -11,7 +11,7 @@ import {
   queuePriorityContext,
 } from './priorities.ts';
 import { z } from 'zod';
-import { and, desc, eq, ilike } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNull } from 'drizzle-orm';
 import { db } from './postgres.ts';
 import {
   all,
@@ -72,14 +72,21 @@ import { APP_ORIGIN, CLOUD_JOBS } from './runtime.mjs';
 import { MCP_URL } from './mcp-auth.ts';
 import { allowedEmail } from './auth.ts';
 import {
+  contacts,
+  durable_runs,
   events,
+  item_contacts,
   items,
+  job_events,
   jobs,
   message_drafts,
+  proposal_events,
   proposals,
   source_versions,
   sync_runs,
 } from './schema/index.ts';
+
+type Item = typeof items.$inferSelect;
 
 const id = z.string().min(1).max(300),
   text = z.string().max(12000),
@@ -247,8 +254,8 @@ const parseRow = <T extends Row>(row: T | null | undefined) =>
         ...(row.result_json ? { result: JSON.parse(row.result_json) } : {}),
       }
     : null;
-async function found(sql: string, ...args: unknown[]) {
-  const row = await one(sql, ...args);
+async function found<T>(rows: PromiseLike<T[]>) {
+  const [row] = await rows;
   if (!row) throw Error('Record not found.');
   return row;
 }
@@ -395,9 +402,12 @@ read(
   'Read a commitment, its current version, related contacts, and source evidence before changing it.',
   { id },
   async (a) => ({
-    ...(await found('SELECT * FROM items WHERE id=?', a.id)),
+    ...(await found(db.select().from(items).where(eq(items.id, a.id)))),
     contact_ids: (
-      await all('SELECT contact_id FROM item_contacts WHERE item_id=?', a.id)
+      await db
+        .select({ contact_id: item_contacts.contact_id })
+        .from(item_contacts)
+        .where(eq(item_contacts.item_id, a.id))
     ).map((r) => r.contact_id),
   }),
 );
@@ -451,11 +461,15 @@ read(
   'Read a proposal and its exact source citations before deciding.',
   { id },
   async (a) => ({
-    ...parseRow(await found('SELECT * FROM proposals WHERE id=?', a.id)),
-    history: await all(
-      'SELECT * FROM proposal_events WHERE proposal_id=? ORDER BY created_at DESC LIMIT 30',
-      a.id,
+    ...parseRow(
+      await found(db.select().from(proposals).where(eq(proposals.id, a.id))),
     ),
+    history: await db
+      .select()
+      .from(proposal_events)
+      .where(eq(proposal_events.proposal_id, a.id))
+      .orderBy(desc(proposal_events.created_at))
+      .limit(30),
   }),
 );
 write(
@@ -471,13 +485,22 @@ write(
     const p = JSON.parse(
       (
         await found(
-          "SELECT payload FROM proposals WHERE id=? AND status IN ('pending','deferred')",
-          a.id,
+          db
+            .select({ payload: proposals.payload })
+            .from(proposals)
+            .where(
+              and(
+                eq(proposals.id, a.id),
+                inArray(proposals.status, ['pending', 'deferred']),
+              ),
+            ),
         )
       ).payload,
     );
-    const original = p.existing_item_id
-      ? await found('SELECT * FROM items WHERE id=?', p.existing_item_id)
+    const original: Partial<Item> = p.existing_item_id
+      ? await found(
+          db.select().from(items).where(eq(items.id, p.existing_item_id)),
+        )
       : {};
     if (original.id && a.version !== original.version)
       throw Error(
@@ -626,8 +649,10 @@ read(
   { id, ...page },
   async (a) => {
     await found(
-      'SELECT id FROM contacts WHERE id=? AND merged_into IS NULL',
-      a.id,
+      db
+        .select({ id: contacts.id })
+        .from(contacts)
+        .where(and(eq(contacts.id, a.id), isNull(contacts.merged_into))),
     );
     const rows = await readInteractions(a.id, a.limit + 1, a.offset);
     return {
@@ -758,7 +783,8 @@ read(
   'read_draft',
   'Read a private message draft and its citations.',
   { id },
-  (a) => found('SELECT * FROM message_drafts WHERE id=?', a.id),
+  (a) =>
+    found(db.select().from(message_drafts).where(eq(message_drafts.id, a.id))),
 );
 write(
   'save_draft',
@@ -871,14 +897,28 @@ read(
   async (a) => ({
     job: parseRow(
       await found(
-        'SELECT id,kind,status,prompt,result_json,error,progress,created_at,updated_at FROM jobs WHERE id=?',
-        a.id,
+        db
+          .select({
+            id: jobs.id,
+            kind: jobs.kind,
+            status: jobs.status,
+            prompt: jobs.prompt,
+            result_json: jobs.result_json,
+            error: jobs.error,
+            progress: jobs.progress,
+            created_at: jobs.created_at,
+            updated_at: jobs.updated_at,
+          })
+          .from(jobs)
+          .where(eq(jobs.id, a.id)),
       ),
     ),
-    events: await all(
-      'SELECT label,created_at FROM job_events WHERE job_id=? ORDER BY id DESC LIMIT 50',
-      a.id,
-    ),
+    events: await db
+      .select({ label: job_events.label, created_at: job_events.created_at })
+      .from(job_events)
+      .where(eq(job_events.job_id, a.id))
+      .orderBy(desc(job_events.id))
+      .limit(50),
   }),
 );
 write(
@@ -996,13 +1036,34 @@ read(
   { id },
   async (a) => ({
     run: await found(
-      'SELECT id,provider,state,imported,changed,message,started_at,finished_at,updated_at FROM sync_runs WHERE id=?',
-      a.id,
+      db
+        .select({
+          id: sync_runs.id,
+          provider: sync_runs.provider,
+          state: sync_runs.state,
+          imported: sync_runs.imported,
+          changed: sync_runs.changed,
+          message: sync_runs.message,
+          started_at: sync_runs.started_at,
+          finished_at: sync_runs.finished_at,
+          updated_at: sync_runs.updated_at,
+        })
+        .from(sync_runs)
+        .where(eq(sync_runs.id, a.id)),
     ),
-    workflow: await one(
-      "SELECT revision,completed,outcome,updated_at FROM durable_runs WHERE kind='sync' AND run_id=?",
-      a.id,
-    ),
+    workflow: (
+      await db
+        .select({
+          revision: durable_runs.revision,
+          completed: durable_runs.completed,
+          outcome: durable_runs.outcome,
+          updated_at: durable_runs.updated_at,
+        })
+        .from(durable_runs)
+        .where(
+          and(eq(durable_runs.kind, 'sync'), eq(durable_runs.run_id, a.id)),
+        )
+    )[0],
   }),
 );
 write(
