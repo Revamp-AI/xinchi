@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { sessionFor, SESSION_COOKIE } from '../../../lib/auth.mjs';
-import { validateAuthorization } from '../../../lib/mcp-auth.mjs';
+import { validateAuthorization } from '../../../lib/mcp-auth.ts';
 import McpConsent from './screen';
 export const dynamic = 'force-dynamic';
 export default async function Authorize({ searchParams }) {
