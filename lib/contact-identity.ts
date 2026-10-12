@@ -1,4 +1,7 @@
-import { all, one, run, transaction, lockWorkspace, uid, hash } from './db.mjs';
+import { and, eq, getColumns, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import { db, transaction, lockWorkspace } from './postgres.ts';
+import { one, run, uid, hash } from './db.mjs';
 import {
   existingContact,
   evaluateContacts as evaluateUntyped,
@@ -9,7 +12,7 @@ import {
   exactEmailContacts,
   combinedNotes,
 } from './contact-email.ts';
-import type {
+import {
   affiliations,
   contact_identities,
   contacts,
@@ -17,6 +20,7 @@ import type {
   interaction_participants,
   item_contacts,
   message_drafts,
+  organizations,
 } from './schema/index.ts';
 
 type Contact = typeof contacts.$inferSelect;
@@ -48,23 +52,41 @@ const related = [
   'item_contacts',
   'message_drafts',
 ] as const;
+const relatedTables = {
+  contact_identities,
+  interaction_participants,
+  affiliations,
+  item_contacts,
+  message_drafts,
+};
+const leftContact = alias(contacts, 'l'),
+  rightContact = alias(contacts, 'rh');
 async function snapshot(ids: string[]): Promise<Snapshot> {
   const data: Partial<Snapshot> = {
-    contacts: await all(
-      'SELECT * FROM contacts WHERE id=ANY(?::text[]) ORDER BY id',
-      ids,
-    ),
+    contacts: await db
+      .select()
+      .from(contacts)
+      .where(inArray(contacts.id, ids))
+      .orderBy(contacts.id),
   };
-  for (const t of related)
-    (data as Record<string, unknown[]>)[t] = await all(
-      `SELECT * FROM ${t} WHERE contact_id=ANY(?::text[]) ORDER BY row_to_json(${t})::text`,
-      ids,
-    );
-  data.identity_reviews = await all(
-    'SELECT * FROM identity_reviews WHERE left_id=ANY(?::text[]) OR right_id=ANY(?::text[]) ORDER BY id',
-    ids,
-    ids,
-  );
+  for (const t of related) {
+    const table = relatedTables[t];
+    (data as Record<string, unknown[]>)[t] = await db
+      .select()
+      .from(table)
+      .where(inArray(table.contact_id, ids))
+      .orderBy(sql`row_to_json(${table})::text`);
+  }
+  data.identity_reviews = await db
+    .select()
+    .from(identity_reviews)
+    .where(
+      or(
+        inArray(identity_reviews.left_id, ids),
+        inArray(identity_reviews.right_id, ids),
+      ),
+    )
+    .orderBy(identity_reviews.id);
   return data as Snapshot;
 }
 export async function mergePreview(left: string, right: string) {
@@ -265,10 +287,20 @@ function subset(data: Snapshot, ids: string[]) {
 const groupHash = (data: Snapshot, ids: string[]) =>
   hash({ data, review_ids: ids.slice().sort() });
 async function reviewGroups(ids: string[]) {
-  const reviews = await all(
-    "SELECT r.* FROM identity_reviews r JOIN contacts l ON l.id=r.left_id JOIN contacts rh ON rh.id=r.right_id WHERE r.id=ANY(?::text[]) AND r.status='pending' AND l.merged_into IS NULL AND rh.merged_into IS NULL ORDER BY r.id",
-    ids,
-  );
+  const reviews = await db
+    .select(getColumns(identity_reviews))
+    .from(identity_reviews)
+    .innerJoin(leftContact, eq(leftContact.id, identity_reviews.left_id))
+    .innerJoin(rightContact, eq(rightContact.id, identity_reviews.right_id))
+    .where(
+      and(
+        inArray(identity_reviews.id, ids),
+        eq(identity_reviews.status, 'pending'),
+        isNull(leftContact.merged_into),
+        isNull(rightContact.merged_into),
+      ),
+    )
+    .orderBy(identity_reviews.id);
   if (reviews.length !== ids.length)
     throw Error(
       'Some selected matches changed or were already reviewed. Refresh the list and select them again.',
@@ -314,7 +346,9 @@ async function reviewGroups(ids: string[]) {
 export async function bulkMergePreview(input: { ids?: unknown }) {
   const ids = reviewIds(input.ids);
   return transaction(async () => {
-    await run('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await db.execute(
+      sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY`,
+    );
     const groups = await reviewGroups(ids);
     const organizationIds = [
       ...new Set(
@@ -323,12 +357,12 @@ export async function bulkMergePreview(input: { ids?: unknown }) {
         ),
       ),
     ];
-    const organizations = new Map(
+    const organizationNames = new Map(
       (
-        await all(
-          'SELECT id,name FROM organizations WHERE id=ANY(?::text[])',
-          organizationIds,
-        )
+        await db
+          .select({ id: organizations.id, name: organizations.name })
+          .from(organizations)
+          .where(inArray(organizations.id, organizationIds))
       ).map((o) => [o.id, o.name]),
     );
     return {
@@ -343,7 +377,7 @@ export async function bulkMergePreview(input: { ids?: unknown }) {
             ...new Set(
               g.before.affiliations
                 .filter((a) => a.contact_id === c.id)
-                .map((a) => organizations.get(a.organization_id)),
+                .map((a) => organizationNames.get(a.organization_id)),
             ),
           ],
           providers: [
@@ -478,14 +512,18 @@ function canonicalOrder(a: Contact, b: Contact) {
 }
 async function mergeBlocker(contacts: Contact[]) {
   const ids = contacts.map((c) => c.id);
-  if (
-    await one(
-      "SELECT id FROM identity_reviews WHERE status='separate' AND left_id=ANY(?::text[]) AND right_id=ANY(?::text[]) LIMIT 1",
-      ids,
-      ids,
+  const [separate] = await db
+    .select({ id: identity_reviews.id })
+    .from(identity_reviews)
+    .where(
+      and(
+        eq(identity_reviews.status, 'separate'),
+        inArray(identity_reviews.left_id, ids),
+        inArray(identity_reviews.right_id, ids),
+      ),
     )
-  )
-    return 'Kept separate by you';
+    .limit(1);
+  if (separate) return 'Kept separate by you';
   const maintained = contacts.filter((c) => c.confirmed || c.version > 1);
   if (
     new Set(
@@ -588,9 +626,36 @@ export async function resolveExactEmailContact(address: unknown) {
 export async function reconcileEmailContacts({
   apply = false,
 }: { apply?: boolean } = {}) {
-  const emails = await all(
-    "SELECT address FROM (SELECT id AS contact_id,lower(btrim(email)) AS address FROM contacts WHERE merged_into IS NULL AND email<>'' UNION SELECT i.contact_id,lower(btrim(i.address)) FROM contact_identities i JOIN contacts c ON c.id=i.contact_id WHERE c.merged_into IS NULL AND i.address<>'') addresses GROUP BY address HAVING count(DISTINCT contact_id)>1 ORDER BY address",
-  );
+  const addresses = db
+    .select({
+      contact_id: sql<string>`${contacts.id}`.as('contact_id'),
+      address: sql<string>`lower(btrim(${contacts.email}))`.as('address'),
+    })
+    .from(contacts)
+    .where(and(isNull(contacts.merged_into), ne(contacts.email, '')))
+    .union(
+      db
+        .select({
+          contact_id: sql<string>`${contact_identities.contact_id}`.as(
+            'contact_id',
+          ),
+          address: sql<string>`lower(btrim(${contact_identities.address}))`.as(
+            'address',
+          ),
+        })
+        .from(contact_identities)
+        .innerJoin(contacts, eq(contacts.id, contact_identities.contact_id))
+        .where(
+          and(isNull(contacts.merged_into), ne(contact_identities.address, '')),
+        ),
+    )
+    .as('addresses');
+  const emails = await db
+    .select({ address: addresses.address })
+    .from(addresses)
+    .groupBy(addresses.address)
+    .having(sql`count(DISTINCT ${addresses.contact_id}) > 1`)
+    .orderBy(addresses.address);
   let merged = 0,
     groups = 0;
   const skipped: { reason: string; profiles?: number }[] = [],
