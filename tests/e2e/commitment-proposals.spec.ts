@@ -216,6 +216,8 @@ test('ranked shortlist keeps overflow accessible and lets the user restore remov
     await expect(queue.locator('.decision-card:visible')).toHaveCount(10);
     await page.getByText('Recently removed · 1').click();
     await page.getByRole('button',{name:'Restore suggestion'}).click();
+    // Ten cards show before and after the restore, so wait for the restored card before reading the database.
+    await expect(queue.locator('.decision-card').filter({hasText:titles[0]})).toBeVisible();
     await expect(queue.locator('.decision-card:visible')).toHaveCount(10);
     expect((await db.query('SELECT status FROM proposals WHERE id=$1',[ids[0]])).rows[0].status).toBe('pending');
     await page.goto('/#connections');await page.getByRole('button',{name:'Connect calendar',exact:true}).click();
