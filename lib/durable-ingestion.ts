@@ -1,10 +1,16 @@
 import { and, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
-import { db, lockWorkspace, transaction as dbTransaction } from './postgres.ts';
+import {
+  databaseErrorCode,
+  db,
+  lockWorkspace,
+  transaction as dbTransaction,
+} from './postgres.ts';
 import { one, run, stamp, uid, setSetting, upsertSource } from './db.mjs';
 import {
   contact_queue,
   contact_runs,
   durable_runs,
+  import_records,
   import_uploads,
   sync_runs,
 } from './schema/index.ts';
@@ -49,7 +55,6 @@ type Parent =
 // Properties a failed step or projection may carry.
 type StepError = Error & {
   lostUnit?: boolean;
-  code?: unknown;
   permanent?: boolean;
   retryAfterMs?: unknown;
   ingestionProviderError?: boolean;
@@ -455,35 +460,46 @@ export async function advanceDurableUnit(
     return await transaction(async () => {
       await lockWorkspace();
       await requireUnit(kind, id, unit);
-      const latest = await one(
-        'SELECT * FROM ' + tableFor(kind) + ' WHERE id=? FOR UPDATE',
-        id,
-      );
+      const table = parentTable(kind),
+        latest = await lockParent(table, id);
       if (
         kind === 'contacts' &&
         result.complete &&
-        (await one(
-          "SELECT source_id FROM contact_queue WHERE state='pending' LIMIT 1",
-        ))
+        (
+          await db
+            .select({ source_id: contact_queue.source_id })
+            .from(contact_queue)
+            .where(eq(contact_queue.state, 'pending'))
+            .limit(1)
+        ).length
       )
         result.complete = false;
       if (result.contact) {
         const q = result.contact;
-        await run('SAVEPOINT contact_projection');
+        await db.execute(sql`SAVEPOINT contact_projection`);
         try {
           await (adapters.project || projectSource)(q.source_id, () =>
             requireUnit(kind, id, unit),
           );
-          await run('RELEASE SAVEPOINT contact_projection');
+          await db.execute(sql`RELEASE SAVEPOINT contact_projection`);
         } catch (e) {
-          await run('ROLLBACK TO SAVEPOINT contact_projection');
-          if ((e as StepError).lostUnit || (e as StepError).code) throw e;
-          await run(
-            "UPDATE contact_queue SET state='failed',attempts=attempts+1,error='Extraction failed; inspect the source and retry',updated_at=now() WHERE source_id=? AND content_hash=?",
-            q.source_id,
-            q.content_hash,
-          );
-          await run('RELEASE SAVEPOINT contact_projection');
+          await db.execute(sql`ROLLBACK TO SAVEPOINT contact_projection`);
+          if ((e as StepError).lostUnit || databaseErrorCode(e)) throw e;
+          await db
+            .update(contact_queue)
+            .set({
+              state: 'failed',
+              attempts: sql`${contact_queue.attempts} + 1`,
+              error: 'Extraction failed; inspect the source and retry',
+              updated_at: sql`now()`,
+            })
+            .where(
+              and(
+                eq(contact_queue.source_id, q.source_id),
+                eq(contact_queue.content_hash, q.content_hash),
+              ),
+            );
+          await db.execute(sql`RELEASE SAVEPOINT contact_projection`);
         }
       }
       let changed = 0;
@@ -494,61 +510,66 @@ export async function advanceDurableUnit(
       await requireUnit(kind, id, unit);
       const next = revision + 1,
         outcome = { revision: next, done: Boolean(result.complete) };
-      await run(
-        "UPDATE durable_runs SET cursor=?::jsonb,revision=?,attempts=0,completed=?,outcome=?::jsonb,unit_token='',unit_until=NULL,updated_at=now() WHERE kind=? AND run_id=?",
-        JSON.stringify(result.cursor ?? null),
-        next,
-        outcome.done,
-        JSON.stringify(outcome),
-        kind,
-        id,
-      );
+      await db
+        .update(durable_runs)
+        .set({
+          // A step without a cursor saves JSON null, not SQL NULL.
+          cursor: sql`${JSON.stringify(result.cursor ?? null)}::jsonb`,
+          revision: next,
+          attempts: 0,
+          completed: outcome.done,
+          outcome,
+          unit_token: '',
+          unit_until: null,
+          updated_at: sql`now()`,
+        })
+        .where(durableRun(kind, id));
       const state = outcome.done ? 'complete' : 'running',
         processed = result.processed ?? result.records?.length ?? 0;
-      await run(
-        'UPDATE ' +
-          tableFor(kind) +
-          ' SET state=?,imported=imported+?,updated_at=?,message=?,finished_at=?' +
-          (kind === 'sync' ? ',changed=changed+?' : '') +
-          ' WHERE id=?',
-        state,
-        processed,
-        stamp(),
-        outcome.done
-          ? 'Import finished'
-          : result.message || 'Saved progress; continuing automatically',
-        outcome.done ? stamp() : null,
-        ...(kind === 'sync' ? [changed] : []),
-        id,
-      );
+      await db
+        .update(table)
+        .set({
+          state,
+          imported: sql`${table.imported} + ${processed}`,
+          updated_at: stamp(),
+          message: outcome.done
+            ? 'Import finished'
+            : result.message || 'Saved progress; continuing automatically',
+          finished_at: outcome.done ? stamp() : null,
+          ...(kind === 'sync'
+            ? { changed: sql`${sync_runs.changed} + ${changed}` }
+            : {}),
+        })
+        .where(eq(table.id, id));
       if (outcome.done) {
         if (kind === 'sync') {
           if ((parent.changed || 0) + changed) {
             const contact = await startContactProjection({ drain: true });
-            await run(
-              'UPDATE contact_runs SET review_requested=true WHERE id=?',
-              contact.id,
-            );
+            await db
+              .update(contact_runs)
+              .set({ review_requested: true })
+              .where(eq(contact_runs.id, contact.id));
           }
           if (parent.provider === 'gmail') {
             const { clearGmailIssue } = await import('./connectors.ts');
             await clearGmailIssue();
           }
-          await run('DELETE FROM import_records WHERE run_id=?', id);
-          await run('DELETE FROM import_uploads WHERE run_id=?', id);
+          await db.delete(import_records).where(eq(import_records.run_id, id));
+          await db.delete(import_uploads).where(eq(import_uploads.run_id, id));
         } else {
-          const failures = (
-            await one(
-              "SELECT count(*) AS n FROM contact_queue WHERE state='failed'",
-            )
-          ).n;
+          const failures = await db.$count(
+            contact_queue,
+            eq(contact_queue.state, 'failed'),
+          );
           if (failures)
-            await run(
-              "UPDATE contact_runs SET state='partial',message=? WHERE id=?",
-              failures + ' sources need a retry',
-              id,
-            );
-          if (latest.review_requested) await queueImportReview();
+            await db
+              .update(contact_runs)
+              .set({
+                state: 'partial',
+                message: failures + ' sources need a retry',
+              })
+              .where(eq(contact_runs.id, id));
+          if (latest!.review_requested) await queueImportReview();
         }
       }
       return outcome;
@@ -558,11 +579,7 @@ export async function advanceDurableUnit(
     if (error.lostUnit) return { revision, done: false, waitMs: 2000 };
     return transaction(async () => {
       await lockWorkspace();
-      const current = await one(
-        'SELECT * FROM durable_runs WHERE kind=? AND run_id=? FOR UPDATE',
-        kind,
-        id,
-      );
+      const current = await lockDurableRun(kind, id);
       if (!current || current.unit_token !== unit || current.completed)
         return current ? summary(current) : { done: true, revision };
       const attempts = current.attempts + 1,
@@ -589,25 +606,28 @@ export async function advanceDurableUnit(
           ? { waitMs }
           : { failed: true, permanent: Boolean(error.permanent) }),
       };
-      await run(
-        "UPDATE durable_runs SET attempts=?,revision=?,completed=?,outcome=?::jsonb,unit_token='',unit_until=NULL,updated_at=now() WHERE kind=? AND run_id=?",
-        attempts,
-        next,
-        failed,
-        JSON.stringify(outcome),
-        kind,
-        id,
-      );
-      await run(
-        'UPDATE ' +
-          tableFor(kind) +
-          ' SET state=?,message=?,updated_at=?,finished_at=? WHERE id=?',
-        failed ? 'failed' : 'running',
-        message,
-        stamp(),
-        failed ? stamp() : null,
-        id,
-      );
+      await db
+        .update(durable_runs)
+        .set({
+          attempts,
+          revision: next,
+          completed: failed,
+          outcome,
+          unit_token: '',
+          unit_until: null,
+          updated_at: sql`now()`,
+        })
+        .where(durableRun(kind, id));
+      const table = parentTable(kind);
+      await db
+        .update(table)
+        .set({
+          state: failed ? 'failed' : 'running',
+          message,
+          updated_at: stamp(),
+          finished_at: failed ? stamp() : null,
+        })
+        .where(eq(table.id, id));
       return outcome;
     });
   }
