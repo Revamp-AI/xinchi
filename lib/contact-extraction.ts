@@ -1,4 +1,5 @@
 import addresses from 'email-addresses';
+import { and, eq, sql } from 'drizzle-orm';
 import {
   all,
   one,
@@ -18,6 +19,8 @@ import {
   existingContact,
 } from './contacts.mjs';
 import { resolveExactEmailContact } from './contact-identity.mjs';
+import { db } from './postgres.ts';
+import { contact_identities, contacts } from './schema/index.ts';
 
 // db.mjs and contacts.mjs are untyped JavaScript; TypeScript reads their
 // `= null` defaults as the type `null`.
@@ -333,7 +336,10 @@ async function bindIdentity(
   if (person.contact_id) {
     let id = person.contact_id;
     for (let n = 0; n < 50; n++) {
-      const c = await one('SELECT id,merged_into FROM contacts WHERE id=?', id);
+      const [c] = await db
+        .select({ id: contacts.id, merged_into: contacts.merged_into })
+        .from(contacts)
+        .where(eq(contacts.id, id));
       if (!c) throw Error('Contact not found.');
       if (!c.merged_into) return c.id;
       id = c.merged_into;
@@ -346,26 +352,28 @@ async function bindIdentity(
       address ||
       person.external_id ||
       source.id + ':speaker:' + hash(person.name || 'unknown').slice(0, 20);
-  const old = await one(
-    'SELECT contact_id,address FROM contact_identities WHERE provider=? AND account=? AND external_key=?',
-    source.provider,
-    account,
-    external,
+  const binding = and(
+    eq(contact_identities.provider, source.provider),
+    eq(contact_identities.account, account),
+    eq(contact_identities.external_key, external),
   );
+  const [old] = await db
+    .select({
+      contact_id: contact_identities.contact_id,
+      address: contact_identities.address,
+    })
+    .from(contact_identities)
+    .where(binding);
   if (old) {
-    const contact = await one(
-      'SELECT * FROM contacts WHERE id=?',
-      old.contact_id,
-    );
+    const contact = (
+      await db.select().from(contacts).where(eq(contacts.id, old.contact_id))
+    )[0]!;
     if (address && !old.address && !contact.email) {
-      await run(
-        'UPDATE contact_identities SET address=? WHERE provider=? AND account=? AND external_key=?',
-        address,
-        source.provider,
-        account,
-        external,
-      );
-      await run('UPDATE contacts SET email=? WHERE id=?', address, contact.id);
+      await db.update(contact_identities).set({ address }).where(binding);
+      await db
+        .update(contacts)
+        .set({ email: address })
+        .where(eq(contacts.id, contact.id));
       contact.email = address;
     }
     await resolveExactEmailContact(contact.email);
@@ -378,12 +386,9 @@ async function bindIdentity(
       200,
     );
   if (!match)
-    await run(
-      'INSERT INTO contacts(id,name,email,confirmed) VALUES(?,?,?,false)',
-      id,
-      name,
-      address,
-    );
+    await db
+      .insert(contacts)
+      .values({ id, name, email: address, confirmed: false });
   else if (
     !match.confirmed &&
     match.version === 1 &&
@@ -393,22 +398,24 @@ async function bindIdentity(
     !emailAddress(name) &&
     name.toLowerCase() !== address.split('@')[0]
   )
-    await run(
-      'UPDATE contacts SET name=?,version=version+1,updated_at=now() WHERE id=?',
-      name,
-      id,
-    );
-  await run(
-    'INSERT INTO contact_identities(id,contact_id,provider,account,external_key,display_name,address,source_id) VALUES(?,?,?,?,?,?,?,?)',
-    uid(),
-    id,
-    source.provider,
+    await db
+      .update(contacts)
+      .set({
+        name,
+        version: sql`${contacts.version} + 1`,
+        updated_at: sql`now()`,
+      })
+      .where(eq(contacts.id, id));
+  await db.insert(contact_identities).values({
+    id: uid(),
+    contact_id: id,
+    provider: source.provider,
     account,
-    external,
-    name,
+    external_key: external,
+    display_name: name,
     address,
-    source.id,
-  );
+    source_id: source.id,
+  });
   if (!match) await suggestIdentityMatches(id, name, address);
   return id;
 }
