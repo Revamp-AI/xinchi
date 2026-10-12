@@ -1,4 +1,4 @@
-import {dismissProposal,restoreProposal} from '../../../lib/proposals.mjs';
+import {dismissProposal,restoreProposal} from '../../../lib/proposals.ts';
 import {databaseErrorCode} from '../../../lib/postgres.ts';
 import {prioritiesState,priorityDetail,savePriority,reorderPriorities,addPriorityUpdate,decidePrioritySuggestion,queuePriorityContext} from '../../../lib/priorities.ts';
 import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntelligence,dismissContactInsight,runContactIntelligence} from '../../../lib/contact-intelligence.ts';

@@ -27,7 +27,7 @@ test('recurring imports admit explicit promises, cap the shortlist, and retain o
 test('reworded imports do not resurrect a dismissed deliverable',async()=>{
  const p=await proposal('same');await saveResult(await job(),{...empty,proposals:[p]});
  const row=await one('SELECT * FROM proposals');
- const {dismissProposal}=await import('../lib/proposals.mjs');await dismissProposal(row.id);
+ const {dismissProposal}=await import('../lib/proposals.ts');await dismissProposal(row.id);
  await saveResult(await job(),{...empty,proposals:[{...p,title:'Finish the implementation document'}]});
  assert.equal((await one('SELECT count(*) n FROM proposals')).n,1);assert.equal((await one('SELECT status FROM proposals')).status,'dismissed');
 });
@@ -69,7 +69,7 @@ test('fresh proposal versions can be updated; stale acceptance and stale pruning
  await assert.rejects(saveItem({title:'Stale plan',proposal_id:old.id,proposal_version:old.version}),/changed/);
  await saveResult(await job(),{...empty,proposal_reconciliations:[{proposal_id:old.id,version:old.version,reason:'superseded',explanation:'An old review tried to supersede it.',citations:p.citations}]});
  assert.equal((await one('SELECT status FROM proposals')).status,'pending');
- const {dismissProposal,restoreProposal}=await import('../lib/proposals.mjs');await dismissProposal(old.id);const dismissed=await one('SELECT version FROM proposals');
+ const {dismissProposal,restoreProposal}=await import('../lib/proposals.ts');await dismissProposal(old.id);const dismissed=await one('SELECT version FROM proposals');
  await restoreProposal(old.id,dismissed.version);assert.equal((await one('SELECT status FROM proposals')).status,'pending');await assert.rejects(restoreProposal(old.id,dismissed.version),/changed/);
 });
 test('an incomplete review cannot mark unchecked suggestions reviewed or immediately loop on them',async()=>{
