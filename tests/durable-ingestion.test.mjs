@@ -94,6 +94,16 @@ test('projection savepoints roll back tentative contact writes while preserving 
  const failed=await one('SELECT state,attempts,error FROM contact_queue WHERE source_id=?',source.id);assert.equal(failed.state,'failed');assert.equal(failed.attempts,1);assert.equal(failed.error,'Extraction failed; inspect the source and retry');assert.doesNotMatch(JSON.stringify(result)+failed.error,/private projection failure detail/);
  const complete=await advanceDurableUnit('contacts',row.id,row.token,row.wf,1);assert.equal(complete.done,true);assert.equal((await one('SELECT state FROM contact_runs WHERE id=?',row.id)).state,'partial');assert.equal((await one('SELECT state FROM contact_queue WHERE source_id=?',source.id)).state,'failed');
 });
+test('a database error inside the real projection retries the step and keeps the queue entry pending',async()=>{
+ const row=await contactRun();
+ const source=await upsertSource({provider:'fireflies',external_id:'projection-retry-'+row.id,title:'Fictional serialization conflict',occurred_at:stamp(),body:'Fictional meeting to test a transient projection failure',coverage:'transcript'},{participants:[{email:'owner@example.com'},{email:'retry-guest@example.com',name:'Retry Guest'}],dateString:stamp()});
+ await run("CREATE FUNCTION fictional_serialization_failure() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'Fictional serialization failure' USING ERRCODE='40001'; END$$");
+ await run('CREATE TRIGGER fictional_serialization_failure BEFORE INSERT ON interactions FOR EACH ROW EXECUTE FUNCTION fictional_serialization_failure()');
+ let result;try{result=await advanceDurableUnit('contacts',row.id,row.token,row.wf,0);}finally{await run('DROP TRIGGER fictional_serialization_failure ON interactions');await run('DROP FUNCTION fictional_serialization_failure()');}
+ assert.equal(result.done,false);assert.equal(result.revision,1);assert.ok(result.waitMs>=1000);assert.equal((await one('SELECT attempts FROM durable_runs WHERE run_id=?',row.id)).attempts,1);
+ assert.deepEqual(await one('SELECT state,attempts,error FROM contact_queue WHERE source_id=?',source.id),{state:'pending',attempts:0,error:''});
+ const retried=await advanceDurableUnit('contacts',row.id,row.token,row.wf,1);assert.equal(retried.done,false);assert.equal((await one('SELECT state FROM contact_queue WHERE source_id=?',source.id)).state,'complete');assert.ok(await one('SELECT id FROM interactions WHERE source_id=?',source.id));
+});
 test('resuming failed contact work keeps its review request and cursor while fencing the old workflow',async()=>{
  const row=await contactRun();await run('UPDATE contact_runs SET review_requested=true WHERE id=?',row.id);
  await advanceDurableUnit('contacts',row.id,row.token,row.wf,0,{contacts:async()=>({cursor:{processed:7},records:[],complete:false})});
