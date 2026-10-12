@@ -32,6 +32,8 @@ type PriorityUpdate = Pick<
   'priority_id' | 'summary' | 'next_decision' | 'suggested_rank' | 'citations'
 >;
 type PrioritySuggestion = AgentOutput['priority_suggestions'][number];
+type Priority = typeof priorities.$inferSelect;
+
 export const stackId = z.enum(['deal-flow', 'product', 'go-to-market']);
 export const priorityFields = {
   stack_id: stackId,
@@ -65,6 +67,11 @@ async function orderVersion({ lock = false } = {}) {
   const [order] = await (lock ? query.for('update') : query);
   return order!.version;
 }
+const bumpOrderVersion = () =>
+  db
+    .update(priority_order)
+    .set({ version: sql`${priority_order.version} + 1` })
+    .where(eq(priority_order.id, 1));
 export async function prioritiesState() {
   const [stacks, items, suggestions, order_version] = await Promise.all([
     stacksInOrder(),
@@ -271,9 +278,15 @@ export async function savePriority(value: unknown) {
   const input = priorityInput.parse(value);
   return transaction(async () => {
     await lockWorkspace();
-    const old = input.id
-      ? await one('SELECT * FROM priorities WHERE id=? FOR UPDATE', input.id)
-      : null;
+    const old: Priority | undefined = input.id
+      ? (
+          await db
+            .select()
+            .from(priorities)
+            .where(eq(priorities.id, input.id))
+            .for('update')
+        )[0]
+      : undefined;
     if (input.id && !old) throw Error('Priority not found.');
     if (old && old.version !== input.version)
       throw Error('This priority changed. Reopen it before saving.');
@@ -294,7 +307,12 @@ export async function savePriority(value: unknown) {
     if (!p.title) throw Error('Give this priority a title.');
     if (
       p.commitment_id &&
-      !(await one('SELECT id FROM items WHERE id=?', p.commitment_id))
+      !(
+        await db
+          .select({ id: items.id })
+          .from(items)
+          .where(eq(items.id, p.commitment_id))
+      ).length
     )
       throw Error('Commitment not found.');
     const position =
@@ -303,43 +321,37 @@ export async function savePriority(value: unknown) {
       !(old.status === 'done' && p.status === 'active')
         ? old.position
         : (
-            await one(
-              'SELECT COALESCE(max(position),-1)+1 n FROM priorities WHERE stack_id=?',
-              p.stack_id,
-            )
-          ).n;
+            await db
+              .select({
+                n: sql<number>`COALESCE(max(${priorities.position}), -1) + 1`,
+              })
+              .from(priorities)
+              .where(eq(priorities.stack_id, p.stack_id))
+          )[0]!.n;
+    const fields = {
+      stack_id: p.stack_id,
+      title: p.title,
+      owner: p.owner,
+      financials: p.financials,
+      notes: p.notes,
+      keywords: p.keywords,
+      next_decision: p.next_decision,
+      commitment_id: p.commitment_id,
+      status: p.status,
+      position,
+    };
     if (old)
-      await run(
-        'UPDATE priorities SET stack_id=?,title=?,owner=?,financials=?,notes=?,keywords=?,next_decision=?,commitment_id=?,status=?,position=?,version=version+1,updated_at=now() WHERE id=?',
-        p.stack_id,
-        p.title,
-        p.owner,
-        p.financials,
-        p.notes,
-        p.keywords,
-        p.next_decision,
-        p.commitment_id,
-        p.status,
-        position,
-        p.id,
-      );
-    else
-      await run(
-        'INSERT INTO priorities(id,stack_id,title,owner,financials,notes,keywords,next_decision,commitment_id,status,position) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-        p.id,
-        p.stack_id,
-        p.title,
-        p.owner,
-        p.financials,
-        p.notes,
-        p.keywords,
-        p.next_decision,
-        p.commitment_id,
-        p.status,
-        position,
-      );
+      await db
+        .update(priorities)
+        .set({
+          ...fields,
+          version: sql`${priorities.version} + 1`,
+          updated_at: sql`now()`,
+        })
+        .where(eq(priorities.id, p.id));
+    else await db.insert(priorities).values({ id: p.id, ...fields });
     if (!old || old.stack_id !== p.stack_id || old.status !== p.status)
-      await run('UPDATE priority_order SET version=version+1 WHERE id=1');
+      await bumpOrderVersion();
     if (
       !old ||
       old.title !== p.title ||
@@ -361,17 +373,19 @@ export async function reorderPriorities(value: unknown) {
     .parse(value);
   return transaction(async () => {
     await lockWorkspace();
-    if (
-      (await one('SELECT version FROM priority_order WHERE id=1 FOR UPDATE'))
-        .version !== input.version
-    )
+    if ((await orderVersion({ lock: true })) !== input.version)
       throw Error('The order changed. Refresh and try again.');
     const current = input.stack_id
-      ? await all(
-          "SELECT id FROM priorities WHERE stack_id=? AND status='active'",
-          input.stack_id,
-        )
-      : await all('SELECT id FROM priority_stacks');
+      ? await db
+          .select({ id: priorities.id })
+          .from(priorities)
+          .where(
+            and(
+              eq(priorities.stack_id, input.stack_id),
+              eq(priorities.status, 'active'),
+            ),
+          )
+      : await db.select({ id: priority_stacks.id }).from(priority_stacks);
     if (
       new Set(input.ids).size !== current.length ||
       input.ids.length !== current.length ||
@@ -379,14 +393,21 @@ export async function reorderPriorities(value: unknown) {
     )
       throw Error('Include every current item exactly once.');
     for (const [position, id] of input.ids.entries())
-      await run(
-        input.stack_id
-          ? 'UPDATE priorities SET position=?,version=version+1,updated_at=now() WHERE id=?'
-          : 'UPDATE priority_stacks SET position=? WHERE id=?',
-        position,
-        id,
-      );
-    await run('UPDATE priority_order SET version=version+1 WHERE id=1');
+      if (input.stack_id)
+        await db
+          .update(priorities)
+          .set({
+            position,
+            version: sql`${priorities.version} + 1`,
+            updated_at: sql`now()`,
+          })
+          .where(eq(priorities.id, id));
+      else
+        await db
+          .update(priority_stacks)
+          .set({ position })
+          .where(eq(priority_stacks.id, id));
+    await bumpOrderVersion();
     return prioritiesState();
   });
 }
