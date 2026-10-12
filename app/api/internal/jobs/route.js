@@ -4,7 +4,7 @@ import {ingestionWorkflow} from '../../../../workflows/ingestion.js';
 import {scheduleProviderSyncs} from '../../../../lib/scheduled-sync.ts';
 import {runAutoContactMatching} from '../../../../lib/contact-auto-match.ts';
 import {scheduleContactHistory} from '../../../../lib/contact-jobs.ts';
-import {runContactIntelligence} from '../../../../lib/contact-intelligence.mjs';
+import {runContactIntelligence} from '../../../../lib/contact-intelligence.ts';
 import {evaluateContacts} from '../../../../lib/contacts.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';

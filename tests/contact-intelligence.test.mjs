@@ -7,7 +7,7 @@ import {run,one,setSetting,upsertSource} from '../lib/db.mjs';
 import {saveContact,contactDetail,listContacts} from '../lib/contacts.mjs';
 import {logInteraction} from '../lib/contact-extraction.ts';
 import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.mjs';
-import {runContactIntelligence,contactEvidence,validateContactInsights,generateContactInsights,configureContactIntelligence,dismissContactInsight} from '../lib/contact-intelligence.mjs';
+import {runContactIntelligence,contactEvidence,validateContactInsights,generateContactInsights,configureContactIntelligence,dismissContactInsight} from '../lib/contact-intelligence.ts';
 async function reset(){await run('TRUNCATE contacts CASCADE');await setSetting('contact_intelligence',{});}
 const quote='Alex is our customer and we reviewed their paid renewal together.';
 async function fixture(name='Alex Customer',extra={}){const c=await saveContact({name,...extra});await logInteraction({contact_id:c.id,kind:'meeting',direction:'mutual',meaningful:true,occurred_at:new Date(Date.now()-45*86400000).toISOString(),body:quote});return c;}
