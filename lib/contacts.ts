@@ -23,9 +23,6 @@ import {
 } from './contact-email.ts';
 import { resolveExactEmailContact } from './contact-identity.mjs';
 import {
-  all,
-  one,
-  run,
   transaction,
   lockWorkspace,
   uid,
@@ -1121,11 +1118,17 @@ export async function saveDraft(input: DraftInput) {
     if (c.do_not_contact || c.archived)
       throw Error('Drafting is disabled for this contact.');
     const old = input.id
-      ? await one(
-          'SELECT * FROM message_drafts WHERE id=? AND contact_id=?',
-          input.id,
-          c.id,
-        )
+      ? (
+          await db
+            .select()
+            .from(message_drafts)
+            .where(
+              and(
+                eq(message_drafts.id, input.id),
+                eq(message_drafts.contact_id, c.id),
+              ),
+            )
+        )[0]
       : null;
     if (input.id && !old) throw Error('Draft not found.');
     if (old && input.version !== old.version)
@@ -1133,14 +1136,26 @@ export async function saveDraft(input: DraftInput) {
     const body = text(input.body, 12000);
     if (!body) throw Error('Add text to the draft.');
     const id = old?.id || uid();
-    await run(
-      'INSERT INTO message_drafts(id,contact_id,subject,body) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET subject=excluded.subject,body=excluded.body,version=message_drafts.version+1,updated_at=now()',
-      id,
-      c.id,
-      text(input.subject, 300),
-      body,
-    );
-    return one('SELECT * FROM message_drafts WHERE id=?', id);
+    await db
+      .insert(message_drafts)
+      .values({
+        id,
+        contact_id: c.id,
+        subject: text(input.subject, 300),
+        body,
+      })
+      .onConflictDoUpdate({
+        target: message_drafts.id,
+        set: {
+          subject: sql`excluded.subject`,
+          body: sql`excluded.body`,
+          version: sql`${message_drafts.version}+1`,
+          updated_at: sql`now()`,
+        },
+      });
+    return (
+      await db.select().from(message_drafts).where(eq(message_drafts.id, id))
+    )[0];
   });
 }
 export async function linkContactItem(input: {
@@ -1151,20 +1166,29 @@ export async function linkContactItem(input: {
   return transaction(async () => {
     await lockWorkspace();
     await existingContact(input.contact_id);
-    if (!(await one('SELECT id FROM items WHERE id=?', input.item_id)))
+    if (
+      !(
+        await db
+          .select({ id: items.id })
+          .from(items)
+          .where(eq(items.id, input.item_id))
+      ).length
+    )
       throw Error('Commitment not found.');
     if (input.remove)
-      await run(
-        'DELETE FROM item_contacts WHERE item_id=? AND contact_id=?',
-        input.item_id,
-        input.contact_id,
-      );
+      await db
+        .delete(item_contacts)
+        .where(
+          and(
+            eq(item_contacts.item_id, input.item_id),
+            eq(item_contacts.contact_id, input.contact_id),
+          ),
+        );
     else
-      await run(
-        'INSERT INTO item_contacts VALUES(?,?) ON CONFLICT DO NOTHING',
-        input.item_id,
-        input.contact_id,
-      );
+      await db
+        .insert(item_contacts)
+        .values({ item_id: input.item_id, contact_id: input.contact_id })
+        .onConflictDoNothing();
     return { saved: true };
   });
 }
