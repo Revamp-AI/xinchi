@@ -1,6 +1,19 @@
 import { z } from 'zod';
 import { ToolLoopAgent, Output, tool, type LanguageModel } from 'ai';
 import {
+  and,
+  count,
+  desc,
+  eq,
+  getColumns,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  notInArray,
+  sql,
+} from 'drizzle-orm';
+import {
   all,
   one,
   run,
@@ -13,7 +26,17 @@ import {
 } from './db.mjs';
 import { selectedReviewModel } from './review-settings.mjs';
 import { cloudReviewFailure } from './cloud-errors.mjs';
-import type { contacts } from './schema/index.ts';
+import { db } from './postgres.ts';
+import {
+  affiliations,
+  contact_analysis_runs,
+  contact_identities,
+  contact_insights,
+  contacts,
+  interaction_participants,
+  interactions,
+  sources,
+} from './schema/index.ts';
 
 // db.mjs is untyped: its getSetting infers the fallback as null. A setting
 // holds whatever JSON the caller saved under that key.
@@ -29,14 +52,6 @@ type IntelligenceState = {
   [key: string]: unknown;
 };
 type Contact = typeof contacts.$inferSelect;
-type InventoryRow = Contact & {
-  has_conversations: boolean;
-  latest: string | null;
-  input_hash: string;
-  previous_hash: string | null;
-  dismissed: boolean | null;
-  reviewed_at: string | null;
-};
 type EvidenceSource = {
   source_id: string;
   source_version_id: string;
@@ -45,6 +60,7 @@ type EvidenceSource = {
   occurred_at: string;
   body: string;
 };
+type InventoryRow = Awaited<ReturnType<typeof intelligenceInventory>>[number];
 type Packet = Awaited<ReturnType<typeof contactEvidence>>;
 type Generated = { output: unknown; model?: string; usage?: unknown };
 
@@ -91,43 +107,139 @@ export const ContactInsights = z
   })
   .strict();
 
+const PROFILE_PROVIDERS = ['linkedin', 'apple', 'csv', 'manual'];
+// A participant in one of these roles was not part of the conversation.
+const PASSIVE_ROLES = ['cc', 'mentioned', 'uncertain'];
+const qualifiedInteraction = and(
+  notInArray(interaction_participants.role, PASSIVE_ROLES),
+  sql`${interactions.qualified}`,
+  eq(interactions.exclusion, ''),
+  isNull(interactions.duplicate_of),
+  ne(interactions.duplicate_status, 'review'),
+);
+
 // Fingerprints include source revisions and participant corrections, not the
 // time of a page visit. An unchanged profile never needs another model call.
-const inventorySql = `WITH links AS (
- SELECT contact_id,source_id,'profile' AS kind,'' AS revision FROM contact_identities WHERE provider IN ('linkedin','apple','csv','manual') AND source_id IS NOT NULL
- UNION SELECT p.contact_id,i.source_id,'conversation',i.version::text FROM interaction_participants p JOIN interactions i ON i.id=p.interaction_id WHERE p.role NOT IN ('cc','mentioned','uncertain') AND i.qualified AND i.exclusion='' AND i.duplicate_of IS NULL AND i.duplicate_status<>'review'
- UNION SELECT c.id,s.id,'profile','' FROM contacts c JOIN sources s ON s.id='manual:contact-profile-'||c.id
-), evidence AS (
- SELECT l.contact_id,string_agg(l.source_id||s.content_hash||l.revision,',' ORDER BY l.source_id,l.kind,l.revision) signature,
- bool_or(l.kind='conversation') has_conversations,max(CASE WHEN l.kind='conversation' THEN s.occurred_at END) latest
- FROM links l JOIN sources s ON s.id=l.source_id GROUP BY l.contact_id
-)
-SELECT c.*,COALESCE(e.has_conversations,false) has_conversations,e.latest,
- md5(c.version::text||COALESCE(e.signature,'')||COALESCE((SELECT string_agg(a.organization_id||a.role||COALESCE(a.ended_on::text,''),',' ORDER BY a.id) FROM affiliations a WHERE a.contact_id=c.id),'')) input_hash,
- i.input_hash previous_hash,i.dismissed,i.reviewed_at
- FROM contacts c LEFT JOIN evidence e ON e.contact_id=c.id LEFT JOIN contact_insights i ON i.contact_id=c.id
- WHERE c.merged_into IS NULL AND c.archived=false`;
 export async function intelligenceInventory() {
-  return all<InventoryRow>(inventorySql);
+  const links = db.$with('links').as(
+    db
+      .select({
+        contact_id: contact_identities.contact_id,
+        source_id: contact_identities.source_id,
+        kind: sql<string>`'profile'`.as('kind'),
+        revision: sql<string>`''`.as('revision'),
+      })
+      .from(contact_identities)
+      .where(
+        and(
+          inArray(contact_identities.provider, PROFILE_PROVIDERS),
+          isNotNull(contact_identities.source_id),
+        ),
+      )
+      .union(
+        db
+          .select({
+            contact_id: interaction_participants.contact_id,
+            source_id: interactions.source_id,
+            kind: sql<string>`'conversation'`.as('kind'),
+            revision: sql<string>`${interactions.version}::text`.as('revision'),
+          })
+          .from(interaction_participants)
+          .innerJoin(
+            interactions,
+            eq(interactions.id, interaction_participants.interaction_id),
+          )
+          .where(qualifiedInteraction),
+      )
+      .union(
+        db
+          .select({
+            contact_id: contacts.id,
+            source_id: sources.id,
+            kind: sql<string>`'profile'`.as('kind'),
+            revision: sql<string>`''`.as('revision'),
+          })
+          .from(contacts)
+          .innerJoin(
+            sources,
+            eq(sources.id, sql`'manual:contact-profile-'||${contacts.id}`),
+          ),
+      ),
+  );
+  const evidence = db.$with('evidence').as(
+    db
+      .select({
+        contact_id: links.contact_id,
+        signature:
+          sql<string>`string_agg(${links.source_id}||${sources.content_hash}||${links.revision},',' ORDER BY ${links.source_id},${links.kind},${links.revision})`.as(
+            'signature',
+          ),
+        has_conversations:
+          sql<boolean>`bool_or(${links.kind}='conversation')`.as(
+            'has_conversations',
+          ),
+        latest: sql<
+          string | null
+        >`max(CASE WHEN ${links.kind}='conversation' THEN ${sources.occurred_at} END)`.as(
+          'latest',
+        ),
+      })
+      .from(links)
+      .innerJoin(sources, eq(sources.id, links.source_id))
+      .groupBy(links.contact_id),
+  );
+  const affiliationKey = db
+    .select({
+      key: sql`string_agg(${affiliations.organization_id}||${affiliations.role}||COALESCE(${affiliations.ended_on}::text,''),',' ORDER BY ${affiliations.id})`,
+    })
+    .from(affiliations)
+    .where(eq(affiliations.contact_id, contacts.id));
+  return db
+    .with(links, evidence)
+    .select({
+      ...getColumns(contacts),
+      has_conversations: sql<boolean>`COALESCE(${evidence.has_conversations},false)`,
+      latest: evidence.latest,
+      input_hash: sql<string>`md5(${contacts.version}::text||COALESCE(${evidence.signature},'')||COALESCE((${affiliationKey}),''))`,
+      previous_hash: contact_insights.input_hash,
+      dismissed: contact_insights.dismissed,
+      reviewed_at: contact_insights.reviewed_at,
+    })
+    .from(contacts)
+    .leftJoin(evidence, eq(evidence.contact_id, contacts.id))
+    .leftJoin(contact_insights, eq(contact_insights.contact_id, contacts.id))
+    .where(and(isNull(contacts.merged_into), eq(contacts.archived, false)));
 }
 export async function contactIntelligenceStatus() {
   const state = await getSetting<IntelligenceState>(STATE, {}),
     { lease, ...visible } = state;
-  const counts = await one<{
-    total: number;
-    reviewed: number;
-    enriched: number;
-  }>(
-    `SELECT count(*) total,count(i.contact_id) reviewed,count(*) FILTER(WHERE NOT i.dismissed AND jsonb_array_length(i.result->'purpose_tags')>0) enriched FROM contacts c LEFT JOIN contact_insights i ON i.contact_id=c.id WHERE c.merged_into IS NULL AND c.archived=false`,
-  );
+  const [counts] = await db
+    .select({
+      total: count(),
+      reviewed: count(contact_insights.contact_id),
+      enriched: sql<number>`count(*) FILTER(WHERE NOT ${contact_insights.dismissed} AND jsonb_array_length(${contact_insights.result}->'purpose_tags')>0)`,
+    })
+    .from(contacts)
+    .leftJoin(contact_insights, eq(contact_insights.contact_id, contacts.id))
+    .where(and(isNull(contacts.merged_into), eq(contacts.archived, false)));
   return {
     enabled: state.enabled !== false,
     ...visible,
     ...counts,
     running: Date.parse(state.lease_until || '') > Date.now(),
-    recent_runs: await all(
-      'SELECT id,state,reviewed,skipped,started_at,finished_at,error FROM contact_analysis_runs ORDER BY started_at DESC LIMIT 3',
-    ),
+    recent_runs: await db
+      .select({
+        id: contact_analysis_runs.id,
+        state: contact_analysis_runs.state,
+        reviewed: contact_analysis_runs.reviewed,
+        skipped: contact_analysis_runs.skipped,
+        started_at: contact_analysis_runs.started_at,
+        finished_at: contact_analysis_runs.finished_at,
+        error: contact_analysis_runs.error,
+      })
+      .from(contact_analysis_runs)
+      .orderBy(desc(contact_analysis_runs.started_at))
+      .limit(3),
   };
 }
 export async function configureContactIntelligence(enabled: unknown) {
