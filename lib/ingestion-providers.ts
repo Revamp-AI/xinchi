@@ -1,6 +1,19 @@
+import {
+  and,
+  eq,
+  exists,
+  gte,
+  inArray,
+  lte,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { normalizeCalendar, calendarGranted } from './calendar.ts';
 import type { CalendarEvent } from './calendar.ts';
-import { getSetting as readSetting, one, all } from './db.mjs';
+import { getSetting as readSetting } from './db.mjs';
+import { db } from './postgres.ts';
+import { items, proposals, source_versions, sources } from './schema/index.ts';
 import { secrets, updateSecrets } from './secret-store.ts';
 import type { GoogleGrant } from './secret-store.ts';
 import { googleClient, normalizeGmail } from './connectors.mjs';
@@ -352,11 +365,46 @@ export async function initialProviderCursor(provider: string) {
   if (provider === 'calendar') {
     const since = new Date(Date.now() - 30 * 86400000).toISOString(),
       until = new Date(Date.now() + 90 * 86400000).toISOString();
-    const known = await all(
-      "SELECT s.external_id FROM sources s WHERE s.provider='calendar' AND ((s.occurred_at>=? AND s.occurred_at<=?) OR EXISTS(SELECT 1 FROM items i WHERE i.source_id=s.id AND i.status NOT IN ('done','dropped')) OR EXISTS(SELECT 1 FROM proposals p WHERE p.status IN ('pending','deferred') AND p.payload::jsonb->'citations' @> jsonb_build_array(jsonb_build_object('source_id',s.id)))) ORDER BY s.id LIMIT 5001",
-      since,
-      until,
-    );
+    // Events outside the window stay known while an open item or a pending
+    // proposal cites them, so their cancellation is still detected.
+    const known = await db
+      .select({ external_id: sources.external_id })
+      .from(sources)
+      .where(
+        and(
+          eq(sources.provider, 'calendar'),
+          or(
+            and(
+              gte(sources.occurred_at, since),
+              lte(sources.occurred_at, until),
+            ),
+            exists(
+              db
+                .select({ one: sql`1` })
+                .from(items)
+                .where(
+                  and(
+                    eq(items.source_id, sources.id),
+                    notInArray(items.status, ['done', 'dropped']),
+                  ),
+                ),
+            ),
+            exists(
+              db
+                .select({ one: sql`1` })
+                .from(proposals)
+                .where(
+                  and(
+                    inArray(proposals.status, ['pending', 'deferred']),
+                    sql`${proposals.payload}::jsonb->'citations' @> jsonb_build_array(jsonb_build_object('source_id', ${sources.id}))`,
+                  ),
+                ),
+            ),
+          ),
+        ),
+      )
+      .orderBy(sources.id)
+      .limit(5001);
     if (known.length > 5000) throw failure('calendar', 'oversized');
     return {
       ...base,
@@ -641,10 +689,16 @@ async function advanceGmail(
         records.push({ doc: normalizeGmail(raw), raw });
     } catch (error) {
       if ((error as ProviderFailure).status !== 404) throw error;
-      const old = await one(
-        'SELECT provider,external_id,title,occurred_at,url FROM sources WHERE id=?',
-        'gmail:' + id,
-      );
+      const [old] = await db
+        .select({
+          provider: sources.provider,
+          external_id: sources.external_id,
+          title: sources.title,
+          occurred_at: sources.occurred_at,
+          url: sources.url,
+        })
+        .from(sources)
+        .where(eq(sources.id, 'gmail:' + id));
       if (old)
         records.push({
           doc: {
@@ -699,10 +753,17 @@ async function calendarRecord(event: CalendarEvent | undefined, zone: string) {
   // Cancellation responses can contain only an ID. Preserve the prior event's
   // date and recurrence identity, but replace its status with the current one.
   if (event.status === 'cancelled') {
-    const old = await one(
-      'SELECT v.raw_json FROM sources s JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE s.id=?',
-      'calendar:primary:' + event.id,
-    );
+    const [old] = await db
+      .select({ raw_json: source_versions.raw_json })
+      .from(sources)
+      .innerJoin(
+        source_versions,
+        and(
+          eq(source_versions.source_id, sources.id),
+          eq(source_versions.content_hash, sources.content_hash),
+        ),
+      )
+      .where(eq(sources.id, 'calendar:primary:' + event.id));
     if (old) event = { ...JSON.parse(old.raw_json), ...event } as CalendarEvent;
   }
   if (
