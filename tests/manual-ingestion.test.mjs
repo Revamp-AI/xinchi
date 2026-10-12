@@ -7,7 +7,7 @@ import {setupTestDatabase} from './helpers/postgres.mjs';
 const privateDir=mkdtempSync(join(tmpdir(),'focus-manual-ingestion-'));process.env.XIN_DATA_DIR=privateDir;
 await setupTestDatabase();
 const {one,run}=await import('../lib/db.mjs');
-const {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUpload,prepareManualRecords,advanceManual,MAX_IMPORT_BYTES,MAX_IMPORT_CHUNK_BYTES,MAX_IMPORT_RECORD_BYTES}=await import('../lib/manual-ingestion.mjs');
+const {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUpload,prepareManualRecords,advanceManual,MAX_IMPORT_BYTES,MAX_IMPORT_CHUNK_BYTES,MAX_IMPORT_RECORD_BYTES}=await import('../lib/manual-ingestion.ts');
 const {normalizeResearchArchive,importResearchArchive}=await import('../lib/imports.mjs');
 const fictional=(id='fictional-1')=>({provider:'manual',external_id:id,title:'Fictional research note',body:'Taylor will review the fictional prototype.',coverage:'document'});
 async function upload(text,{format='json',title='fictional.json'}={}){
