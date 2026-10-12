@@ -1,6 +1,20 @@
-import { all, run, transaction, lockWorkspace } from './db.mjs';
+import { and, eq, exists, getColumns, isNull, not, or, sql } from 'drizzle-orm';
+import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core';
+import { db, transaction, lockWorkspace } from './postgres.ts';
 import { extractInteraction } from './contact-extraction.mjs';
 import { suggestIdentityMatches } from './contacts.mjs';
+import {
+  affiliations,
+  contact_identities,
+  contacts,
+  identity_reviews,
+  interaction_participants,
+  interactions,
+  item_contacts,
+  message_drafts,
+  source_versions,
+  sources,
+} from './schema/index.ts';
 
 type BeeperParticipant = { id?: string; fullName?: string };
 type BeeperSnapshot = {
@@ -8,29 +22,117 @@ type BeeperSnapshot = {
   message?: { isSender?: boolean; senderName?: string };
 };
 
+const currentVersion = and(
+  eq(source_versions.source_id, sources.id),
+  eq(source_versions.content_hash, sources.content_hash),
+);
+// = ANY binds the list as one text[] parameter, however long it is.
+const anyOf = (column: AnyPgColumn, ids: string[]) =>
+  sql`${column} = ANY(${sql.param(ids)}::text[])`;
+const linked = (
+  table: typeof affiliations | typeof item_contacts | typeof message_drafts,
+) =>
+  exists(
+    db
+      .select({ one: sql`1` })
+      .from(table)
+      .where(eq(table.contact_id, contacts.id)),
+  );
+
 // Repairs only untouched profiles produced by the old outgoing-sender fallback.
 // Names are corrected within an existing provider identity; no people are merged.
 export async function repairBeeperContactNames({ apply = false } = {}) {
   return transaction(async () => {
     if (apply) await lockWorkspace();
-    const selves =
-      await all(`SELECT DISTINCT raw->'chat'->>'accountID' AS account,p->>'id' AS external_key
-   FROM sources s JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash
-   CROSS JOIN LATERAL (SELECT v.raw_json::jsonb AS raw) r
-   CROSS JOIN LATERAL jsonb_array_elements(raw->'chat'->'participants'->'items') p
-   WHERE s.provider='beeper' AND (p->>'isSelf'='true' OR (raw->'message'->>'isSender'='true' AND p->>'id'=raw->'message'->>'senderID'))`);
+    const selves = await db
+      .selectDistinct({
+        account: sql<string | null>`r.raw->'chat'->>'accountID'`,
+        external_key: sql<string | null>`p->>'id'`,
+      })
+      .from(sources)
+      .innerJoin(source_versions, currentVersion)
+      .crossJoinLateral(
+        sql`(SELECT ${source_versions.raw_json}::jsonb AS raw) r`,
+      )
+      .crossJoinLateral(
+        sql`jsonb_array_elements(r.raw->'chat'->'participants'->'items') p`,
+      )
+      .where(
+        and(
+          eq(sources.provider, 'beeper'),
+          sql`(p->>'isSelf'='true' OR (r.raw->'message'->>'isSender'='true' AND p->>'id'=r.raw->'message'->>'senderID'))`,
+        ),
+      );
     const selfKeys = new Set(
       selves.map((p) => JSON.stringify([p.account, p.external_key])),
     );
-    const rows =
-      await all(`SELECT c.*,i.id AS identity_id,i.account,i.external_key,i.display_name,i.source_id,s.coverage,v.raw_json,
-   (SELECT count(*) FROM contact_identities ci WHERE ci.contact_id=c.id) AS identity_count,
-   EXISTS(SELECT 1 FROM affiliations a WHERE a.contact_id=c.id UNION ALL SELECT 1 FROM item_contacts ic WHERE ic.contact_id=c.id UNION ALL SELECT 1 FROM message_drafts d WHERE d.contact_id=c.id) AS has_links,
-   EXISTS(SELECT 1 FROM sources ms WHERE ms.provider='manual' AND ms.external_id='contact-profile-'||c.id) AS has_manual_profile,
-   EXISTS(SELECT 1 FROM interaction_participants ip JOIN interactions e ON e.id=ip.interaction_id LEFT JOIN sources es ON es.id=e.source_id WHERE ip.contact_id=c.id AND (es.provider IS DISTINCT FROM 'beeper' OR e.qualified)) AS has_meaningful_activity
-   FROM contacts c JOIN contact_identities i ON i.contact_id=c.id
-   JOIN sources s ON s.id=i.source_id JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash
-   WHERE i.provider='beeper' AND c.merged_into IS NULL AND NOT c.archived ORDER BY c.id`);
+    const manual = alias(sources, 'ms'),
+      activity = alias(sources, 'es');
+    const rows = await db
+      .select({
+        ...getColumns(contacts),
+        identity_id: contact_identities.id,
+        account: contact_identities.account,
+        external_key: contact_identities.external_key,
+        display_name: contact_identities.display_name,
+        source_id: contact_identities.source_id,
+        coverage: sources.coverage,
+        raw_json: source_versions.raw_json,
+        // The subquery's contact_identities shadows the joined one.
+        identity_count: db.$count(
+          contact_identities,
+          eq(contact_identities.contact_id, contacts.id),
+        ),
+        has_links: sql<boolean>`${or(linked(affiliations), linked(item_contacts), linked(message_drafts))}`,
+        has_manual_profile: sql<boolean>`${exists(
+          db
+            .select({ one: sql`1` })
+            .from(manual)
+            .where(
+              and(
+                eq(manual.provider, 'manual'),
+                eq(
+                  manual.external_id,
+                  sql`'contact-profile-' || ${contacts.id}`,
+                ),
+              ),
+            ),
+        )}`,
+        has_meaningful_activity: sql<boolean>`${exists(
+          db
+            .select({ one: sql`1` })
+            .from(interaction_participants)
+            .innerJoin(
+              interactions,
+              eq(interactions.id, interaction_participants.interaction_id),
+            )
+            .leftJoin(activity, eq(activity.id, interactions.source_id))
+            .where(
+              and(
+                eq(interaction_participants.contact_id, contacts.id),
+                or(
+                  sql`${activity.provider} IS DISTINCT FROM 'beeper'`,
+                  interactions.qualified,
+                ),
+              ),
+            ),
+        )}`,
+      })
+      .from(contacts)
+      .innerJoin(
+        contact_identities,
+        eq(contact_identities.contact_id, contacts.id),
+      )
+      .innerJoin(sources, eq(sources.id, contact_identities.source_id))
+      .innerJoin(source_versions, currentVersion)
+      .where(
+        and(
+          eq(contact_identities.provider, 'beeper'),
+          isNull(contacts.merged_into),
+          not(contacts.archived),
+        ),
+      )
+      .orderBy(contacts.id);
     const changes = [],
       skipped = [];
     for (const c of rows) {
@@ -68,7 +170,7 @@ export async function repairBeeperContactNames({ apply = false } = {}) {
         !c.snoozed_until &&
         !c.notes &&
         !c.role &&
-        !c.tags.length &&
+        !(c.tags as unknown[]).length &&
         c.cadence_days === 30;
       if (!untouched || (isSelf && c.has_meaningful_activity)) {
         skipped.push(c.id);
@@ -85,14 +187,35 @@ export async function repairBeeperContactNames({ apply = false } = {}) {
     }
     const byId = new Map(changes.map((c) => [c.id, c])),
       ids = [...byId.keys()];
+    const left = alias(contacts, 'l'),
+      right = alias(contacts, 'h');
     const reviews = ids.length
-      ? await all(
-          `SELECT r.id,r.left_id,r.right_id,l.name AS left_name,l.email AS left_email,h.name AS right_name,h.email AS right_email
-   FROM identity_reviews r JOIN contacts l ON l.id=r.left_id JOIN contacts h ON h.id=r.right_id
-   WHERE r.status='pending' AND r.reason='Same display name; may be different people.' AND (r.left_id=ANY(?::text[]) OR r.right_id=ANY(?::text[]))`,
-          ids,
-          ids,
-        )
+      ? await db
+          .select({
+            id: identity_reviews.id,
+            left_id: identity_reviews.left_id,
+            right_id: identity_reviews.right_id,
+            left_name: left.name,
+            left_email: left.email,
+            right_name: right.name,
+            right_email: right.email,
+          })
+          .from(identity_reviews)
+          .innerJoin(left, eq(left.id, identity_reviews.left_id))
+          .innerJoin(right, eq(right.id, identity_reviews.right_id))
+          .where(
+            and(
+              eq(identity_reviews.status, 'pending'),
+              eq(
+                identity_reviews.reason,
+                'Same display name; may be different people.',
+              ),
+              or(
+                anyOf(identity_reviews.left_id, ids),
+                anyOf(identity_reviews.right_id, ids),
+              ),
+            ),
+          )
       : [];
     const obsolete = reviews.filter((r) => {
       const left = byId.get(r.left_id),
@@ -108,24 +231,31 @@ export async function repairBeeperContactNames({ apply = false } = {}) {
     });
     if (apply) {
       for (const c of changes) {
-        await run(
-          'UPDATE contacts SET name=?,archived=?,version=version+1,updated_at=now() WHERE id=?',
-          c.after,
-          c.archive,
-          c.id,
-        );
+        await db
+          .update(contacts)
+          .set({
+            name: c.after,
+            archived: c.archive,
+            version: sql`${contacts.version} + 1`,
+            updated_at: sql`now()`,
+          })
+          .where(eq(contacts.id, c.id));
         if (!c.archive)
-          await run(
-            'UPDATE contact_identities SET display_name=? WHERE id=?',
-            c.after,
-            c.identity_id,
-          );
+          await db
+            .update(contact_identities)
+            .set({ display_name: c.after })
+            .where(eq(contact_identities.id, c.identity_id));
       }
       if (obsolete.length)
-        await run(
-          "UPDATE identity_reviews SET status='obsolete' WHERE id=ANY(?::text[])",
-          obsolete.map((r) => r.id),
-        );
+        await db
+          .update(identity_reviews)
+          .set({ status: 'obsolete' })
+          .where(
+            anyOf(
+              identity_reviews.id,
+              obsolete.map((r) => r.id),
+            ),
+          );
       for (const c of changes)
         if (!c.archive) await suggestIdentityMatches(c.id, c.after, c.email);
     }
