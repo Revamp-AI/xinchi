@@ -1,20 +1,24 @@
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import {
   and,
+  desc,
   eq,
   getColumns,
   gt,
+  inArray,
   isNull,
   lt,
   notExists,
+  or,
   sql,
 } from 'drizzle-orm';
 import { db, transaction } from './postgres.ts';
-import { all, one, run, uid } from './db.mjs';
+import { uid } from './db.mjs';
 import {
   mcp_clients,
   mcp_codes,
   mcp_grants,
+  mcp_operations,
   mcp_rate_limits,
   mcp_tokens,
   owner,
@@ -467,48 +471,104 @@ export async function requireMcpAccess(req: Request) {
     req.headers.get('authorization') || '',
   );
   if (!match) throw error('Connect Focus with OAuth.', 'invalid_token', 401);
-  const grant = await one(
-    "SELECT g.*,c.name AS client_name FROM focus_auth.mcp_tokens t JOIN focus_auth.mcp_grants g ON g.id=t.grant_id JOIN focus_auth.mcp_clients c ON c.id=g.client_id JOIN focus_auth.owner o ON o.sub=g.owner_sub AND o.email=g.owner_email WHERE t.token_hash=? AND t.kind='access' AND t.expires_at>now() AND g.expires_at>now() AND g.revoked_at IS NULL AND g.resource=? AND g.owner_email=?",
-    tokenHash(match[1]!),
-    MCP_URL,
-    allowedEmail(),
-  );
+  const [grant] = await db
+    .select({ ...getColumns(mcp_grants), client_name: mcp_clients.name })
+    .from(mcp_tokens)
+    .innerJoin(mcp_grants, eq(mcp_grants.id, mcp_tokens.grant_id))
+    .innerJoin(mcp_clients, eq(mcp_clients.id, mcp_grants.client_id))
+    .innerJoin(
+      owner,
+      and(
+        eq(owner.sub, mcp_grants.owner_sub),
+        eq(owner.email, mcp_grants.owner_email),
+      ),
+    )
+    .where(
+      and(
+        eq(mcp_tokens.token_hash, tokenHash(match[1]!)),
+        eq(mcp_tokens.kind, 'access'),
+        gt(mcp_tokens.expires_at, sql`now()`),
+        gt(mcp_grants.expires_at, sql`now()`),
+        isNull(mcp_grants.revoked_at),
+        eq(mcp_grants.resource, MCP_URL),
+        eq(mcp_grants.owner_email, allowedEmail()),
+      ),
+    );
   if (!grant)
     throw error('Focus access expired or was revoked.', 'invalid_token', 401);
   await rateLimit('mcp:' + grant.id, 180);
-  await run(
-    "UPDATE focus_auth.mcp_grants SET last_used_at=now() WHERE id=? AND (last_used_at IS NULL OR last_used_at<now()-interval '1 minute')",
-    grant.id,
-  );
+  await db
+    .update(mcp_grants)
+    .set({ last_used_at: sql`now()` })
+    .where(
+      and(
+        eq(mcp_grants.id, grant.id),
+        or(
+          isNull(mcp_grants.last_used_at),
+          lt(mcp_grants.last_used_at, sql`now() - interval '1 minute'`),
+        ),
+      ),
+    );
   return grant;
 }
 export async function revokeMcpToken(input: OAuthInput) {
   if (typeof input.token !== 'string' || input.token.length > 200) return {};
-  await run(
-    'UPDATE focus_auth.mcp_grants SET revoked_at=now() WHERE client_id=? AND id IN (SELECT grant_id FROM focus_auth.mcp_tokens WHERE token_hash=?)',
-    String(input.client_id || ''),
-    tokenHash(input.token),
-  );
+  await db
+    .update(mcp_grants)
+    .set({ revoked_at: sql`now()` })
+    .where(
+      and(
+        eq(mcp_grants.client_id, String(input.client_id || '')),
+        inArray(
+          mcp_grants.id,
+          db
+            .select({ grant_id: mcp_tokens.grant_id })
+            .from(mcp_tokens)
+            .where(eq(mcp_tokens.token_hash, tokenHash(input.token))),
+        ),
+      ),
+    );
   return {};
 }
 export async function mcpAccessSettings() {
   return {
     url: MCP_URL,
-    grants: await all(
-      'SELECT g.id,c.name AS client_name,g.scope,g.created_at,g.expires_at,g.last_used_at,g.revoked_at,g.expires_at<=now() AS expired FROM focus_auth.mcp_grants g JOIN focus_auth.mcp_clients c ON c.id=g.client_id WHERE g.owner_email=? ORDER BY g.created_at DESC LIMIT 50',
-      allowedEmail(),
-    ),
-    activity: await all(
-      'SELECT o.tool,o.created_at,c.name AS client_name FROM focus_auth.mcp_operations o JOIN focus_auth.mcp_grants g ON g.id=o.grant_id JOIN focus_auth.mcp_clients c ON c.id=g.client_id WHERE g.owner_email=? ORDER BY o.created_at DESC LIMIT 20',
-      allowedEmail(),
-    ),
+    grants: await db
+      .select({
+        id: mcp_grants.id,
+        client_name: mcp_clients.name,
+        scope: mcp_grants.scope,
+        created_at: mcp_grants.created_at,
+        expires_at: mcp_grants.expires_at,
+        last_used_at: mcp_grants.last_used_at,
+        revoked_at: mcp_grants.revoked_at,
+        expired: sql<boolean>`${mcp_grants.expires_at} <= now()`,
+      })
+      .from(mcp_grants)
+      .innerJoin(mcp_clients, eq(mcp_clients.id, mcp_grants.client_id))
+      .where(eq(mcp_grants.owner_email, allowedEmail()))
+      .orderBy(desc(mcp_grants.created_at))
+      .limit(50),
+    activity: await db
+      .select({
+        tool: mcp_operations.tool,
+        created_at: mcp_operations.created_at,
+        client_name: mcp_clients.name,
+      })
+      .from(mcp_operations)
+      .innerJoin(mcp_grants, eq(mcp_grants.id, mcp_operations.grant_id))
+      .innerJoin(mcp_clients, eq(mcp_clients.id, mcp_grants.client_id))
+      .where(eq(mcp_grants.owner_email, allowedEmail()))
+      .orderBy(desc(mcp_operations.created_at))
+      .limit(20),
   };
 }
 export async function revokeMcpGrant(id: string) {
-  await run(
-    'UPDATE focus_auth.mcp_grants SET revoked_at=now() WHERE id=? AND owner_email=?',
-    id,
-    allowedEmail(),
-  );
+  await db
+    .update(mcp_grants)
+    .set({ revoked_at: sql`now()` })
+    .where(
+      and(eq(mcp_grants.id, id), eq(mcp_grants.owner_email, allowedEmail())),
+    );
   return { revoked: true };
 }
