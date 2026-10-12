@@ -17,18 +17,15 @@ import {
   desc,
   eq,
   getColumns,
+  gt,
   gte,
   ilike,
   inArray,
   isNull,
+  sql,
 } from 'drizzle-orm';
-import { db } from './postgres.ts';
+import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
-  all,
-  one,
-  run,
-  transaction,
-  lockWorkspace,
   uid,
   stamp,
   hash,
@@ -89,6 +86,8 @@ import {
   items,
   job_events,
   jobs,
+  mcp_grants,
+  mcp_operations,
   message_drafts,
   proposal_events,
   proposals,
@@ -1240,24 +1239,42 @@ export async function executeMcpTool(
       { status: 403 },
     );
   if (!tool.write) return tool.handler(args);
-  const { idempotency_key, ...action } = args;
+  // Every write tool's schema requires a string idempotency_key.
+  const { idempotency_key, ...action } = args as {
+    idempotency_key: string;
+    [arg: string]: unknown;
+  };
   const result = await transaction(async () => {
-    await run("SET LOCAL statement_timeout='45s'");
-    await run("SET LOCAL lock_timeout='10s'");
-    const current = await one(
-      'SELECT id FROM focus_auth.mcp_grants WHERE id=? AND owner_email=? AND resource=? AND revoked_at IS NULL AND expires_at>now() FOR SHARE',
-      grant.id,
-      allowedEmail(),
-      MCP_URL,
-    );
+    await db.execute(sql`SET LOCAL statement_timeout='45s'`);
+    await db.execute(sql`SET LOCAL lock_timeout='10s'`);
+    const [current] = await db
+      .select({ id: mcp_grants.id })
+      .from(mcp_grants)
+      .where(
+        and(
+          eq(mcp_grants.id, grant.id),
+          eq(mcp_grants.owner_email, allowedEmail()),
+          eq(mcp_grants.resource, MCP_URL),
+          isNull(mcp_grants.revoked_at),
+          gt(mcp_grants.expires_at, sql`now()`),
+        ),
+      )
+      .for('share');
     if (!current) throw Error('Focus access expired or was revoked.');
     await lockWorkspace();
-    const previous = await one(
-      'SELECT args_hash,result FROM focus_auth.mcp_operations WHERE grant_id=? AND tool=? AND request_key=?',
-      grant.id,
-      name,
-      idempotency_key,
-    );
+    const [previous] = await db
+      .select({
+        args_hash: mcp_operations.args_hash,
+        result: mcp_operations.result,
+      })
+      .from(mcp_operations)
+      .where(
+        and(
+          eq(mcp_operations.grant_id, grant.id),
+          eq(mcp_operations.tool, name),
+          eq(mcp_operations.request_key, idempotency_key),
+        ),
+      );
     const argsHash = hash(action);
     if (previous) {
       if (previous.args_hash !== argsHash)
@@ -1267,14 +1284,15 @@ export async function executeMcpTool(
       return previous.result;
     }
     const value = await tool.handler(action);
-    await run(
-      'INSERT INTO focus_auth.mcp_operations(grant_id,tool,request_key,args_hash,result) VALUES(?,?,?,?,?::jsonb)',
-      grant.id,
-      name,
-      idempotency_key,
-      argsHash,
-      JSON.stringify(value),
-    );
+    await db.insert(mcp_operations).values({
+      grant_id: grant.id,
+      tool: name,
+      request_key: idempotency_key,
+      args_hash: argsHash,
+      // Bind JSON text as before: a null result is stored as JSON null, and
+      // an undefined one (no JSON text) still fails the NOT NULL check.
+      result: sql`${JSON.stringify(value) ?? null}::jsonb`,
+    });
     return value;
   });
   if (tool.dispatch) schedule();
