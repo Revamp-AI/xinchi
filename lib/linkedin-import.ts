@@ -1,16 +1,14 @@
 import { parse } from 'csv-parse/sync';
-import {
-  all,
-  run,
-  transaction,
-  lockWorkspace,
-  uid,
-  hash,
-  stamp,
-  dateOK,
-} from './db.mjs';
+import { eq, getColumns, isNull, sql } from 'drizzle-orm';
+import { db, run, transaction, lockWorkspace } from './postgres.ts';
+import { uid, hash, stamp, dateOK } from './db.mjs';
 import { emailAddress, personalEmail } from './contact-email.mjs';
 import { evaluateContacts as evaluate } from './contacts.mjs';
+import {
+  contact_identities,
+  contacts as contactsTable,
+  sources as sourcesTable,
+} from './schema/index.ts';
 
 // contacts.mjs is untyped JavaScript; TypeScript reads its `ids = null`
 // default as the type `null`.
@@ -234,15 +232,28 @@ function document(record: LinkedinConnection) {
   };
 }
 async function plan(records: LinkedinConnection[]) {
-  const [contacts, identities, sources] = await Promise.all([
-    all<Contact>('SELECT * FROM contacts WHERE merged_into IS NULL'),
-    all<Identity>(
-      'SELECT i.* FROM contact_identities i JOIN contacts c ON c.id=i.contact_id WHERE c.merged_into IS NULL',
-    ),
-    all<{ id: string; content_hash: string }>(
-      'SELECT id,content_hash FROM sources WHERE id=ANY(?::text[])',
-      records.map((r) => document(r).id),
-    ),
+  const sourceIds = records.map((r) => document(r).id);
+  const [contacts, identities, sources]: [
+    Contact[],
+    Identity[],
+    { id: string; content_hash: string }[],
+  ] = await Promise.all([
+    db.select().from(contactsTable).where(isNull(contactsTable.merged_into)),
+    db
+      .select(getColumns(contact_identities))
+      .from(contact_identities)
+      .innerJoin(
+        contactsTable,
+        eq(contactsTable.id, contact_identities.contact_id),
+      )
+      .where(isNull(contactsTable.merged_into)),
+    db
+      .select({
+        id: sourcesTable.id,
+        content_hash: sourcesTable.content_hash,
+      })
+      .from(sourcesTable)
+      .where(sql`${sourcesTable.id} = ANY(${sql.param(sourceIds)}::text[])`),
   ]);
   const byId = new Map(contacts.map((c) => [c.id, c])),
     byEmail = new Map<string, Set<string>>(),
