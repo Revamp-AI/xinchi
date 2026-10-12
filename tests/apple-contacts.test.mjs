@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {one,run,uid} from '../lib/db.mjs';
 import {saveContact,contactDetail} from '../lib/contacts.mjs';
-import {internationalPhone,normalizeAppleContacts,importAppleContacts} from '../lib/apple-contacts.mjs';
+import {internationalPhone,normalizeAppleContacts,importAppleContacts} from '../lib/apple-contacts.ts';
 import {projectSource} from '../lib/contact-extraction.mjs';
 
 const card=(key,extra={})=>({key,name:'Fictional '+key,emails:[],phones:[],urls:[],...extra});

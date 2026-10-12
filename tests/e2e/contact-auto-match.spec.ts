@@ -7,7 +7,7 @@ import {
 } from '../../lib/linkedin-import.mjs';
 import { employerDomainCacheKey } from '../../lib/contact-auto-match.mjs';
 import { websiteCompanyEvidence } from '../../lib/company-domain.mjs';
-import { importAppleContacts } from '../../lib/apple-contacts.mjs';
+import { importAppleContacts } from '../../lib/apple-contacts.ts';
 
 test('automatic employer matching can be paused, run, explained and undone', async ({
   page,
