@@ -3,7 +3,7 @@ import { and, eq, getColumns, isNull, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import { uid, hash, stamp, dateOK } from './db.mjs';
-import { emailAddress, personalEmail } from './contact-email.mjs';
+import { emailAddress, personalEmail } from './contact-email.ts';
 import { evaluateContacts as evaluate } from './contacts.mjs';
 import {
   affiliations,

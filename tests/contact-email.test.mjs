@@ -6,7 +6,7 @@ import {all,one,run,uid,upsertSource,saveItem} from '../lib/db.mjs';
 import {saveContact,contactDetail,listContacts,importContactsCsv,saveDraft,linkContactItem} from '../lib/contacts.mjs';
 import {projectSource,logInteraction} from '../lib/contact-extraction.ts';
 import {reconcileEmailContacts,resolveExactEmailContact,undoMerge} from '../lib/contact-identity.mjs';
-import {emailAddress,personalEmail} from '../lib/contact-email.mjs';
+import {emailAddress,personalEmail} from '../lib/contact-email.ts';
 process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 
 async function source(provider,email,name,id=uid()){
