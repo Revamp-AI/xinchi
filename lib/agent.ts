@@ -13,33 +13,30 @@ import { REMOTE_WORKERS } from './runtime.mjs';
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import {
   assignReviewBatch,
   completeReviewBatch,
   releaseFailedReviewBatches,
 } from './review-batches.ts';
 import {
-  all,
-  one,
-  run,
   uid,
   stamp,
   hash,
   root,
-  transaction,
-  lockWorkspace,
   upsertSource,
   getSetting,
   setSetting,
 } from './db.mjs';
-import { db } from './postgres.ts';
+import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   contacts,
   items,
+  job_events,
   jobs,
   message_drafts,
   priorities,
+  review_queue,
   source_versions,
   sources,
 } from './schema/index.ts';
@@ -445,7 +442,7 @@ export async function createJob(
 }
 export async function cancelJob(id: string) {
   await cancelLease('jobs', String(id || ''), 'Review cancelled.');
-  await run("UPDATE jobs SET progress='Cancelled' WHERE id=?", id);
+  await db.update(jobs).set({ progress: 'Cancelled' }).where(eq(jobs.id, id));
   const next = await takePendingImportReview();
   if (next) launchJob(next);
   return { cancelled: true };
@@ -463,29 +460,33 @@ export function launchJob(id: string) {
     },
   );
   child.unref();
-  child.on('error', () =>
-    run(
-      "UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='queued'",
-      'Could not start the agent process.',
-      stamp(),
-      id,
-    ).catch(() => {}),
-  );
+  child.on('error', async () => {
+    try {
+      await db
+        .update(jobs)
+        .set({
+          status: 'failed',
+          error: 'Could not start the agent process.',
+          updated_at: stamp(),
+        })
+        .where(and(eq(jobs.id, id), eq(jobs.status, 'queued')));
+    } catch {}
+  });
   return id;
 }
 export async function addProgress(id: string, label: string) {
-  await run(
-    'INSERT INTO job_events(job_id,label,created_at) VALUES(?,?,?)',
-    id,
-    label,
-    stamp(),
-  );
-  await run(
-    "UPDATE jobs SET progress=?,updated_at=? WHERE id=? AND status IN ('queued','running','complete')",
-    label,
-    stamp(),
-    id,
-  );
+  await db
+    .insert(job_events)
+    .values({ job_id: id, label, created_at: stamp() });
+  await db
+    .update(jobs)
+    .set({ progress: label, updated_at: stamp() })
+    .where(
+      and(
+        eq(jobs.id, id),
+        inArray(jobs.status, ['queued', 'running', 'complete']),
+      ),
+    );
 }
 export async function recoverJobs() {
   return expireLeases('jobs');
@@ -494,12 +495,31 @@ export async function recoverJobs() {
 export async function takePendingImportReview() {
   return await transaction(async () => {
     await lockWorkspace();
-    if (await one("SELECT id FROM jobs WHERE status IN ('queued','running')"))
+    if (
+      (
+        await db
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(inArray(jobs.status, ['queued', 'running']))
+      ).length
+    )
       return null;
     await releaseFailedReviewBatches();
-    const pending = await one(
-      'SELECT source_id FROM review_queue WHERE completed=false AND job_id IS NULL AND attempts<3 AND (retry_after IS NULL OR retry_after<=now()) LIMIT 1',
-    );
+    const [pending] = await db
+      .select({ source_id: review_queue.source_id })
+      .from(review_queue)
+      .where(
+        and(
+          eq(review_queue.completed, false),
+          isNull(review_queue.job_id),
+          lt(review_queue.attempts, 3),
+          or(
+            isNull(review_queue.retry_after),
+            sql`${review_queue.retry_after} <= now()`,
+          ),
+        ),
+      )
+      .limit(1);
     const legacy = await getSetting('pending_import_review'),
       maintenance = await maintenanceDue();
     if (!pending && !legacy && !maintenance) return null;
@@ -509,16 +529,15 @@ export async function takePendingImportReview() {
         ? 'Review the source pages assigned by read_import_batch, reconcile them against read_commitments, read_priorities and pending proposals; enrich matching priorities with dated, cited context, and suggest new priorities only for substantive ongoing initiatives, and propose only useful, source-backed decisions. Every assigned page is provided in the cloud prompt or available through read_import_batch. Be explicit about partial transcripts and remaining coverage; do not claim to have reviewed the whole archive. Older obligations require current evidence. Do not ask the user to retrieve IDs or records available through your tools.'
         : legacy;
     const id = uid();
-    await run(
-      'INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at,progress) VALUES(?,?,?,?,?,?,?)',
+    await db.insert(jobs).values({
       id,
-      maintenance ? 'backlog_review' : 'import_review',
-      'queued',
+      kind: maintenance ? 'backlog_review' : 'import_review',
+      status: 'queued',
       prompt,
-      stamp(),
-      stamp(),
-      'Reviewing imported context',
-    );
+      created_at: stamp(),
+      updated_at: stamp(),
+      progress: 'Reviewing imported context',
+    });
     if (maintenance) await assignProposalReview(id);
     else {
       await assignReviewBatch(id);
