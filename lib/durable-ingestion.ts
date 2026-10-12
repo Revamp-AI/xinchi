@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { db, lockWorkspace, transaction as dbTransaction } from './postgres.ts';
 import { one, run, stamp, uid, setSetting, upsertSource } from './db.mjs';
 import {
@@ -286,26 +286,19 @@ async function claimUnit(
   revision: number,
 ): Promise<
   | { result: Outcome }
-  | { result?: undefined; row: any; parent: any; unit: string }
+  | { result?: undefined; row: DurableRun; parent: Parent; unit: string }
 > {
-  const table = tableFor(kind);
+  const table = parentTable(kind);
   return transaction(async () => {
     await lockWorkspace();
-    const row = await one(
-      'SELECT * FROM durable_runs WHERE kind=? AND run_id=? FOR UPDATE',
-      kind,
-      id,
-    );
+    const row = await lockDurableRun(kind, id);
     if (
       !row ||
       row.dispatch_token !== token ||
       (row.workflow_id && row.workflow_id !== workflowId)
     )
       return { result: { done: true, revision } };
-    const parent = await one(
-      'SELECT * FROM ' + table + ' WHERE id=? FOR UPDATE',
-      id,
-    );
+    const parent = await lockParent(table, id);
     if (row.completed) return { result: summary(row) };
     if (!parent || !['queued', 'running'].includes(parent.state)) {
       const outcome = {
@@ -315,13 +308,17 @@ async function claimUnit(
       };
       // A legacy invocation may finish after dispatch but before our first step.
       // Close only its durable companion; preserve the legacy result and counters.
-      await run(
-        "UPDATE durable_runs SET workflow_id=?,completed=true,outcome=?::jsonb,unit_token='',unit_until=NULL,updated_at=now() WHERE kind=? AND run_id=?",
-        workflowId,
-        JSON.stringify(outcome),
-        kind,
-        id,
-      );
+      await db
+        .update(durable_runs)
+        .set({
+          workflow_id: workflowId,
+          completed: true,
+          outcome,
+          unit_token: '',
+          unit_until: null,
+          updated_at: sql`now()`,
+        })
+        .where(durableRun(kind, id));
       return { result: outcome };
     }
     if (row.revision !== revision) return { result: summary(row) };
@@ -354,43 +351,56 @@ async function claimUnit(
         },
       };
     const unit = uid();
-    await run(
-      "UPDATE durable_runs SET workflow_id=?,unit_token=?,unit_until=now()+interval '120 seconds',updated_at=now() WHERE kind=? AND run_id=?",
-      workflowId,
-      unit,
-      kind,
-      id,
-    );
+    await db
+      .update(durable_runs)
+      .set({
+        workflow_id: workflowId,
+        unit_token: unit,
+        unit_until: sql`now() + interval '120 seconds'`,
+        updated_at: sql`now()`,
+      })
+      .where(durableRun(kind, id));
     // Old deployed claimLease code requires an empty owner. Keep this reservation
     // between steps and sleeps; the independent unit token fences durable writes.
-    await run(
-      'UPDATE ' +
-        table +
-        " SET state='running',lease_owner=?,lease_until=NULL,pid=NULL,updated_at=?,message='Import continues automatically in the background' WHERE id=?",
-      reservedOwner,
-      stamp(),
-      id,
-    );
+    await db
+      .update(table)
+      .set({
+        state: 'running',
+        lease_owner: reservedOwner,
+        lease_until: null,
+        pid: null,
+        updated_at: stamp(),
+        message: 'Import continues automatically in the background',
+      })
+      .where(eq(table.id, id));
     return { row, parent, unit };
   });
 }
 async function requireUnit(kind: string, id: string, unit: string) {
-  if (
-    !(await one(
-      'SELECT run_id FROM durable_runs WHERE kind=? AND run_id=? AND unit_token=? AND unit_until>now() AND completed=false FOR UPDATE',
-      kind,
-      id,
-      unit,
-    ))
-  )
+  const owned = await db
+    .select({ run_id: durable_runs.run_id })
+    .from(durable_runs)
+    .where(
+      and(
+        durableRun(kind, id),
+        eq(durable_runs.unit_token, unit),
+        gt(durable_runs.unit_until, sql`now()`),
+        eq(durable_runs.completed, false),
+      ),
+    )
+    .for('update');
+  if (!owned.length)
     throw Object.assign(Error('Ingestion ownership changed.'), {
       lostUnit: true,
     });
 }
 async function advanceContacts(cursor: unknown): Promise<Step> {
-  const q = await one(
-    "SELECT * FROM contact_queue WHERE state='pending' ORDER BY updated_at,source_id LIMIT 1",
-  );
+  const [q] = await db
+    .select()
+    .from(contact_queue)
+    .where(eq(contact_queue.state, 'pending'))
+    .orderBy(contact_queue.updated_at, contact_queue.source_id)
+    .limit(1);
   if (!q) return { cursor: cursor || {}, records: [], complete: true };
   return {
     cursor: {
@@ -422,20 +432,23 @@ export async function advanceDurableUnit(
       // Staged records come back from jsonb untyped; they hold { doc, raw }.
       result = (await (adapters.manual || advanceManual)(
         id,
-        row.cursor,
+        row.cursor as Parameters<typeof advanceManual>[1],
       )) as Step;
     } else if (parent.provider === 'beeper') {
       const { advanceBeeper } = await import('./beeper.ts');
-      result = (await advanceBeeper(id, row.cursor)) as Step;
+      result = (await advanceBeeper(
+        id,
+        row.cursor as Parameters<typeof advanceBeeper>[1],
+      )) as Step;
     } else {
       const providers = await import('./ingestion-providers.ts');
       const cursor =
-        row.cursor ??
+        (row.cursor as Parameters<typeof providers.advanceProvider>[1]) ??
         (await (adapters.initial || providers.initialProviderCursor)(
-          parent.provider,
+          parent.provider!,
         ));
       result = (await (adapters.advance || providers.advanceProvider)(
-        parent.provider,
+        parent.provider!,
         cursor,
       )) as Step;
     }
