@@ -1,5 +1,6 @@
 import {
   and,
+  count,
   desc,
   eq,
   getColumns,
@@ -8,6 +9,7 @@ import {
   ne,
   or,
   sql,
+  type AnyColumn,
   type SQL,
 } from 'drizzle-orm';
 import { CONTACT_TABLES } from './contact-tables.mjs';
@@ -24,10 +26,13 @@ import {
   events,
   item_contacts,
   items,
+  jobs,
+  proposal_events,
   proposals,
   settings,
   source_versions,
   sources,
+  sync_runs,
 } from './schema/index.ts';
 export {
   all,
@@ -623,55 +628,92 @@ export async function saveItem(input: ItemInput) {
   });
 }
 export async function dashboard() {
+  const latest = db
+    .selectDistinctOn([sync_runs.provider])
+    .from(sync_runs)
+    .orderBy(sync_runs.provider, desc(sync_runs.started_at), desc(sync_runs.id))
+    .as('latest');
+  const checkpoint = (json: AnyColumn) => sql`(${json}::jsonb->>'checkpoint')`;
   const [
-    items,
+    itemRows,
     coverage,
-    jobs,
-    proposals,
+    jobRows,
+    pending,
     sync,
     sync_history,
     carryovers,
     focus,
     available_hours,
   ] = await Promise.all([
-    await all('SELECT * FROM items ORDER BY created_at,id'),
-    await all(
-      'SELECT provider,coverage,count(*) AS count FROM sources GROUP BY provider,coverage',
-    ),
-    await all('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 15'),
-    await all(
-      "SELECT * FROM proposals WHERE status='pending' ORDER BY priority_score DESC,created_at DESC LIMIT 10",
-    ),
-    await all(
-      'SELECT * FROM (SELECT DISTINCT ON (provider) * FROM sync_runs ORDER BY provider,started_at DESC,id DESC) latest ORDER BY started_at DESC,id DESC',
-    ),
-    await all(
-      'SELECT * FROM sync_runs ORDER BY started_at DESC,id DESC LIMIT 30',
-    ),
-    await all(
-      "SELECT item_id,count(*) AS n FROM events WHERE action='updated' AND (before_json::jsonb->>'checkpoint')<>'' AND (before_json::jsonb->>'checkpoint')<>(after_json::jsonb->>'checkpoint') AND (after_json::jsonb->>'status')='now' GROUP BY item_id",
-    ),
+    await db.select().from(items).orderBy(items.created_at, items.id),
+    await db
+      .select({
+        provider: sources.provider,
+        coverage: sources.coverage,
+        count: count(),
+      })
+      .from(sources)
+      .groupBy(sources.provider, sources.coverage),
+    await db.select().from(jobs).orderBy(desc(jobs.created_at)).limit(15),
+    await db
+      .select()
+      .from(proposals)
+      .where(eq(proposals.status, 'pending'))
+      .orderBy(desc(proposals.priority_score), desc(proposals.created_at))
+      .limit(10),
+    await db
+      .select()
+      .from(latest)
+      .orderBy(desc(latest.started_at), desc(latest.id)),
+    await db
+      .select()
+      .from(sync_runs)
+      .orderBy(desc(sync_runs.started_at), desc(sync_runs.id))
+      .limit(30),
+    await db
+      .select({ item_id: events.item_id, n: count() })
+      .from(events)
+      .where(
+        and(
+          eq(events.action, 'updated'),
+          sql`${checkpoint(events.before_json)} <> ''`,
+          sql`${checkpoint(events.before_json)} <> ${checkpoint(events.after_json)}`,
+          sql`(${events.after_json}::jsonb->>'status') = 'now'`,
+        ),
+      )
+      .groupBy(events.item_id),
     await getSetting('focus', ''),
     await getSetting('available_hours', 0),
   ]);
   const deferred_proposals = (
-    await all(
-      "SELECT * FROM proposals WHERE status='deferred' ORDER BY priority_score DESC,created_at DESC",
-    )
+    await db
+      .select()
+      .from(proposals)
+      .where(eq(proposals.status, 'deferred'))
+      .orderBy(desc(proposals.priority_score), desc(proposals.created_at))
   ).map((x) => ({ ...x, payload: JSON.parse(x.payload) }));
-  const proposal_history = await all(
-    "SELECT e.*,p.status,p.version,p.payload::jsonb->>'title' title FROM proposal_events e JOIN proposals p ON p.id=e.proposal_id WHERE e.action='dismissed' ORDER BY e.created_at DESC LIMIT 30",
-  );
+  const proposal_history = await db
+    .select({
+      ...getColumns(proposal_events),
+      status: proposals.status,
+      version: proposals.version,
+      title: sql<string | null>`${proposals.payload}::jsonb->>'title'`,
+    })
+    .from(proposal_events)
+    .innerJoin(proposals, eq(proposals.id, proposal_events.proposal_id))
+    .where(eq(proposal_events.action, 'dismissed'))
+    .orderBy(desc(proposal_events.created_at))
+    .limit(30);
   return {
-    items,
+    items: itemRows,
     coverage,
     deferred_proposals,
     proposal_history,
-    jobs: jobs.map((x) => ({
+    jobs: jobRows.map((x) => ({
       ...x,
       result: x.result_json ? JSON.parse(x.result_json) : null,
     })),
-    proposals: proposals.map((x) => ({ ...x, payload: JSON.parse(x.payload) })),
+    proposals: pending.map((x) => ({ ...x, payload: JSON.parse(x.payload) })),
     sync,
     sync_history,
     carryovers,
