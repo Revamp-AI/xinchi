@@ -1,5 +1,8 @@
 import { calendarGranted } from './calendar.ts';
-import { getSetting, one, run, transaction, lockWorkspace } from './db.mjs';
+import { and, desc, eq, getColumns, inArray, sql } from 'drizzle-orm';
+import { getSetting } from './db.mjs';
+import { db, transaction, lockWorkspace } from './postgres.ts';
+import { durable_runs, sync_runs } from './schema/index.ts';
 import { secrets } from './secret-store.ts';
 import { startSync } from './connectors.mjs';
 import { resumeDurable } from './durable-ingestion.mjs';
@@ -29,17 +32,31 @@ export async function scheduleProviderSyncs() {
     try {
       const result = await transaction(async () => {
         await lockWorkspace();
-        if (
-          await one(
-            "SELECT id FROM sync_runs WHERE provider=? AND state IN ('queued','running','uploading') LIMIT 1",
-            provider,
+        const [active] = await db
+          .select({ id: sync_runs.id })
+          .from(sync_runs)
+          .where(
+            and(
+              eq(sync_runs.provider, provider),
+              inArray(sync_runs.state, ['queued', 'running', 'uploading']),
+            ),
           )
-        )
-          return;
-        const latest = await one(
-          "SELECT s.*,d.outcome FROM sync_runs s LEFT JOIN durable_runs d ON d.kind='sync' AND d.run_id=s.id WHERE s.provider=? ORDER BY s.started_at DESC,s.id DESC LIMIT 1",
-          provider,
-        );
+          .limit(1);
+        if (active) return;
+        const [latest] = await db
+          .select({ ...getColumns(sync_runs), outcome: durable_runs.outcome })
+          .from(sync_runs)
+          .leftJoin(
+            durable_runs,
+            and(
+              eq(durable_runs.kind, 'sync'),
+              eq(durable_runs.run_id, sync_runs.id),
+            ),
+          )
+          .where(eq(sync_runs.provider, provider))
+          .orderBy(desc(sync_runs.started_at), desc(sync_runs.id))
+          .limit(1);
+        const outcome = latest?.outcome as { permanent?: boolean } | null;
         const elapsed = latest
           ? Date.now() -
             Date.parse(
@@ -49,7 +66,7 @@ export async function scheduleProviderSyncs() {
         if (
           elapsed <
           (latest?.state === 'failed'
-            ? latest.outcome?.permanent
+            ? outcome?.permanent
               ? DAY
               : HOUR
             : FIVE_MINUTES)
@@ -61,25 +78,47 @@ export async function scheduleProviderSyncs() {
         }
         // Regular Granola discovery already covers every accessible ID. Re-read
         // bodies daily as well, including providers that update text without a date.
-        const lastFull = await one(
-          "SELECT s.finished_at FROM sync_runs s JOIN durable_runs d ON d.kind='sync' AND d.run_id=s.id WHERE s.provider=? AND s.state='complete' AND d.completed=true AND d.cursor->>'phase'='done' AND (CASE WHEN s.provider='granola' THEN d.cursor->>'rescan'='true' ELSE d.cursor->>'since' IS NULL AND d.cursor->>'participant'=? END) ORDER BY s.finished_at DESC LIMIT 1",
-          provider,
-          (
-            process.env.XIN_FIREFLIES_PARTICIPANT_EMAIL ||
-            process.env.XIN_ALLOWED_EMAIL ||
-            ''
-          ).trim(),
-        );
+        const participant = (
+          process.env.XIN_FIREFLIES_PARTICIPANT_EMAIL ||
+          process.env.XIN_ALLOWED_EMAIL ||
+          ''
+        ).trim();
+        const cursor = durable_runs.cursor;
+        const [lastFull] = await db
+          .select({ finished_at: sync_runs.finished_at })
+          .from(sync_runs)
+          .innerJoin(
+            durable_runs,
+            and(
+              eq(durable_runs.kind, 'sync'),
+              eq(durable_runs.run_id, sync_runs.id),
+            ),
+          )
+          .where(
+            and(
+              eq(sync_runs.provider, provider),
+              eq(sync_runs.state, 'complete'),
+              eq(durable_runs.completed, true),
+              sql`${cursor}->>'phase' = 'done'`,
+              sql`(CASE WHEN ${sync_runs.provider} = 'granola' THEN ${cursor}->>'rescan' = 'true' ELSE ${cursor}->>'since' IS NULL AND ${cursor}->>'participant' = ${participant} END)`,
+            ),
+          )
+          .orderBy(desc(sync_runs.finished_at))
+          .limit(1);
         const rescan =
           ['granola', 'fireflies'].includes(provider) &&
           !(await getSetting(provider + '_page')) &&
-          (!lastFull || Date.now() - Date.parse(lastFull.finished_at) >= DAY);
+          (!lastFull ||
+            Date.now() - Date.parse(String(lastFull.finished_at)) >= DAY);
         const started = await startSync(provider, { rescan });
-        await run(
-          'UPDATE sync_runs SET message=? WHERE id=?',
-          rescan ? 'Automatic history check queued' : 'Automatic sync queued',
-          started.id,
-        );
+        await db
+          .update(sync_runs)
+          .set({
+            message: rescan
+              ? 'Automatic history check queued'
+              : 'Automatic sync queued',
+          })
+          .where(eq(sync_runs.id, started.id));
         return { provider, ...started, rescan };
       });
       if (result) scheduled.push(result);
