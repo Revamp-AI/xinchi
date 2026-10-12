@@ -21,12 +21,12 @@ test('calendar pages preserve timezone, exact snapshots and RSVP without creatin
  const context=await callContextTool('read_calendar');assert.equal(context.connected,true);assert.equal(context.stale,false);assert.ok(context.events[0].source_version_id);
 });
 test('missing events are fetched individually: cancellations and moves beyond the window are never guessed',async t=>{
- const {normalizeCalendar}=await import('../lib/calendar.mjs');await upsertSource(normalizeCalendar(event),event);
+ const {normalizeCalendar}=await import('../lib/calendar.ts');await upsertSource(normalizeCalendar(event),event);
  const calls=await sync(t,[{items:[],timeZone:'Asia/Singapore'},{...event,status:'cancelled'}]);assert.equal(calls.length,2);assert.match(calls[1],/events\/fixture-event/);
  assert.match((await one("SELECT body FROM sources WHERE id='calendar:primary:fixture-event'")).body,/Status: cancelled/);
 });
 test('a failed or partial calendar sync cannot erase an event or claim fresh coverage',async t=>{
- const {normalizeCalendar}=await import('../lib/calendar.mjs');await upsertSource(normalizeCalendar(event),event);
+ const {normalizeCalendar}=await import('../lib/calendar.ts');await upsertSource(normalizeCalendar(event),event);
  await assert.rejects(sync(t,[{items:[]},{status:503,body:{error:{message:'private provider detail'}}}]),/temporarily unavailable/);
  assert.match((await one("SELECT body FROM sources WHERE id='calendar:primary:fixture-event'")).body,/Status: confirmed/);
  assert.equal((await callContextTool('read_calendar')).stale,true);
@@ -39,7 +39,7 @@ test('Google partial consent keeps calendar and Gmail independent',async()=>{
  await assert.rejects(saveCalendarGrant({scope:'https://www.googleapis.com/auth/calendar.events.readonly',refresh_token:'other'}, {email:'other@example.com'}),/account/);
 });
 test('rescheduled events outside the rolling window remain current, and minimal cancellations retain instance identity',async t=>{
- const {normalizeCalendar}=await import('../lib/calendar.mjs');
+ const {normalizeCalendar}=await import('../lib/calendar.ts');
  const original={...event,recurringEventId:'series-1',originalStartTime:event.start};await upsertSource(normalizeCalendar(original),original);
  const moved={...original,start:{dateTime:'2030-01-15T10:00:00+08:00'},end:{dateTime:'2030-01-15T11:00:00+08:00'}};
  await sync(t,[{items:[]},moved]);assert.match((await one("SELECT body FROM sources WHERE id='calendar:primary:fixture-event'")).body,/2030-01-15/);
@@ -54,6 +54,6 @@ test('calendar deadlines reject hard deadlines, obsolete snapshots, tentative at
  const p={title:'Prepare the plan',kind:'action',rationale:'Promised preparation',done_when:'Ready',next_action:'Draft',existing_item_id:'',uncertainty:'',confidence:'high',qualification:{basis:'verbal_promise',area:'customer',deliverable_key:'project-review-plan',owner_basis:'Avery is the workspace owner.',commitment_quote:quote,due_date:day,deadline_kind:'checkpoint',deadline_source_id:'calendar:primary:fixture-event',deadline_quote:'Start: '+event.start.dateTime},citations:[{source_id:'granola:promise',quote},{source_id:'calendar:primary:fixture-event',source_version_id:c.id,quote:'Start: '+event.start.dateTime}]};
  const result=()=>({brief:'Ready',findings:[],proposals:[p],questions:[],coverage_note:'Fixture'});
  await validateResult(result());p.qualification.deadline_kind='hard';await assert.rejects(validateResult(result()),/hard deadline/);p.qualification.deadline_kind='checkpoint';
- const {normalizeCalendar}=await import('../lib/calendar.mjs');await upsertSource(normalizeCalendar({...event,status:'tentative'}),{...event,status:'tentative'});await assert.rejects(validateResult(result()),/current/);
+ const {normalizeCalendar}=await import('../lib/calendar.ts');await upsertSource(normalizeCalendar({...event,status:'tentative'}),{...event,status:'tentative'});await assert.rejects(validateResult(result()),/current/);
  await upsertSource(normalizeCalendar(event),event);await setSetting('calendar_last_sync',{at:'2020-01-01T00:00:00Z'});await assert.rejects(validateResult(result()),/fresh/);
 });
