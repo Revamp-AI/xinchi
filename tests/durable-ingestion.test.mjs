@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const privateDir=mkdtempSync(join(tmpdir(),'focus-durable-'));process.env.XIN_DATA_DIR=privateDir;process.env.XIN_AGENT_MODE='cloud';
 const {one,run,uid,stamp,upsertSource,getSetting,setSetting}=await import('../lib/db.mjs');
-const {prepareDispatches,acknowledgeDispatch,advanceDurableUnit,resumeDurable,failDurableRun}=await import('../lib/durable-ingestion.mjs');
+const {prepareDispatches,acknowledgeDispatch,advanceDurableUnit,resumeDurable,failDurableRun}=await import('../lib/durable-ingestion.ts');
 const {expireLeases,claimLease,heartbeatLease}=await import('../lib/leases.ts');
 const {reconcileWorkflows}=await import('../lib/workflow-recovery.ts');
 const {createManualUpload,appendManualChunk,finishManualUpload}=await import('../lib/manual-ingestion.ts');
@@ -134,7 +134,7 @@ for(const terminal of ['complete','partial'])test('a legacy '+terminal+' result 
 test.after(()=>rmSync(privateDir,{recursive:true,force:true}));
 
 test('bounded workflow handoff retains cursor and rejects late writes from the old owner',async()=>{
- const {yieldDurableRun}=await import('../lib/durable-ingestion.mjs');
+ const {yieldDurableRun}=await import('../lib/durable-ingestion.ts');
  const row=await queued();await unit(row,0,{initial:async()=>({n:0}),advance:async()=>({cursor:{n:500},records:[],complete:false})});
  assert.equal(await yieldDurableRun('sync',row.id,row.token,'not-the-owner'),false);
  assert.equal(await yieldDurableRun('sync',row.id,row.token,row.wf),true);

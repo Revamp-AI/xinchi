@@ -8,7 +8,7 @@ const {scheduleProviderSyncs}=await import('../lib/scheduled-sync.ts');
 const {saveSecrets}=await import('../lib/secret-store.ts');
 const {startSync}=await import('../lib/connectors.ts');
 const {all,one,run,setSetting,getSetting}=await import('../lib/db.mjs');
-const {prepareDispatches,advanceDurableUnit}=await import('../lib/durable-ingestion.mjs');
+const {prepareDispatches,advanceDurableUnit}=await import('../lib/durable-ingestion.ts');
 test.beforeEach(async()=>{await run('TRUNCATE durable_runs,sync_runs,contact_runs CASCADE');for(const k of ['granola_page','granola_since','fireflies_page','fireflies_sync'])await setSetting(k,null);await saveSecrets({granola_key:'fictional-key',fireflies_key:'fictional-key'});});
 async function completed(provider,{minutes=10,full=true}={}){
  const id='previous-'+provider,finished=new Date(Date.now()-minutes*60000).toISOString();

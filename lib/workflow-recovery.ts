@@ -1,7 +1,7 @@
 import { and, eq, ne } from 'drizzle-orm';
 import { db } from './postgres.ts';
 import { durable_runs } from './schema/index.ts';
-import { recoverStalledRun } from './durable-ingestion.mjs';
+import { recoverStalledRun } from './durable-ingestion.ts';
 
 const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
 export async function reconcileWorkflows(

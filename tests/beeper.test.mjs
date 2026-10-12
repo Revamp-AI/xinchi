@@ -7,7 +7,7 @@ process.env.XIN_AGENT_MODE='cloud';process.env.XIN_ALLOWED_EMAIL='owner@example.
 const {all,one,run,hash,exportData,upsertSource}=await import('../lib/db.mjs');
 const b=await import('../lib/beeper.ts');
 const {handleBeeperRequest}=await import('../lib/beeper-route.mjs');
-const {prepareDispatches,advanceDurableUnit}=await import('../lib/durable-ingestion.mjs');
+const {prepareDispatches,advanceDurableUnit}=await import('../lib/durable-ingestion.ts');
 const {extractInteraction,projectSource}=await import('../lib/contact-extraction.mjs');
 const {repairBeeperContactNames}=await import('../lib/beeper-contact-repair.mjs');
 const {suggestIdentityMatches}=await import('../lib/contacts.mjs');
