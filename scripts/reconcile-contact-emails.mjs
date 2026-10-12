@@ -1,4 +1,4 @@
-import {reconcileEmailContacts} from '../lib/contact-identity.mjs';
+import {reconcileEmailContacts} from '../lib/contact-identity.ts';
 import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';
 
 try{

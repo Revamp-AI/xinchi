@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { all, run, uid } from '../../lib/db.mjs';
-import { resolveExactEmailContact } from '../../lib/contact-identity.mjs';
+import { resolveExactEmailContact } from '../../lib/contact-identity.ts';
 
 test('an exact-email match appears once and source names remain visible and searchable', async ({
   page,

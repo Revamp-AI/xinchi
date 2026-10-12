@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {parseLinkedinConnections,linkedinProfileUrl,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.ts';
 import {one,run} from '../lib/db.mjs';
 import {saveContact,contactDetail,listContacts} from '../lib/contacts.ts';
-import {mergeContacts,mergePreview,undoMerge} from '../lib/contact-identity.mjs';
+import {mergeContacts,mergePreview,undoMerge} from '../lib/contact-identity.ts';
 import {projectSource} from '../lib/contact-extraction.ts';
 
 const header='First Name,Last Name,URL,Email Address,Company,Position,Connected On';

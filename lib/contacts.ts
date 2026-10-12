@@ -21,7 +21,7 @@ import {
   exactEmailContacts,
   combinedNotes,
 } from './contact-email.ts';
-import { resolveExactEmailContact } from './contact-identity.mjs';
+import { resolveExactEmailContact } from './contact-identity.ts';
 import {
   transaction,
   lockWorkspace,

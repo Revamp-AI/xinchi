@@ -6,7 +6,7 @@ import {one,run,setSetting,uid} from '../lib/db.mjs';
 import {saveContact,contactDetail} from '../lib/contacts.ts';
 import {parseLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.ts';
 import {previewEmployerMatches,runAutoContactMatching,setAutoMatchEnabled,autoMatchStatus} from '../lib/contact-auto-match.ts';
-import {undoMerge,keepSeparate} from '../lib/contact-identity.mjs';
+import {undoMerge,keepSeparate} from '../lib/contact-identity.ts';
 import {companyKey,corporateDomain,plausibleEmployerDomain,publicIPv4,employerWebsiteUrl,websiteCompanyEvidence} from '../lib/company-domain.mjs';
 
 const verify=async(company,domain)=>websiteCompanyEvidence(company,domain,{url:'https://'+domain+'/',html:`<meta property="og:site_name" content="${company}">`});

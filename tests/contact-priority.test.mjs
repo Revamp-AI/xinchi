@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {all,one,run,hash} from '../lib/db.mjs';
 import {saveContact,contactDetail,listContacts,importContactsCsv} from '../lib/contacts.ts';
-import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.mjs';
+import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.ts';
 import {callContextTool} from '../lib/context-tools.ts';
 
 test('priority is explicit, versioned, and survives edits and exact-email imports without changing restrictions',async()=>{
