@@ -4,7 +4,7 @@ import { db, transaction, lockWorkspace } from './postgres.ts';
 import { hash, uid, stamp } from './db.mjs';
 import { emailAddress, personalEmail } from './contact-email.ts';
 import { linkedinProfileUrl } from './linkedin-import.ts';
-import { evaluateContacts as evaluate } from './contacts.mjs';
+import { evaluateContacts as evaluate } from './contacts.ts';
 import {
   affiliations,
   contact_identities,

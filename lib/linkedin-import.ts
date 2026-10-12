@@ -4,7 +4,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import { uid, hash, stamp, dateOK } from './db.mjs';
 import { emailAddress, personalEmail } from './contact-email.ts';
-import { evaluateContacts as evaluate } from './contacts.mjs';
+import { evaluateContacts as evaluate } from './contacts.ts';
 import {
   affiliations,
   contact_identities,

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { saveContact } from '../../lib/contacts.mjs';
+import { saveContact } from '../../lib/contacts.ts';
 
 test('star contacts, filter the map, persist priority, and remove it from the profile', async ({
   page,

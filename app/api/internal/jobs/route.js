@@ -5,7 +5,7 @@ import {scheduleProviderSyncs} from '../../../../lib/scheduled-sync.ts';
 import {runAutoContactMatching} from '../../../../lib/contact-auto-match.ts';
 import {scheduleContactHistory} from '../../../../lib/contact-jobs.ts';
 import {runContactIntelligence} from '../../../../lib/contact-intelligence.ts';
-import {evaluateContacts} from '../../../../lib/contacts.mjs';
+import {evaluateContacts} from '../../../../lib/contacts.ts';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 export const maxDuration=800;

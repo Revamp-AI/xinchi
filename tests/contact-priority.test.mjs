@@ -3,7 +3,7 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {all,one,run,hash} from '../lib/db.mjs';
-import {saveContact,contactDetail,listContacts,importContactsCsv} from '../lib/contacts.mjs';
+import {saveContact,contactDetail,listContacts,importContactsCsv} from '../lib/contacts.ts';
 import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.mjs';
 import {callContextTool} from '../lib/context-tools.mjs';
 

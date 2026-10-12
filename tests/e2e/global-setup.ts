@@ -75,7 +75,7 @@ export default async function globalSetup(config: FullConfig) {
     await db.run("INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at,lease_owner,lease_until) VALUES('e2e-review-blocker','review','running','Fictional blocked review',?,?,'fixture',now()+interval '1 hour')",db.stamp(),db.stamp());
     await db.setSetting('contact_intelligence', { enabled: false });
   }
-  const {saveContact, confirmCoverage} = await import('../../lib/contacts.mjs');
+  const {saveContact, confirmCoverage} = await import('../../lib/contacts.ts');
   const {logInteraction} = await import('../../lib/contact-extraction.ts');
   const groups = [
     ['New', ['Nora James','Theo Park','Maya West'], 3],

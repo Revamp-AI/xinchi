@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {parseLinkedinConnections,linkedinProfileUrl,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.ts';
 import {one,run} from '../lib/db.mjs';
-import {saveContact,contactDetail,listContacts} from '../lib/contacts.mjs';
+import {saveContact,contactDetail,listContacts} from '../lib/contacts.ts';
 import {mergeContacts,mergePreview,undoMerge} from '../lib/contact-identity.mjs';
 import {projectSource} from '../lib/contact-extraction.ts';
 
