@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FullConfig } from '@playwright/test';
 
-// A fixed 43-character base64url token: the only shape lib/auth.mjs accepts.
+// A fixed 43-character base64url token: the only shape lib/auth.ts accepts.
 export const sessionToken = 'focusE2Esession_0123456789abcdefghijklmnopq';
 export const ownerName = 'Alex';
 

@@ -32,7 +32,7 @@ test('the WAL switch is retried while the database is locked and gives up within
  assert.deepEqual(waits,[]);
 });
 test('several processes can bootstrap a fresh database at once without tripping over the WAL switch',async()=>{
- // next build collects page data with several workers that all import lib/db.mjs and lib/auth.mjs against a brand-new data dir.
+ // next build collects page data with several workers that all import lib/db.mjs and lib/auth.ts against a brand-new data dir.
  const results=await Promise.all(Array.from({length:8},boot));
  assert.deepEqual(results.filter(r=>r.code!==0).map(r=>r.err),[]);
 });
