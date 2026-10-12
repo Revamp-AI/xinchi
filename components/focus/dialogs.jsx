@@ -426,14 +426,22 @@ export function ConnectionDialog({
     [query, setQuery] = useState(state.connections.gmail.query),
     [workspaceId, setWorkspaceId] = useState('new'),
     [workspaceLabel, setWorkspaceLabel] = useState('');
-  const gmail = provider === 'gmail';
+  const gmail = provider === 'gmail',
+    calendar = provider === 'calendar',
+    google = gmail || calendar;
   const workspaces = state.connections.granola.workspaces || [];
   return (
     <Modal
-      title={gmail ? 'Gmail settings' : `Connect ${providerNames[provider]}`}
+      title={
+        google
+          ? `${providerNames[provider]} settings`
+          : `Connect ${providerNames[provider]}`
+      }
       description={
-        gmail
-          ? 'Your inbox, with read-only access.'
+        google
+          ? calendar
+            ? 'Use your calendar to plan promised work, with read-only access.'
+            : 'Your inbox, with read-only access.'
           : 'Keep your meeting context up to date.'
       }
       onClose={close}
@@ -442,6 +450,10 @@ export function ConnectionDialog({
         className="connection-form"
         onSubmit={(event) => {
           event.preventDefault();
+          if (calendar) {
+            reconnect();
+            return;
+          }
           save(
             gmail
               ? { gmail_query: query }
@@ -457,22 +469,32 @@ export function ConnectionDialog({
           );
         }}
       >
-        {gmail ? (
+        {google ? (
           <>
             <div className="connected-account">
-              <ProviderIcon provider="gmail" />
+              <ProviderIcon provider={provider} />
               <div>
                 <strong>{state.user?.email}</strong>
                 <span>Use the same account as this workspace.</span>
               </div>
               <LockKeyhole size={17} />
             </div>
-            <FormField
-              label="Which emails should Focus read?"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              description="Use Gmail search syntax. The default includes all mail except spam and trash."
-            />
+            {gmail && (
+              <FormField
+                label="Which emails should Focus read?"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                description="Use Gmail search syntax. The default includes all mail except spam and trash."
+              />
+            )}
+            {calendar && (
+              <p>
+                Focus reads events from your primary calendar, including changed
+                dates and cancellations. It suggests preparation checkpoints
+                when an event is tied to something you promised. Events are
+                never edited.
+              </p>
+            )}
             <div className="reconnect-row">
               <div>
                 <strong>Need to renew access?</strong>
@@ -481,7 +503,7 @@ export function ConnectionDialog({
               <Button
                 variant="outline"
                 disabled={busy}
-                onClick={() => reconnect(query)}
+                onClick={() => reconnect(gmail ? query : undefined)}
               >
                 <RefreshCw />
                 Reconnect
@@ -550,7 +572,11 @@ export function ConnectionDialog({
             Cancel
           </Button>
           <Button type="submit" loading={busy}>
-            {gmail ? 'Save changes' : 'Save connection'}
+            {calendar
+              ? 'Connect Google Calendar'
+              : gmail
+                ? 'Save changes'
+                : 'Save connection'}
           </Button>
         </div>
       </form>

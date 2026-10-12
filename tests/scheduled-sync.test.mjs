@@ -60,3 +60,7 @@ test('Gmail schedules automatically when connected and retains its history check
  await saveSecrets({gmail_tokens:{refresh_token:'fictional-refresh'}});await setSetting('gmail_history','keep-history');
  const rows=await scheduleProviderSyncs();assert.equal(rows.length,1);assert.equal(rows[0].provider,'gmail');assert.equal(rows[0].rescan,false);assert.equal(await getSetting('gmail_history'),'keep-history');
 });
+test('Calendar schedules independently with a read-only grant and never requests a meeting rescan',async()=>{
+ await saveSecrets({calendar_tokens:{refresh_token:'fictional-calendar',scope:'https://www.googleapis.com/auth/calendar.events.readonly'}});
+ const runs=await scheduleProviderSyncs();assert.equal(runs.length,1);assert.equal(runs[0].provider,'calendar');assert.equal(runs[0].rescan,false);
+});

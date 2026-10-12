@@ -72,6 +72,7 @@ export default function AgentView({
   start,
   openSource,
   selectProposal,
+  restoreProposal,
   dismiss,
   create,
   edit,
@@ -258,6 +259,9 @@ export default function AgentView({
           )}
           <ProposalQueue
             proposals={state.proposals}
+            deferred={state.deferred_proposals}
+            history={state.proposal_history}
+            restore={restoreProposal}
             {...{ busy, openSource, selectProposal, dismiss }}
           />
           {review && (

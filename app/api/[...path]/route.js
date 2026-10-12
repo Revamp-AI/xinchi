@@ -1,3 +1,4 @@
+import {dismissProposal,restoreProposal} from '../../../lib/proposals.mjs';
 import {prioritiesState,priorityDetail,savePriority,reorderPriorities,addPriorityUpdate,decidePrioritySuggestion,queuePriorityContext} from '../../../lib/priorities.mjs';
 import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntelligence,dismissContactInsight,runContactIntelligence} from '../../../lib/contact-intelligence.mjs';
 import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.mjs';
@@ -35,6 +36,7 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
   try{if(u.searchParams.get('error')){(await recordAuthEvent('consent','failed',u.searchParams.get('error')==='access_denied'?'cancelled':'signin'));throw Object.assign(Error('Google did not authorize sign-in.'),{authCode:u.searchParams.get('error')==='access_denied'?'cancelled':'signin'});}result=await finishGoogle(u.searchParams.get('code'),u.searchParams.get('state'),readCookie(req,FLOW_COOKIE));}
   catch(e){const response=new Response(null,{status:303,headers:{Location:APP_ORIGIN+'/login?error='+(authMessages[e.authCode]?e.authCode:'signin'),'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;}
   (await endSession(readCookie(req,SESSION_COOKIE)));
+  if(result.calendar){try{await startSync('calendar');scheduleWork();}catch{}}
   let importState='manual';if(result.gmail){try{(await startSync('gmail'));scheduleWork();importState='started';}catch{}}
   const response=new Response(null,{status:303,headers:{Location:APP_ORIGIN+'/?gmail='+(gmailMessages[result.gmailIssue]?result.gmailIssue:result.gmail?'connected':'missing')+'&import='+importState,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
   response.headers.append('Set-Cookie',cookie(SESSION_COOKIE,result.token,SESSION_SECONDS));response.headers.append('Set-Cookie',cookie(FLOW_COOKIE,'',0));return response;
@@ -108,7 +110,8 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='settings'){if(typeof data.focus==='string')(await setSetting('focus',data.focus.slice(0,2000)));if(data.available_hours!==undefined)(await setSetting('available_hours',Math.max(0,Math.min(168,Number(data.available_hours)||0))));return json({saved:true});}
  if(path==='jobs'){const id=(await createJob(data.prompt,'review',{answers:data.answers,parent_id:data.parent_id}));(await launchJob(id));scheduleWork();return json({id},202);}
  if(path==='jobs/cancel')return json((await cancelJob(data.id)));
- if(path==='proposals/dismiss'){(await run("UPDATE proposals SET status='dismissed' WHERE id=?",data.id));return json({saved:true});}
+ if(path==='proposals/restore')return json(await restoreProposal(data.id,data.version));
+ if(path==='proposals/dismiss')return json(await dismissProposal(data.id));
  if(path==='connections')return json((await configure(data)));
  if(path==='beeper/pairing')return json(await createBeeperPairing());
  if(path==='beeper/revoke')return json(await revokeBeeper());

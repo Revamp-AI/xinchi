@@ -38,6 +38,7 @@ export default function BoardView({
   openDraft,
   openSource,
   selectProposal,
+  restoreProposal,
   dismiss,
 }) {
   const today = localToday(new Date());
@@ -143,6 +144,9 @@ export default function BoardView({
             {id === 'candidate' && (
               <ProposalQueue
                 proposals={state.proposals}
+                deferred={state.deferred_proposals}
+                history={state.proposal_history}
+                restore={restoreProposal}
                 {...{ busy, openSource, selectProposal, dismiss }}
               />
             )}

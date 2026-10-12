@@ -42,6 +42,8 @@ import {
 const descriptions = {
   fireflies: 'Your conversations, transcripts, and meeting action items.',
   granola: 'Meeting notes and the thinking around your conversations.',
+  calendar:
+    'Read-only event context for promised work, deadlines, and preparation.',
   gmail: 'Email threads, follow-ups, and decisions waiting in your inbox.',
 };
 const runTones = {
@@ -110,8 +112,8 @@ export default function ConnectionsView({
       {state.worker?.mode === 'cloud' && (
         <Notice>
           Each connection imports independently. Imports save progress as they
-          go and retry temporary interruptions automatically. Contact extraction and
-          reviews of recent changes run independently.
+          go and retry temporary interruptions automatically. Contact extraction
+          and reviews of recent changes run independently.
         </Notice>
       )}
       <div className="connection-list">
@@ -150,8 +152,8 @@ export default function ConnectionsView({
             </div>
           </Card>
         )}
-        {['gmail', 'fireflies', 'granola'].map((provider) => {
-          const connection = state.connections[provider],
+        {['gmail', 'calendar', 'fireflies', 'granola'].map((provider) => {
+          const connection = state.connections[provider] || {},
             rows = state.coverage.filter((row) => row.provider === provider),
             count = countSources(state, provider),
             run = state.sync.find((item) => item.provider === provider),
@@ -242,6 +244,16 @@ export default function ConnectionsView({
                   </Button>
                 </div>
               </div>
+              {provider === 'calendar' && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Primary calendar · Past 30 and next 90 days.{' '}
+                  {state.worker?.mode === 'cloud'
+                    ? 'Checks for changes every five minutes.'
+                    : 'Refresh to check for changes.'}{' '}
+                  {!connection.configured &&
+                    'Connect once to enable calendar-aware reviews.'}
+                </p>
+              )}
               {['fireflies', 'granola'].includes(provider) &&
                 connection.configured && (
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

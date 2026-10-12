@@ -176,3 +176,46 @@ test('Commitments shows an empty queue only when both candidates and proposals a
   await tab.click();
   await expect(page.getByText('Nothing to decide yet')).toBeVisible();
 });
+
+test('ranked shortlist keeps overflow accessible and lets the user restore removed suggestions', async ({ page }, testInfo) => {
+  const url = new URL(process.env.DATABASE_URL!);
+  expect(['127.0.0.1', 'localhost']).toContain(url.hostname);
+  const pg = (await import('pg')).default;
+  const db = new pg.Client({ connectionString: url.href });
+  await db.connect();
+  const job = randomUUID();
+  const ids: string[] = Array.from({length: 12}, () => randomUUID());
+  const titles = ids.map((_, i) => `Fictional customer promise ${i} (${testInfo.project.name})`);
+  const errors: string[] = [];page.on('pageerror', error => errors.push(error.message));
+  try {
+    const version = (await db.query("SELECT id FROM source_versions WHERE source_id='fireflies:e2e-fireflies-1' LIMIT 1")).rows[0].id;
+    await db.query("INSERT INTO jobs(id,kind,status,prompt,created_at,updated_at) VALUES($1,'review','complete','Fictional shortlist test',$2,$2)",[job,new Date().toISOString()]);
+    for (const [i,id] of ids.entries()) {
+      const payload = {title:titles[i],kind:'action',confidence:'high',rationale:'The owner explicitly promised this customer output.',done_when:'Delivered',next_action:'Draft it',existing_item_id:'',uncertainty:'',qualification:{basis:'verbal_promise',area:'customer',deliverable_key:id,owner_basis:'The owner spoke.',commitment_quote:'I will own the migration checklist and report back on Friday.',due_date:'',deadline_kind:'none',deadline_source_id:'',deadline_quote:''},citations:[{source_id:'fireflies:e2e-fireflies-1',source_version_id:version,quote:'I will own the migration checklist and report back on Friday.'}]};
+      await db.query('INSERT INTO proposals(id,job_id,fingerprint,status,payload,created_at,priority_score) VALUES($1,$2,$1,$3,$4,$5,700)',[id,job,i<10?'pending':'deferred',JSON.stringify(payload),new Date(Date.now()-i*1000).toISOString()]);
+    }
+    await page.route('**/api/state',async route=>{
+      const response=await route.fetch(),state=await response.json();
+      for(const key of ['proposals','deferred_proposals'])state[key]=state[key].filter((p:{id:string})=>ids.includes(p.id));
+      state.proposal_history=state.proposal_history.filter((e:{proposal_id:string})=>ids.includes(e.proposal_id));state.items=[];
+      await route.fulfill({response,json:state});
+    });
+    await page.goto('/#board');await page.getByRole('tab',{name:/^To decide/}).click();
+    const queue=page.getByRole('region',{name:'Proposals awaiting your decision'});
+    await expect(queue.locator('.decision-card:visible')).toHaveCount(10);
+    await expect(queue.getByText('Your verbal promise · Customer').first()).toBeVisible();
+    await queue.getByText('For later · 2 suggestions').click();
+    await expect(queue.locator('.decision-card:visible')).toHaveCount(12);
+    await queue.getByText('For later · 2 suggestions').click();
+    await queue.locator('.decision-card').filter({hasText:titles[0]}).getByRole('button',{name:'Dismiss',exact:true}).click();
+    await expect(queue.locator('.decision-card:visible')).toHaveCount(10);
+    await page.getByText('Recently removed · 1').click();
+    await page.getByRole('button',{name:'Restore suggestion'}).click();
+    await expect(queue.locator('.decision-card:visible')).toHaveCount(10);
+    expect((await db.query('SELECT status FROM proposals WHERE id=$1',[ids[0]])).rows[0].status).toBe('pending');
+    await page.goto('/#connections');await page.getByRole('button',{name:'Connect calendar',exact:true}).click();
+    await expect(page.getByRole('dialog',{name:'Google Calendar settings'})).toContainText('read-only');
+    await page.screenshot({path:testInfo.outputPath('calendar-connection.png')});
+    expect(errors).toEqual([]);
+  } finally { await db.query('DELETE FROM proposals WHERE id=ANY($1)',[ids]);await db.end(); }
+});

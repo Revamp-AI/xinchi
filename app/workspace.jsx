@@ -228,6 +228,14 @@ export default function Workspace() {
       source_quote: proposal.payload.citations[0].quote,
       source_version_id: proposal.payload.citations[0].source_version_id,
       proposal_id: proposal.id,
+      proposal_version: proposal.version,
+      ...(proposal.payload.qualification?.due_date && !original
+        ? {
+            [proposal.payload.qualification.deadline_kind === 'hard'
+              ? 'hard_deadline'
+              : 'checkpoint']: proposal.payload.qualification.due_date,
+          }
+        : {}),
       status: original?.status || 'candidate',
       reason: proposal.payload.rationale,
     });
@@ -382,6 +390,9 @@ export default function Workspace() {
             navigate('priorities');
           }}
           dismiss={(id) => act(() => api('proposals/dismiss', { id }))}
+          restoreProposal={(id, version) =>
+            act(() => api('proposals/restore', { id, version }))
+          }
           showTrace={(id) => inspect('jobs/' + id, setTrace)}
         />
       )}
@@ -415,6 +426,9 @@ export default function Workspace() {
             navigate('priorities');
           }}
           dismiss={(id) => act(() => api('proposals/dismiss', { id }))}
+          restoreProposal={(id, version) =>
+            act(() => api('proposals/restore', { id, version }))
+          }
           saveFocus={() =>
             act(async () => {
               await api('settings', { focus, available_hours: hours });

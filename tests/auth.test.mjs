@@ -29,7 +29,7 @@ async function complete(flow,{scope=grant,claims={},profileEmail="owner@example.
 let session;
 test('all private reads and writes reject anonymous callers; setup is same-origin and one-time',async()=>{
  for(const p of ['state','sources','sources/manual:private','export','events/private','jobs/private','update-draft','contacts','contacts/private','contacts/status','contacts/merge-preview'])assert.equal((await route.GET(req(p))).status,401,p);
- for(const p of ['items','settings','jobs','jobs/cancel','proposals/dismiss','connections','sync','import','imports/start','imports/chunk','imports/finish','imports/cancel','auth/logout','contacts','contacts/affiliation','contacts/import','contacts/backfill','contacts/interaction','contacts/interaction-review','contacts/coverage','contacts/link','contacts/draft','contacts/merge','contacts/undo-merge','contacts/separate'])assert.equal((await route.POST(req(p,{method:'POST'}))).status,401,p);
+ for(const p of ['items','settings','jobs','jobs/cancel','proposals/dismiss','proposals/restore','connections','sync','import','imports/start','imports/chunk','imports/finish','imports/cancel','auth/logout','contacts','contacts/affiliation','contacts/import','contacts/backfill','contacts/interaction','contacts/interaction-review','contacts/coverage','contacts/link','contacts/draft','contacts/merge','contacts/undo-merge','contacts/separate'])assert.equal((await route.POST(req(p,{method:'POST'}))).status,401,p);
  assert.deepEqual(await (await route.GET(req('auth/status'))).json(),{configured:false,user:null});
  assert.equal((await route.POST(req('auth/setup',{method:'POST',originHeader:'https://untrusted.example',body:client}))).status,403);
  assert.equal((await route.POST(req('auth/setup',{method:'POST',body:{installed:client.web}}))).status,400);
@@ -42,7 +42,7 @@ test('Google login fails closed when no workspace owner is configured',async()=>
 });
 test('OAuth requests combine identity and Gmail with PKCE, nonce, and an HttpOnly browser binding',async()=>{
  const response=await route.POST(req('auth/google/start',{method:'POST'}));const u=new URL((await response.json()).url);
- assert.equal(u.searchParams.get('scope'),grant);assert.equal(u.searchParams.get('redirect_uri'),auth.CALLBACK);
+ assert.equal(u.searchParams.get('scope'),grant+' https://www.googleapis.com/auth/calendar.events.readonly');assert.equal(u.searchParams.get('redirect_uri'),auth.CALLBACK);
  assert.equal(u.searchParams.get('code_challenge_method'),'S256');assert.ok(u.searchParams.get('nonce'));assert.ok(u.searchParams.get('state'));
  assert.match(response.headers.get('set-cookie'),/HttpOnly; SameSite=Lax; Max-Age=600/);
  assert.equal(u.searchParams.get('access_type'),'offline');assert.equal(u.searchParams.get('login_hint'),'owner@example.com');
