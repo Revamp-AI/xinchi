@@ -2,7 +2,7 @@ import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -49,5 +49,29 @@ test('cancelling a review drains a pending import review into a new job',async()
  assert.ok(next);spawned.push(next.id);assert.equal((await m.getSetting('pending_import_review')),null);
  assert.equal((await m.one('SELECT status FROM jobs WHERE id=?',id)).status,'failed');
  assert.equal((await settle(next.id)).status,'failed');
+});
+test('a database failure while saving a review stores a fixed error without SQL or cited quotes',async()=>{
+ const quote='the pilot budget is confidential';
+ const source=await m.upsertSource({provider:'granola',external_id:'save-failure-fixture',title:'Fictional pilot review',body:'Notes: '+quote+'.',occurred_at:m.stamp()});
+ await m.run('DELETE FROM review_queue');
+ for(let i=0;i<100&&(await m.one("SELECT count(*) AS n FROM jobs WHERE status IN ('queued','running')")).n>0;i++)await sleep(100);
+ const result={brief:'b',findings:[{text:'t',citations:[{source_id:source.id,quote}]}],proposals:[],questions:[],coverage_note:'Fictional fixtures only.'};
+ const fakeCodex=join(temp,'fake-codex');
+ writeFileSync(fakeCodex,`#!${process.execPath}\nconst a=process.argv;process.getBuiltinModule('node:fs').writeFileSync(a[a.indexOf('--output-last-message')+1],${JSON.stringify(JSON.stringify(result))});\n`,{mode:0o755});
+ const id=(await agent.createJob('Review the fictional pilot'));spawned.push(id);
+ (await agent.addProgress(id,'Reading: Fictional pilot review'));
+ await m.run("CREATE FUNCTION fail_review_save() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'simulated database failure'; END$$");
+ await m.run("CREATE TRIGGER fail_review_save BEFORE UPDATE ON jobs FOR EACH ROW WHEN (NEW.status='complete') EXECUTE FUNCTION fail_review_save()");
+ const codexBin=process.env.XIN_CODEX_BIN;process.env.XIN_CODEX_BIN=fakeCodex;
+ try{
+  (await agent.launchJob(id));
+  const job=await settle(id);
+  assert.equal(job.status,'failed');
+  assert.equal(job.error,'The review could not be saved. Check the database connection and retry.');
+  assert.doesNotMatch(job.error,/update|params|confidential/i);
+ }finally{
+  process.env.XIN_CODEX_BIN=codexBin;
+  await m.run('DROP TRIGGER fail_review_save ON jobs');await m.run('DROP FUNCTION fail_review_save()');
+ }
 });
 test.after(()=>rmSync(temp,{recursive:true,force:true}));
