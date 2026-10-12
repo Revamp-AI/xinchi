@@ -2,7 +2,7 @@ import { and, eq, gte, lte, sql } from 'drizzle-orm';
 import { getSetting } from './db.mjs';
 import { db } from './postgres.ts';
 import { source_versions, sources } from './schema/index.ts';
-import { secrets } from './secret-store.mjs';
+import { secrets } from './secret-store.ts';
 
 type CalendarTime = { dateTime?: string; date?: string; timeZone?: string };
 type CalendarPerson = {

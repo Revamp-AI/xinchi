@@ -6,7 +6,7 @@ process.env.XIN_SECRET_STORAGE='postgres';process.env.XIN_SECRETS_KEY=randomByte
 import assert from 'node:assert/strict';
 process.env.XIN_AGENT_MODE='cloud';
 const {upsertSource,all,one,run,setSetting}=await import('../lib/db.mjs');
-const {secrets,saveSecrets}=await import('../lib/secret-store.mjs');
+const {secrets,saveSecrets}=await import('../lib/secret-store.ts');
 const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.mjs');
 const {callContextTool}=await import('../lib/context-tools.mjs');
 const day=new Date(Date.now()+86400000).toISOString().slice(0,10);

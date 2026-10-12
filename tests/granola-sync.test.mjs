@@ -7,7 +7,7 @@ process.env.XIN_ALLOWED_EMAIL='owner@example.com';process.env.XIN_AGENT_MODE='cl
 const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.mjs');
 const {granolaCompletedSettings}=await import('../lib/granola-sync.ts');
 const {startSync,syncProvider}=await import('../lib/connectors.mjs');
-const {saveSecrets}=await import('../lib/secret-store.mjs');
+const {saveSecrets}=await import('../lib/secret-store.ts');
 const {setSetting,getSetting,one,run,transaction,upsertSource}=await import('../lib/db.mjs');
 const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.mjs');
 const note=id=>({id,title:'Fictional shared meeting '+id,updated_at:'2025-01-01T00:00:00Z',created_at:'2025-01-01T00:00:00Z',summary_text:'Fictional summary'});
@@ -51,7 +51,7 @@ test('durable retry preserves the exact page and phase, and old completion canno
 });
 
 test('adding a workspace preserves the original key, is retry-safe, and exposes only connection labels',async()=>{
- const {configure,connectionState}=await import('../lib/connectors.mjs');const {secrets}=await import('../lib/secret-store.mjs');
+ const {configure,connectionState}=await import('../lib/connectors.mjs');const {secrets}=await import('../lib/secret-store.ts');
  const input={granola_workspace:{label:'Team workspace',key:'fictional-team-key'}};
  await configure(input);await configure(input);let stored=await secrets();assert.equal(stored.granola_key,'fictional-granola-key');assert.equal(stored.granola_workspaces.length,1);
  const id=stored.granola_workspaces[0].id;

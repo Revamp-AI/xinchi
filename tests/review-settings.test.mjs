@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
 process.env.XIN_SECRET_STORAGE='postgres';process.env.XIN_SECRETS_KEY=randomBytes(32).toString('base64url');
-const store=await import('../lib/secret-store.mjs');
+const store=await import('../lib/secret-store.ts');
 const settings=await import('../lib/review-settings.mjs');
 const {one,exportData,upsertSource}=await import('../lib/db.mjs');
 const {createJob}=await import('../lib/agent.mjs');

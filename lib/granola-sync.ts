@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getSetting, stamp } from './db.mjs';
 import { db } from './postgres.ts';
 import { source_versions, sources } from './schema/index.ts';
-import { secrets } from './secret-store.mjs';
+import { secrets } from './secret-store.ts';
 import {
   granolaConnections,
   granolaWorkspaceCursor,

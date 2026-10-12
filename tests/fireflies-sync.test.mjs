@@ -7,7 +7,7 @@ process.env.XIN_ALLOWED_EMAIL='owner@example.com';process.env.XIN_AGENT_MODE='cl
 const {firefliesWindow,firefliesCompletedSettings}=await import('../lib/fireflies-sync.ts');
 const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.mjs');
 const {startSync,syncProvider}=await import('../lib/connectors.mjs');
-const {saveSecrets}=await import('../lib/secret-store.mjs');
+const {saveSecrets}=await import('../lib/secret-store.ts');
 const {setSetting,getSetting,one,run,transaction,upsertSource}=await import('../lib/db.mjs');
 const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.mjs');
 const marker={participant:'owner@example.com',through:'2026-09-10T12:00:00Z'};

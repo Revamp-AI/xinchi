@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {randomBytes} from 'node:crypto';
 process.env.XIN_ALLOWED_EMAIL='owner@example.com';process.env.XIN_AGENT_MODE='cloud';process.env.XIN_SECRET_STORAGE='postgres';process.env.XIN_SECRETS_KEY=randomBytes(32).toString('base64url');
 const {scheduleProviderSyncs}=await import('../lib/scheduled-sync.mjs');
-const {saveSecrets}=await import('../lib/secret-store.mjs');
+const {saveSecrets}=await import('../lib/secret-store.ts');
 const {startSync}=await import('../lib/connectors.mjs');
 const {all,one,run,setSetting,getSetting}=await import('../lib/db.mjs');
 const {prepareDispatches,advanceDurableUnit}=await import('../lib/durable-ingestion.mjs');
