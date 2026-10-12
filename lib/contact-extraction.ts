@@ -1,5 +1,5 @@
 import addresses from 'email-addresses';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
 import {
   all,
   one,
@@ -20,7 +20,16 @@ import {
 } from './contacts.mjs';
 import { resolveExactEmailContact } from './contact-identity.mjs';
 import { db } from './postgres.ts';
-import { contact_identities, contacts } from './schema/index.ts';
+import {
+  contact_identities,
+  contact_queue,
+  contacts,
+  interaction_participants,
+  interaction_sources,
+  interactions,
+  source_versions,
+  sources,
+} from './schema/index.ts';
 
 // db.mjs and contacts.mjs are untyped JavaScript; TypeScript reads their
 // `= null` defaults as the type `null`.
@@ -426,15 +435,22 @@ export async function projectSource(
   const result = await transaction(async () => {
     await lockWorkspace();
     await guard();
-    const source = await one('SELECT * FROM sources WHERE id=?', sourceId);
+    const [source] = await db
+      .select()
+      .from(sources)
+      .where(eq(sources.id, sourceId));
     if (!source) return { contacts: [] };
-    const snapshot = await one(
-      'SELECT * FROM source_versions WHERE source_id=? AND content_hash=?',
-      sourceId,
-      source.content_hash,
-    );
+    const [snapshot] = await db
+      .select()
+      .from(source_versions)
+      .where(
+        and(
+          eq(source_versions.source_id, sourceId),
+          eq(source_versions.content_hash, source.content_hash),
+        ),
+      );
     if (!snapshot) throw Error('Matching source snapshot is unavailable.');
-    const raw = JSON.parse(snapshot.raw_json),
+    const raw: Snapshot = JSON.parse(snapshot.raw_json),
       owner = await getSetting<string>(
         'gmail_email',
         process.env.XIN_ALLOWED_EMAIL || '',
@@ -445,15 +461,18 @@ export async function projectSource(
       process.env.XIN_ALLOWED_EMAIL,
       ...aliases,
     ]);
-    const old = await one(
-        'SELECT * FROM interactions WHERE source_id=?',
-        sourceId,
-      ),
+    const [old] = await db
+        .select()
+        .from(interactions)
+        .where(eq(interactions.source_id, sourceId)),
       previous = old
-        ? await all(
-            'SELECT contact_id,role FROM interaction_participants WHERE interaction_id=?',
-            old.id,
-          )
+        ? await db
+            .select({
+              contact_id: interaction_participants.contact_id,
+              role: interaction_participants.role,
+            })
+            .from(interaction_participants)
+            .where(eq(interaction_participants.interaction_id, old.id))
         : [];
     const contacts: string[] = previous.map((p) => p.contact_id);
     if (event) {
@@ -466,12 +485,21 @@ export async function projectSource(
       let duplicate = old?.duplicate_of || null,
         status = old?.duplicate_status || '';
       if (!old && event.kind === 'meeting' && event.occurred_at) {
-        const match = await one(
-          "SELECT i.id FROM interactions i JOIN sources s ON s.id=i.source_id WHERE i.kind='meeting' AND s.provider<>? AND i.duplicate_of IS NULL AND lower(regexp_replace(i.title,'[^[:alnum:]]','','g'))=lower(regexp_replace(?,'[^[:alnum:]]','','g')) AND abs(extract(epoch FROM(i.occurred_at-?::timestamptz)))<=600 ORDER BY i.id LIMIT 1",
-          source.provider,
-          source.title,
-          event.occurred_at,
-        );
+        const [match] = await db
+          .select({ id: interactions.id })
+          .from(interactions)
+          .innerJoin(sources, eq(sources.id, interactions.source_id))
+          .where(
+            and(
+              eq(interactions.kind, 'meeting'),
+              ne(sources.provider, source.provider),
+              isNull(interactions.duplicate_of),
+              sql`lower(regexp_replace(${interactions.title},'[^[:alnum:]]','','g'))=lower(regexp_replace(${source.title},'[^[:alnum:]]','','g'))`,
+              sql`abs(extract(epoch FROM(${interactions.occurred_at}-${event.occurred_at}::timestamptz)))<=600`,
+            ),
+          )
+          .orderBy(interactions.id)
+          .limit(1);
         if (match) {
           duplicate = match.id;
           status = 'review';
@@ -493,24 +521,36 @@ export async function projectSource(
         for (const p of event.participants)
           if (p.role === 'uncertain') p.role = 'participant';
       }
-      await run(
-        'INSERT INTO interactions(id,source_id,kind,title,occurred_at,direction,qualified,exclusion,thread_key,duplicate_of,duplicate_status) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET title=excluded.title,occurred_at=excluded.occurred_at,direction=excluded.direction,qualified=excluded.qualified,exclusion=excluded.exclusion,thread_key=excluded.thread_key,version=interactions.version+1',
-        id,
-        sourceId,
-        event.kind,
-        source.title,
-        event.occurred_at,
-        event.direction,
-        event.qualified,
-        event.exclusion,
-        event.thread_key,
-        duplicate,
-        status,
-      );
-      await run(
-        'DELETE FROM interaction_participants WHERE interaction_id=?',
-        id,
-      );
+      await db
+        .insert(interactions)
+        .values({
+          id,
+          source_id: sourceId,
+          kind: event.kind,
+          title: source.title,
+          occurred_at: event.occurred_at,
+          direction: event.direction,
+          qualified: event.qualified,
+          exclusion: event.exclusion,
+          thread_key: event.thread_key,
+          duplicate_of: duplicate,
+          duplicate_status: status,
+        })
+        .onConflictDoUpdate({
+          target: interactions.source_id,
+          set: {
+            title: sql`excluded.title`,
+            occurred_at: sql`excluded.occurred_at`,
+            direction: sql`excluded.direction`,
+            qualified: sql`excluded.qualified`,
+            exclusion: sql`excluded.exclusion`,
+            thread_key: sql`excluded.thread_key`,
+            version: sql`${interactions.version} + 1`,
+          },
+        });
+      await db
+        .delete(interaction_participants)
+        .where(eq(interaction_participants.interaction_id, id));
       for (const person of event.participants) {
         const contact = await bindIdentity(
           source,
@@ -518,31 +558,43 @@ export async function projectSource(
           event.account || owner || 'workspace',
         );
         contacts.push(contact);
-        await run(
-          'INSERT INTO interaction_participants VALUES(?,?,?) ON CONFLICT DO NOTHING',
-          id,
-          contact,
-          person.role,
-        );
+        await db
+          .insert(interaction_participants)
+          .values({
+            interaction_id: id,
+            contact_id: contact,
+            role: person.role,
+          })
+          .onConflictDoNothing();
       }
-      await run(
-        'INSERT INTO interaction_sources VALUES(?,?,?,?) ON CONFLICT DO NOTHING',
-        id,
-        snapshot.id,
-        sourceId,
-        source.body.slice(0, 700),
-      );
+      await db
+        .insert(interaction_sources)
+        .values({
+          interaction_id: id,
+          source_version_id: snapshot.id,
+          source_id: sourceId,
+          quote: source.body.slice(0, 700),
+        })
+        .onConflictDoNothing();
     } else if (old) {
-      await run(
-        "UPDATE interactions SET qualified=false,exclusion='No current interaction evidence',version=version+1 WHERE id=?",
-        old.id,
-      );
+      await db
+        .update(interactions)
+        .set({
+          qualified: false,
+          exclusion: 'No current interaction evidence',
+          version: sql`${interactions.version} + 1`,
+        })
+        .where(eq(interactions.id, old.id));
     }
-    await run(
-      "UPDATE contact_queue SET state='complete',error='',updated_at=now() WHERE source_id=? AND content_hash=?",
-      sourceId,
-      source.content_hash,
-    );
+    await db
+      .update(contact_queue)
+      .set({ state: 'complete', error: '', updated_at: sql`now()` })
+      .where(
+        and(
+          eq(contact_queue.source_id, sourceId),
+          eq(contact_queue.content_hash, source.content_hash),
+        ),
+      );
     return { contacts: [...new Set(contacts)] };
   });
   if (result.contacts.length) await evaluateContacts(result.contacts);
