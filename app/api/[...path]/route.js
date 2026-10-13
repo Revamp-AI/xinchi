@@ -2,13 +2,13 @@ import {dismissProposal,restoreProposal} from '../../../lib/proposals.ts';
 import {databaseErrorCode} from '../../../lib/postgres.ts';
 import {prioritiesState,priorityDetail,savePriority,reorderPriorities,addPriorityUpdate,decidePrioritySuggestion,queuePriorityContext} from '../../../lib/priorities.ts';
 import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntelligence,dismissContactInsight,runContactIntelligence} from '../../../lib/contact-intelligence.ts';
-import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.ts';
+import {ownerSuggestions,listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.ts';
 import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.ts';
 import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,mergeReviewGroup,bulkKeepSeparate} from '../../../lib/contact-identity.ts';
-import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.ts';
+import {startContactProjection,recoverContactRuns,latestFailedDurableContactRun} from '../../../lib/contact-jobs.ts';
 import {autoMatchStatus,runAutoContactMatching,setAutoMatchEnabled} from '../../../lib/contact-auto-match.ts';
-import {dashboard,searchSources,readSource,readSourceVersion,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.ts';
-import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.ts';
+import {dashboard,searchSources,readSource,readSourceVersion,saveItem,setSetting,exportData,dateOK,itemEvents,updateDraftActivity} from '../../../lib/db.ts';
+import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob,jobDetail} from '../../../lib/agent.ts';
 import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.ts';
 import {importDocuments,importResearchArchive} from '../../../lib/imports.mjs';
 import {authMessages,gmailMessages} from '../../../lib/auth-messages.mjs';
@@ -44,9 +44,7 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
  }
  const user=(await requireSession(req));
  if(path==='owners'){
-  const query='%'+(u.searchParams.get('q')||'').trim().slice(0,200)+'%';
-  const rows=await all("SELECT name FROM (SELECT name FROM contacts WHERE merged_into IS NULL AND archived=false AND name<>'' AND (name ILIKE ? OR email ILIKE ?) UNION SELECT owner AS name FROM items WHERE owner<>'' AND owner ILIKE ? UNION SELECT owner AS name FROM priorities WHERE owner<>'' AND owner ILIKE ?) AS owners ORDER BY lower(name),name LIMIT 51",query,query,query,query);
-  return json({owners:rows.slice(0,50).map(row=>row.name),hasMore:rows.length>50});
+  return json(await ownerSuggestions(u.searchParams.get('q')||''));
  }
  if(path==='priorities')return json(await prioritiesState());
  if(path.startsWith('priorities/'))return json(await priorityDetail(path.slice(11)));
@@ -59,9 +57,9 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
  if(path==='state'){(await recoverJobs());(await recoverSyncRuns());return json({...(await dashboard()),connections:(await connectionState()),worker:await workerStatus(),priorities:await prioritiesState(),user});}
  if(path==='sources')return json((await searchSources(u.searchParams.get('q')||'',u.searchParams.get('provider')||'',u.searchParams.get('offset')||0)));
  if(path.startsWith('sources/'))return json(u.searchParams.get('version')?await readSourceVersion(u.searchParams.get('version')):await readSource(path.slice(8),0,2000000));
- if(path.startsWith('events/'))return json((await all('SELECT * FROM events WHERE item_id=? ORDER BY created_at DESC',path.slice(7))));
- if(path.startsWith('jobs/'))return json({job:(await one('SELECT * FROM jobs WHERE id=?',path.slice(5))),events:(await all('SELECT * FROM job_events WHERE job_id=? ORDER BY id',path.slice(5)))});
- if(path==='update-draft'){const requested=u.searchParams.get('since')||'';if(requested&&!dateOK(requested))throw Error('Choose a valid date.');const now=new Date(),today=localToday(now,process.env.XIN_TIME_ZONE),since=requested||localToday(new Date(now.getTime()-7*86400000),process.env.XIN_TIME_ZONE);const draft=buildUpdateDraft({items:(await all('SELECT * FROM items')),events:(await all('SELECT e.*,i.shared FROM events e JOIN items i ON i.id=e.item_id WHERE e.created_at>=? ORDER BY e.created_at',since)),since,today});return json({since,draft,text:renderUpdateDraft(draft)});}
+ if(path.startsWith('events/'))return json(await itemEvents(path.slice(7)));
+ if(path.startsWith('jobs/'))return json(await jobDetail(path.slice(5)));
+ if(path==='update-draft'){const requested=u.searchParams.get('since')||'';if(requested&&!dateOK(requested))throw Error('Choose a valid date.');const now=new Date(),today=localToday(now,process.env.XIN_TIME_ZONE),since=requested||localToday(new Date(now.getTime()-7*86400000),process.env.XIN_TIME_ZONE);const draft=buildUpdateDraft({...(await updateDraftActivity(since)),since,today});return json({since,draft,text:renderUpdateDraft(draft)});}
  if(path==='export')return new Response(JSON.stringify((await exportData()),null,2),{headers:{'Content-Type':'application/json','Content-Disposition':'attachment; filename="xin-system-export.json"','Cache-Control':'no-store'}});
 
  return json({error:'Not found'},404);
@@ -84,7 +82,7 @@ export async function POST(req){try{checkLocalRequest(req,true);const path=decod
  if(path==='contacts')return json(await saveContact(data));
  if(path==='contacts/affiliation')return json(await saveAffiliation(data));
  if(path==='contacts/import')return json(await importContactsCsv(data.csv));
- if(path==='contacts/backfill'){const failed=CLOUD_JOBS&&data.retry?await one("SELECT c.id FROM contact_runs c JOIN durable_runs d ON d.kind='contacts' AND d.run_id=c.id WHERE c.state='failed' ORDER BY c.started_at DESC LIMIT 1"):null;const result=failed?await resumeDurable('contacts',failed.id):await startContactProjection(data);scheduleWork();return json(result,202);}
+ if(path==='contacts/backfill'){const failed=CLOUD_JOBS&&data.retry?await latestFailedDurableContactRun():null;const result=failed?await resumeDurable('contacts',failed.id):await startContactProjection(data);scheduleWork();return json(result,202);}
  if(path==='contacts/interaction')return json(await logInteraction(data));
  if(path==='contacts/interaction-review')return json(await reviewInteraction(data));
  if(path==='contacts/coverage')return json(await confirmCoverage(data.id));

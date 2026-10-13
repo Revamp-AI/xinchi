@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
-import { and, eq, gte, inArray, or, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, or, sql, desc } from 'drizzle-orm';
 import {
   transaction,
   lockWorkspace,
@@ -11,7 +11,12 @@ import {
   getSetting,
 } from './db.ts';
 import { db } from './postgres.ts';
-import { contact_queue, contact_runs, sources } from './schema/index.ts';
+import {
+  contact_queue,
+  contact_runs,
+  sources,
+  durable_runs,
+} from './schema/index.ts';
 import { expireLeases } from './leases.ts';
 import { REMOTE_WORKERS } from './runtime.mjs';
 export async function startContactProjection({
@@ -94,7 +99,7 @@ export async function startContactProjection({
   if (REMOTE_WORKERS) return { id };
   const child = spawn(
     process.execPath,
-    [resolve(root, 'scripts/contact-worker.mjs'), id],
+    [resolve(root, 'scripts/contact-worker.ts'), id],
     {
       cwd: root,
       env: { ...process.env, XIN_APP_ROOT: root },
@@ -155,4 +160,22 @@ export async function scheduleContactHistory() {
     if (!pending) return null;
     return startContactProjection({ drain: true });
   });
+}
+
+// The newest failed contact extraction that a durable Workflow can resume.
+export async function latestFailedDurableContactRun() {
+  const [row] = await db
+    .select({ id: contact_runs.id })
+    .from(contact_runs)
+    .innerJoin(
+      durable_runs,
+      and(
+        eq(durable_runs.kind, 'contacts'),
+        eq(durable_runs.run_id, contact_runs.id),
+      ),
+    )
+    .where(eq(contact_runs.state, 'failed'))
+    .orderBy(desc(contact_runs.started_at))
+    .limit(1);
+  return row ?? null;
 }

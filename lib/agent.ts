@@ -451,7 +451,7 @@ export function launchJob(id: string) {
   if (REMOTE_WORKERS) return id;
   const child = spawn(
     process.execPath,
-    [resolve(root, 'scripts/worker.mjs'), id],
+    [resolve(root, 'scripts/worker.ts'), id],
     {
       cwd: root,
       detached: true,
@@ -550,4 +550,16 @@ export async function queueImportReview() {
   const id = await takePendingImportReview();
   if (id) await launchJob(id);
   return id;
+}
+
+export async function jobDetail(id: string) {
+  const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+  return {
+    job,
+    events: await db
+      .select()
+      .from(job_events)
+      .where(eq(job_events.job_id, id))
+      .orderBy(job_events.id),
+  };
 }

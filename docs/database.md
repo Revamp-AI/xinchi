@@ -24,6 +24,16 @@ Import `db` from `lib/postgres.ts`.
 - Use `sql` fragments for Postgres-specific expressions (jsonb operators, full-text search, `now() + interval`). Lock rows with `.for('update')`.
 - Selected columns come back as the app expects: `timestamptz` as ISO strings, `int8` as numbers (an unsafe integer throws), `date` as `YYYY-MM-DD` strings. `db.execute(sql\`...\`)` returns raw driver values instead; select through table columns when you need mapped values.
 
+## Remaining raw SQL
+
+Every module now queries through `db`. The raw helpers remain only here:
+
+- `lib/postgres.ts` defines `all`, `one`, `run` and `query`, which tests use for independent assertions.
+- `lib/auth.ts` keeps `authDb`, a compatibility wrapper that tests and `scripts/configure-google.mjs` use for raw fixtures.
+- `applyMerge` in `lib/contact-identity.ts` keeps one `UPDATE contacts` statement, because tests assert the driver's error message from a trigger on it, and Drizzle would wrap that message.
+- `scripts/migrate-sqlite.mjs`, the offline importer for old SQLite archives.
+- Two organization upserts (`lib/contacts.ts`, `lib/apple-contacts.ts`, `lib/linkedin-import.ts`) use `db.execute(sql\`...\`)`, because their conflict target is the `lower(name)` expression index and Drizzle's `onConflict` target accepts only columns.
+
 ## Errors
 
 Drizzle wraps driver errors in `DrizzleQueryError`, whose message contains the SQL and its parameters. Before choosing a message for a failure, call `databaseErrorCode(e)` from `lib/postgres.ts`: when it returns a code, show a fixed message, never `e.message`.
