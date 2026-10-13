@@ -9,21 +9,21 @@ import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jo
 import {autoMatchStatus,runAutoContactMatching,setAutoMatchEnabled} from '../../../lib/contact-auto-match.mjs';
 import {dashboard,searchSources,readSource,readSourceVersion,saveItem,all,one,run,setSetting,exportData,dateOK} from '../../../lib/db.mjs';
 import {createJob,launchJob,recoverJobs,queueImportReview,cancelJob} from '../../../lib/agent.mjs';
-import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.mjs';
+import {connectionState,configure,googleClient,configureGoogleClient,startSync,recoverSyncRuns} from '../../../lib/connectors.ts';
 import {importDocuments,importResearchArchive} from '../../../lib/imports.mjs';
 import {authMessages,gmailMessages} from '../../../lib/auth-messages.mjs';
 import {APP_ORIGIN,SESSION_COOKIE,FLOW_COOKIE,SESSION_SECONDS,checkLocalRequest,sessionFor,requireSession,readCookie,cookie,beginGoogle,finishGoogle,endSession,recordAuthEvent} from '../../../lib/auth.mjs';
 import {buildUpdateDraft,renderUpdateDraft} from '../../../lib/update-draft.mjs';
 import {localToday} from '../../../lib/urgency.mjs';
 import {HOSTED,POSTGRES_SECRETS,CLOUD_JOBS} from '../../../lib/runtime.mjs';
-import {workerStatus} from '../../../lib/workers.mjs';
+import {workerStatus} from '../../../lib/workers.ts';
 import {after} from 'next/server.js';
 import {drainCloudWork} from '../../../lib/cloud-jobs.mjs';
-import {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUpload} from '../../../lib/manual-ingestion.mjs';
+import {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUpload} from '../../../lib/manual-ingestion.ts';
 import {start,getRun} from 'workflow/api';
 import {ingestionWorkflow} from '../../../workflows/ingestion.js';
 import {resumeDurable} from '../../../lib/durable-ingestion.mjs';
-import {createBeeperPairing,revokeBeeper,requestBeeperSync} from '../../../lib/beeper.mjs';
+import {createBeeperPairing,revokeBeeper,requestBeeperSync} from '../../../lib/beeper.ts';
 import {reviewSettings,startChatGPTLogin,pollChatGPTLogin,cancelChatGPTLogin,disconnectChatGPT,testChatGPTConnection,saveReviewProvider} from '../../../lib/review-settings.mjs';
 export const maxDuration=800;
 function scheduleWork(){if(CLOUD_JOBS)after(async()=>{try{await drainCloudWork((...args)=>start(ingestionWorkflow,args),id=>getRun(id).status);}catch{console.error('Background work interrupted; pending dispatch will retry.');}});}

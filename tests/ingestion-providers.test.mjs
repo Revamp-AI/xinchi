@@ -9,8 +9,8 @@ const privateDir=mkdtempSync(join(tmpdir(),'focus-ingestion-providers-'));proces
 delete process.env.VERCEL;delete process.env.XIN_SECRET_STORAGE;
 process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 process.env.GOOGLE_CLIENT_ID='fixture-client.apps.googleusercontent.com';process.env.GOOGLE_CLIENT_SECRET='fixture-client-secret';
-const {initialProviderCursor:initialWithFreshness,advanceProvider}=await import('../lib/ingestion-providers.mjs');
-const {saveSecrets,secrets,updateSecrets}=await import('../lib/secret-store.mjs');
+const {initialProviderCursor:initialWithFreshness,advanceProvider}=await import('../lib/ingestion-providers.ts');
+const {saveSecrets,secrets,updateSecrets}=await import('../lib/secret-store.ts');
 const {getSetting,setSetting,transaction,upsertSource,one}=await import('../lib/db.mjs');
 // Core checkpoint tests start after the independently tested recent-mail pass.
 async function initialProviderCursor(provider){const cursor=await initialWithFreshness(provider);delete cursor.freshness;cursor.lastFreshAt=new Date().toISOString();return cursor;}
@@ -53,7 +53,7 @@ test('Gmail expired history falls back durably to a fresh full import',async t=>
 });
 
 test('Gmail adopts an existing backfill checkpoint and tombstones a deleted stored message',async t=>{
- const raw=message('deleted-message');await upsertSource((await import('../lib/connectors.mjs')).normalizeGmail(raw),raw);
+ const raw=message('deleted-message');await upsertSource((await import('../lib/connectors.ts')).normalizeGmail(raw),raw);
  await setSetting('gmail_page',{pageToken:'legacy-page',historyId:'legacy-anchor',query:'-in:spam -in:trash'});
  t.mock.method(global,'fetch',async url=>{const u=new URL(url);if(u.pathname.endsWith('/messages')){assert.equal(u.searchParams.get('pageToken'),'legacy-page');return Response.json({messages:[{id:'deleted-message'},{id:'never-stored'}]});}return Response.json({error:{}},{status:404});});
  let cursor=await initialProviderCursor('gmail');assert.equal(cursor.phase,'list');({cursor}=await saveAdvance('gmail',cursor));({cursor}=await saveAdvance('gmail',cursor));assert.equal((await one('SELECT coverage FROM sources WHERE id=?','gmail:deleted-message')).coverage,'deleted upstream');
@@ -87,7 +87,7 @@ test('both Fireflies import paths use the participant type required by its Graph
  const queries=[];
  t.mock.method(global,'fetch',async(_url,options)=>{queries.push(JSON.parse(options.body).query);return Response.json({data:{transcripts:[]}});});
  await advanceProvider('fireflies',await initialProviderCursor('fireflies'));
- const {syncProvider}=await import('../lib/connectors.mjs');await syncProvider('fireflies');
+ const {syncProvider}=await import('../lib/connectors.ts');await syncProvider('fireflies');
  assert.equal(queries.length,2);for(const query of queries)assert.match(query,/\$participants\s*:\s*\[String!\]/);
 });
 

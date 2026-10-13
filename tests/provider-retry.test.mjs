@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'focus-provider-retry-'));process.env.XIN_DATA_DIR=temp;
 const db=await import('../lib/db.mjs');
-const conn=await import('../lib/connectors.mjs');
+const conn=await import('../lib/connectors.ts');
 const {gmailFailureCode}=await import('../lib/auth-messages.mjs');
 const quota=()=>Response.json({error:{details:[{'@type':'type.googleapis.com/google.rpc.ErrorInfo',reason:'RATE_LIMIT_EXCEEDED'},{'@type':'type.googleapis.com/google.rpc.RetryInfo',retryDelay:'12s'}]}},{status:403,headers:{'Retry-After':'15'}});
 function noWait(t){const delays=[],original=globalThis.setTimeout;t.mock.method(globalThis,'setTimeout',(callback,ms,...args)=>{if(ms<15000)return original(callback,ms,...args);delays.push(ms);queueMicrotask(callback);return 0;});return delays;}

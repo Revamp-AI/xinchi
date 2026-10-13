@@ -8,7 +8,7 @@ import {join} from 'node:path';
 const privateDir=mkdtempSync(join(tmpdir(),'focus-cloud-resume-'));process.env.XIN_DATA_DIR=privateDir;
 const {one,run,uid,stamp,getSetting}=await import('../lib/db.mjs');
 import {withJobBudget} from '../lib/job-budget.mjs';
-const {saveSecrets,syncProvider}=await import('../lib/connectors.mjs');
+const {saveSecrets,syncProvider}=await import('../lib/connectors.ts');
 const {runSyncWorker}=await import('../scripts/sync-worker.mjs');
 const {runContactWorker}=await import('../scripts/contact-worker.mjs');
 import {localToday} from '../lib/urgency.mjs';
