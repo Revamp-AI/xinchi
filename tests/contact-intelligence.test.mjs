@@ -3,10 +3,10 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {MockLanguageModelV4} from 'ai/test';
-import {run,one,setSetting,upsertSource} from '../lib/db.mjs';
+import {run,one,setSetting,upsertSource} from '../lib/db.ts';
 import {saveContact,contactDetail,listContacts} from '../lib/contacts.ts';
 import {logInteraction} from '../lib/contact-extraction.ts';
-import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.mjs';
+import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.ts';
 import {runContactIntelligence,contactEvidence,validateContactInsights,generateContactInsights,configureContactIntelligence,dismissContactInsight} from '../lib/contact-intelligence.ts';
 async function reset(){await run('TRUNCATE contacts CASCADE');await setSetting('contact_intelligence',{});}
 const quote='Alex is our customer and we reviewed their paid renewal together.';

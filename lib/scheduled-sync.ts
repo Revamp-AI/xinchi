@@ -1,6 +1,6 @@
 import { calendarGranted } from './calendar.ts';
 import { and, desc, eq, getColumns, inArray, sql } from 'drizzle-orm';
-import { getSetting } from './db.mjs';
+import { getSetting } from './db.ts';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import { durable_runs, sync_runs } from './schema/index.ts';
 import { secrets } from './secret-store.ts';

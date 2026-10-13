@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {sql} from 'drizzle-orm';
 const privateDir=mkdtempSync(join(tmpdir(),'focus-durable-'));process.env.XIN_DATA_DIR=privateDir;process.env.XIN_AGENT_MODE='cloud';
-const {one,run,db,uid,stamp,upsertSource,getSetting,setSetting}=await import('../lib/db.mjs');
+const {one,run,db,uid,stamp,upsertSource,getSetting,setSetting}=await import('../lib/db.ts');
 const {prepareDispatches,acknowledgeDispatch,advanceDurableUnit,resumeDurable,failDurableRun}=await import('../lib/durable-ingestion.ts');
 const {expireLeases,claimLease,heartbeatLease}=await import('../lib/leases.ts');
 const {reconcileWorkflows}=await import('../lib/workflow-recovery.ts');

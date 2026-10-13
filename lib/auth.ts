@@ -7,7 +7,7 @@ import {
 } from 'jose';
 import { and, desc, eq, gt, lte, notInArray, sql } from 'drizzle-orm';
 import { db } from './postgres.ts';
-import { all, one, run, transaction, lockWorkspace } from './db.mjs';
+import { all, one, run, transaction, lockWorkspace } from './db.ts';
 import {
   auth_events,
   oauth_attempts,

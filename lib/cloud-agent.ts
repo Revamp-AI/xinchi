@@ -6,7 +6,7 @@ import { agentPolicy } from './agent-policy.mjs';
 import { contextTools, callContextTool } from './context-tools.ts';
 import type { ToolArgs } from './context-tools.ts';
 import { claimLease, heartbeatLease, requireLease } from './leases.ts';
-import { stamp } from './db.mjs';
+import { stamp } from './db.ts';
 import { db, transaction } from './postgres.ts';
 import { jobs } from './schema/index.ts';
 import { cloudReviewFailure } from './cloud-errors.mjs';

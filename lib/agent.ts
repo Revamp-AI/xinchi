@@ -27,7 +27,7 @@ import {
   upsertSource,
   getSetting,
   setSetting,
-} from './db.mjs';
+} from './db.ts';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   contacts,

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { one, run, uid, upsertSource } from '../../lib/db.mjs';
+import { one, run, uid, upsertSource } from '../../lib/db.ts';
 import { saveContact } from '../../lib/contacts.ts';
 
 async function match(a: any, b: any) {

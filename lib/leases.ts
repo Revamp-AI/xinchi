@@ -11,7 +11,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { db, transaction } from './postgres.ts';
-import { stamp, uid } from './db.mjs';
+import { stamp, uid } from './db.ts';
 import { REMOTE_WORKERS } from './runtime.mjs';
 import { contact_runs, durable_runs, jobs, sync_runs } from './schema/index.ts';
 

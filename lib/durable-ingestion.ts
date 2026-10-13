@@ -5,7 +5,7 @@ import {
   lockWorkspace,
   transaction as dbTransaction,
 } from './postgres.ts';
-import { stamp, uid, setSetting, upsertSource } from './db.mjs';
+import { stamp, uid, setSetting, upsertSource } from './db.ts';
 import {
   contact_queue,
   contact_runs,

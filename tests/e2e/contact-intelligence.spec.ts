@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { run, uid } from '../../lib/db.mjs';
+import { run, uid } from '../../lib/db.ts';
 import { saveContact } from '../../lib/contacts.ts';
 import { logInteraction } from '../../lib/contact-extraction.ts';
 import { contactEvidence } from '../../lib/contact-intelligence.ts';

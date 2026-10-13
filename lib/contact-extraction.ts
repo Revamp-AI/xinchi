@@ -6,14 +6,14 @@ import {
   hash,
   getSetting as readSetting,
   upsertSource,
-} from './db.mjs';
+} from './db.ts';
 import {
   emailAddress,
   suggestIdentityMatches,
   evaluateContacts as evaluate,
   existingContact,
 } from './contacts.ts';
-import { resolveExactEmailContact } from './contact-identity.mjs';
+import { resolveExactEmailContact } from './contact-identity.ts';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   contact_identities,

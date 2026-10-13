@@ -7,9 +7,9 @@ import {
   hash,
   uid,
   stamp,
-} from './db.mjs';
+} from './db.ts';
 import { db } from './postgres.ts';
-import { mergeVerifiedEmployerContacts } from './contact-identity.mjs';
+import { mergeVerifiedEmployerContacts } from './contact-identity.ts';
 import {
   companyKey,
   corporateDomain,

@@ -2,7 +2,7 @@ import {agentPolicy} from '../lib/agent-policy.mjs';
 import {spawn} from 'node:child_process';
 import {resolve} from 'node:path';
 import {writeFileSync,readFileSync,mkdirSync} from 'node:fs';
-import {one,run,stamp,dataDir,root} from '../lib/db.mjs';
+import {one,run,stamp,dataDir,root} from '../lib/db.ts';
 import {schema,saveResult,addProgress,takePendingImportReview,launchJob} from '../lib/agent.ts';
 import {claimLease,heartbeatLease} from '../lib/leases.ts';
 import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';

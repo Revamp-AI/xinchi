@@ -8,7 +8,7 @@ const {firefliesWindow,firefliesCompletedSettings}=await import('../lib/fireflie
 const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.ts');
 const {startSync,syncProvider}=await import('../lib/connectors.ts');
 const {saveSecrets}=await import('../lib/secret-store.ts');
-const {setSetting,getSetting,one,run,transaction,upsertSource}=await import('../lib/db.mjs');
+const {setSetting,getSetting,one,run,transaction,upsertSource}=await import('../lib/db.ts');
 const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.ts');
 const marker={participant:'owner@example.com',through:'2026-09-10T12:00:00Z'};
 const row=id=>({id,title:'Fictional transcript '+id,dateString:'2026-09-09T12:00:00Z',sentences:[{text:'A fictional planning discussion.',speaker_name:'Jo',start_time:0}]});

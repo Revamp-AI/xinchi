@@ -9,7 +9,7 @@ import {
   isNull,
   sql,
 } from 'drizzle-orm';
-import { uid, stamp, hash } from './db.mjs';
+import { uid, stamp, hash } from './db.ts';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   beeper_devices,

@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const privateDir=mkdtempSync(join(tmpdir(),'focus-concurrent-'));
 process.env.XIN_DATA_DIR=privateDir;process.env.XIN_AGENT_MODE='cloud';
-const {all,one,run,stamp,uid}=await import('../lib/db.mjs');
+const {all,one,run,stamp,uid}=await import('../lib/db.ts');
 const {startSync,saveSecrets}=await import('../lib/connectors.ts');
 const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.ts');
 const {createManualUpload}=await import('../lib/manual-ingestion.ts');

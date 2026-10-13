@@ -1,5 +1,5 @@
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
-import { getSetting } from './db.mjs';
+import { getSetting } from './db.ts';
 import { db } from './postgres.ts';
 import { source_versions, sources } from './schema/index.ts';
 import { secrets } from './secret-store.ts';

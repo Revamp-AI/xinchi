@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { one, run, stamp, upsertSource } from '../../lib/db.mjs';
+import { one, run, stamp, upsertSource } from '../../lib/db.ts';
 import {
   savePriority,
   priorityDetail,

@@ -2,7 +2,7 @@ import type { z } from 'zod';
 import { and, desc, eq, exists, inArray, ne, or, sql } from 'drizzle-orm';
 import { calendarGranted } from './calendar.ts';
 import { secrets } from './secret-store.ts';
-import { uid, hash, stamp, dateOK, getSetting } from './db.mjs';
+import { uid, hash, stamp, dateOK, getSetting } from './db.ts';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   jobs,

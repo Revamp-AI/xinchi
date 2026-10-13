@@ -36,7 +36,7 @@ import {
   readSource,
   readSourceVersion,
   dateOK,
-} from './db.mjs';
+} from './db.ts';
 import {
   listContacts,
   contactDetail,
@@ -55,7 +55,7 @@ import {
   mergeContacts,
   undoMerge,
   keepSeparate,
-} from './contact-identity.mjs';
+} from './contact-identity.ts';
 import { startContactProjection } from './contact-jobs.ts';
 import { createJob, cancelJob, AgentResult, saveResult } from './agent.ts';
 import { connectionState, configure, startSync } from './connectors.ts';

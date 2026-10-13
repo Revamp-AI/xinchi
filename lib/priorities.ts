@@ -13,7 +13,7 @@ import {
   sql,
 } from 'drizzle-orm';
 import { db, transaction, lockWorkspace } from './postgres.ts';
-import { uid, hash, stamp, upsertSource } from './db.mjs';
+import { uid, hash, stamp, upsertSource } from './db.ts';
 import {
   items,
   priorities,

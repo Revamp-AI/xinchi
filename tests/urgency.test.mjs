@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'xin-urgency-test-'));process.env.XIN_DATA_DIR=temp;
 const u=await import('../lib/urgency.mjs');
-const m=await import('../lib/db.mjs');
+const m=await import('../lib/db.ts');
 const today='2026-09-14';
 const item=(status,checkpoint='',hard_deadline='',extra={})=>({id:status+checkpoint+hard_deadline,title:'Fixture',status,checkpoint,hard_deadline,...extra});
 test('a hard deadline outranks every checkpoint rule and reports signed days',async()=>{

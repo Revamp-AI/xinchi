@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {MockLanguageModelV4} from 'ai/test';
 import {runCloudAgent} from '../lib/cloud-agent.ts';
 import {createJob} from '../lib/agent.ts';
-import {upsertSource,one,all} from '../lib/db.mjs';
+import {upsertSource,one,all} from '../lib/db.ts';
 const usage={inputTokens:{total:10,noCache:10,cacheRead:0,cacheWrite:0},outputTokens:{total:20,text:20,reasoning:0}};
 const answer={brief:'Review complete.',findings:[{text:'A clear next step.',citations:[{source_id:'manual:cloud-fixture',source_version_id:'',quote:'The next step is to review the fictional proposal.'}]}],proposals:[],drafts:[],questions:[],coverage_note:'One fictional source was reviewed.'};
 function model({invalid=false,noTools=false}={}){let step=0;return new MockLanguageModelV4({doGenerate:async()=>{

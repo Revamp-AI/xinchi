@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { uid, stamp } from './db.mjs';
+import { uid, stamp } from './db.ts';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import {
   import_chunks,

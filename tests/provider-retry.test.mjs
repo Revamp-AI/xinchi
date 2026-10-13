@@ -6,7 +6,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'focus-provider-retry-'));process.env.XIN_DATA_DIR=temp;
-const db=await import('../lib/db.mjs');
+const db=await import('../lib/db.ts');
 const conn=await import('../lib/connectors.ts');
 const {gmailFailureCode}=await import('../lib/auth-messages.mjs');
 const quota=()=>Response.json({error:{details:[{'@type':'type.googleapis.com/google.rpc.ErrorInfo',reason:'RATE_LIMIT_EXCEEDED'},{'@type':'type.googleapis.com/google.rpc.RetryInfo',retryDelay:'12s'}]}},{status:403,headers:{'Retry-After':'15'}});

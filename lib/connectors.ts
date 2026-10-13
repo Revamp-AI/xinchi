@@ -12,7 +12,7 @@ import {
   getSetting as readSetting,
   setSetting,
   upsertSource,
-} from './db.mjs';
+} from './db.ts';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import { sources, sync_runs } from './schema/index.ts';
 import { gmailFailureCode, gmailMessages } from './auth-messages.mjs';

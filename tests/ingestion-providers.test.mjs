@@ -11,7 +11,7 @@ process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 process.env.GOOGLE_CLIENT_ID='fixture-client.apps.googleusercontent.com';process.env.GOOGLE_CLIENT_SECRET='fixture-client-secret';
 const {initialProviderCursor:initialWithFreshness,advanceProvider}=await import('../lib/ingestion-providers.ts');
 const {saveSecrets,secrets,updateSecrets}=await import('../lib/secret-store.ts');
-const {getSetting,setSetting,transaction,upsertSource,one}=await import('../lib/db.mjs');
+const {getSetting,setSetting,transaction,upsertSource,one}=await import('../lib/db.ts');
 // Core checkpoint tests start after the independently tested recent-mail pass.
 async function initialProviderCursor(provider){const cursor=await initialWithFreshness(provider);delete cursor.freshness;cursor.lastFreshAt=new Date().toISOString();return cursor;}
 const fixtureTokens={access_token:'fixture-access-secret',refresh_token:'fixture-refresh-secret',expires_at:Date.now()+3600000};

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
-import { dataDir } from './db.mjs';
+import { dataDir } from './db.ts';
 import { db, transaction } from './postgres.ts';
 import { provider_secrets } from './schema/index.ts';
 import { POSTGRES_SECRETS } from './runtime.mjs';

@@ -1,5 +1,5 @@
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { getSetting, stamp } from './db.mjs';
+import { getSetting, stamp } from './db.ts';
 import { db } from './postgres.ts';
 import { durable_runs, sync_runs } from './schema/index.ts';
 

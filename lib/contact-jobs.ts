@@ -9,7 +9,7 @@ import {
   root,
   setSetting,
   getSetting,
-} from './db.mjs';
+} from './db.ts';
 import { db } from './postgres.ts';
 import { contact_queue, contact_runs, sources } from './schema/index.ts';
 import { expireLeases } from './leases.ts';
