@@ -9,7 +9,7 @@ const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-pro
 const {startSync,syncProvider}=await import('../lib/connectors.ts');
 const {saveSecrets}=await import('../lib/secret-store.ts');
 const {setSetting,getSetting,one,run,transaction,upsertSource}=await import('../lib/db.mjs');
-const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.mjs');
+const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.ts');
 const marker={participant:'owner@example.com',through:'2026-09-10T12:00:00Z'};
 const row=id=>({id,title:'Fictional transcript '+id,dateString:'2026-09-09T12:00:00Z',sentences:[{text:'A fictional planning discussion.',speaker_name:'Jo',start_time:0}]});
 test.beforeEach(async()=>{delete process.env.XIN_FIREFLIES_PARTICIPANT_EMAIL;await run('TRUNCATE durable_runs,sync_runs,contact_runs CASCADE');for(const key of ['fireflies_page','fireflies_sync'])await setSetting(key,null);await saveSecrets({fireflies_key:'fictional-fireflies-key'});});

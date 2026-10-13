@@ -8,7 +8,7 @@ import {join} from 'node:path';
 const privateDir=mkdtempSync(join(tmpdir(),'focus-workflow-recovery-'));process.env.XIN_DATA_DIR=privateDir;process.env.XIN_AGENT_MODE='cloud';
 const {one,run,uid,stamp}=await import('../lib/db.mjs');
 const {reconcileWorkflows}=await import('../lib/workflow-recovery.ts');
-const {resumeDurable}=await import('../lib/durable-ingestion.mjs');
+const {resumeDurable}=await import('../lib/durable-ingestion.ts');
 test.beforeEach(async()=>{await run('DELETE FROM durable_runs');await run("UPDATE sync_runs SET state='complete' WHERE state IN ('queued','running','uploading')");await run("UPDATE contact_runs SET state='complete' WHERE state IN ('queued','running')");});
 async function fixture({kind='sync',state='running',completed=false,workflowId,old=false}={}){
  const id=uid(),wf=workflowId??'workflow-'+id,time=old?'2020-01-01T00:00:00Z':stamp();

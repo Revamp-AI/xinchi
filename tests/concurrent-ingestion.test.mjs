@@ -9,7 +9,7 @@ const privateDir=mkdtempSync(join(tmpdir(),'focus-concurrent-'));
 process.env.XIN_DATA_DIR=privateDir;process.env.XIN_AGENT_MODE='cloud';
 const {all,one,run,stamp,uid}=await import('../lib/db.mjs');
 const {startSync,saveSecrets}=await import('../lib/connectors.ts');
-const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.mjs');
+const {prepareDispatches,advanceDurableUnit,resumeDurable}=await import('../lib/durable-ingestion.ts');
 const {createManualUpload}=await import('../lib/manual-ingestion.ts');
 await saveSecrets({gmail_tokens:{refresh_token:'fictional'},fireflies_key:'fictional',granola_key:'fictional'});
 test.beforeEach(async()=>{await run('DELETE FROM import_records');await run('DELETE FROM import_uploads');await run('DELETE FROM durable_runs');await run('DELETE FROM sync_runs');});

@@ -22,7 +22,7 @@ import {drainCloudWork} from '../../../lib/cloud-jobs.mjs';
 import {createManualUpload,appendManualChunk,finishManualUpload,cancelManualUpload} from '../../../lib/manual-ingestion.ts';
 import {start,getRun} from 'workflow/api';
 import {ingestionWorkflow} from '../../../workflows/ingestion.js';
-import {resumeDurable} from '../../../lib/durable-ingestion.mjs';
+import {resumeDurable} from '../../../lib/durable-ingestion.ts';
 import {createBeeperPairing,revokeBeeper,requestBeeperSync} from '../../../lib/beeper.ts';
 import {reviewSettings,startChatGPTLogin,pollChatGPTLogin,cancelChatGPTLogin,disconnectChatGPT,testChatGPTConnection,saveReviewProvider} from '../../../lib/review-settings.mjs';
 export const maxDuration=800;

@@ -2,17 +2,17 @@ import {sleep,getWorkflowMetadata} from 'workflow';
 
 async function advance(kind,id,token,workflowId,revision){
  'use step';
- try{const {advanceDurableUnit}=await import('../lib/durable-ingestion.mjs');return await advanceDurableUnit(kind,id,token,workflowId,revision);}
+ try{const {advanceDurableUnit}=await import('../lib/durable-ingestion.ts');return await advanceDurableUnit(kind,id,token,workflowId,revision);}
  catch{throw Error('Ingestion step temporarily unavailable.');}
 }
 advance.maxRetries=5;
 async function failed(kind,id,workflowId){
  'use step';
- const {failDurableRun}=await import('../lib/durable-ingestion.mjs');await failDurableRun(kind,id,workflowId);
+ const {failDurableRun}=await import('../lib/durable-ingestion.ts');await failDurableRun(kind,id,workflowId);
 }
 async function continueLater(kind,id,token,workflowId){
  'use step';
- const {yieldDurableRun}=await import('../lib/durable-ingestion.mjs');return yieldDurableRun(kind,id,token,workflowId);
+ const {yieldDurableRun}=await import('../lib/durable-ingestion.ts');return yieldDurableRun(kind,id,token,workflowId);
 }
 export async function ingestionWorkflow(kind,id,token){
  'use workflow';

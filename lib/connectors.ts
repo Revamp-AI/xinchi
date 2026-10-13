@@ -1,6 +1,6 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { CALENDAR_SCOPE, calendarGranted } from './calendar.ts';
-import { expireLeases } from './leases.mjs';
+import { expireLeases } from './leases.ts';
 import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import {

@@ -3,7 +3,7 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {run,one,uid,stamp,transaction} from '../lib/db.mjs';
-import {claimLease,heartbeatLease,expireLeases,requireLease,cancelLease} from '../lib/leases.mjs';
+import {claimLease,heartbeatLease,expireLeases,requireLease,cancelLease} from '../lib/leases.ts';
 import {runSyncWorker} from '../scripts/sync-worker.mjs';
 const insert=async()=>{const id=uid();await run("INSERT INTO sync_runs(id,provider,started_at,updated_at,state) VALUES(?,'fireflies',?,?,'queued')",id,stamp(),stamp());return id;};
 test('only one worker claims a run; an expired lease cannot write or heartbeat',async()=>{
