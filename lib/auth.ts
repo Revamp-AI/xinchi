@@ -31,7 +31,12 @@ export const SESSION_COOKIE = HOSTED ? '__Host-xin_session' : 'xin_session';
 export const FLOW_COOKIE = HOSTED
   ? '__Host-xin_google_flow'
   : 'xin_google_flow';
-export const SESSION_SECONDS = 12 * 60 * 60;
+// A session stays valid while it is used: each use moves its expiry to
+// SESSION_IDLE_SECONDS from now (at most once an hour), but never past
+// SESSION_SECONDS after sign-in, which is also the cookie's lifetime.
+export const SESSION_SECONDS = 90 * 24 * 60 * 60;
+const SESSION_IDLE_SECONDS = 30 * 24 * 60 * 60;
+const SESSION_RENEW_MS = 60 * 60 * 1000;
 const flowSeconds = 10 * 60;
 // What a sign-in failure may carry: a fixed auth code, a provider reason or
 // code from connectors.mjs, a jose error code, or an HTTP status.
@@ -97,22 +102,39 @@ export function checkLocalRequest(req: Request, write = false) {
 }
 export async function sessionFor(token: string | null | undefined) {
   if (!/^[A-Za-z0-9_-]{43}$/.test(token || '')) return null;
+  const now = Date.now(),
+    hash = digest(token!);
   const [row] = await db
     .select({
       sub: owner.sub,
       email: owner.email,
       name: owner.name,
       expires_at: sessions.expires_at,
+      created_at: sessions.created_at,
     })
     .from(sessions)
     .innerJoin(owner, eq(owner.sub, sessions.sub))
     .where(
       and(
-        eq(sessions.token_hash, digest(token!)),
-        gt(sessions.expires_at, Date.now()),
+        eq(sessions.token_hash, hash),
+        gt(sessions.expires_at, now),
+        gt(sessions.created_at, now - SESSION_SECONDS * 1000),
       ),
     );
-  return row && row.email === allowedEmail() ? row : null;
+  if (!row || row.email !== allowedEmail()) return null;
+  const { created_at, ...user } = row;
+  const renewed = Math.min(
+    now + SESSION_IDLE_SECONDS * 1000,
+    created_at + SESSION_SECONDS * 1000,
+  );
+  if (renewed - user.expires_at > SESSION_RENEW_MS) {
+    await db
+      .update(sessions)
+      .set({ expires_at: renewed })
+      .where(eq(sessions.token_hash, hash));
+    user.expires_at = renewed;
+  }
+  return user;
 }
 export async function requireSession(req: Request) {
   const user = await sessionFor(readCookie(req, SESSION_COOKIE));
@@ -366,7 +388,7 @@ export async function finishGoogle(
         token_hash: digest(token),
         sub: identity.sub,
         created_at: Date.now(),
-        expires_at: Date.now() + SESSION_SECONDS * 1000,
+        expires_at: Date.now() + SESSION_IDLE_SECONDS * 1000,
       });
     });
     await recordAuthEvent(stage, 'complete');
