@@ -6,7 +6,7 @@ import {one,run,stamp,dataDir,root} from '../lib/db.ts';
 import {schema,saveResult,addProgress,takePendingImportReview,launchJob} from '../lib/agent.ts';
 import {claimLease,heartbeatLease} from '../lib/leases.ts';
 import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';
-const id=process.argv[2],claim=await claimLease('jobs',id||'');
+const id=process.argv[2]||'',claim=await claimLease('jobs',id);
 if(!claim)process.exit(0);
 const {row:job,token}=claim;
 const dir=resolve(dataDir,'runs',id);mkdirSync(dir,{recursive:true,mode:0o700});
@@ -26,11 +26,11 @@ const stop=()=>{child.kill('SIGTERM');setTimeout(()=>child.kill('SIGKILL'),3000)
 const heartbeat=setInterval(async()=>{if(checking)return;checking=true;try{if(!await heartbeatLease('jobs',id,token)){lostLease=true;stop();}}catch{lostLease=true;stop();}finally{checking=false;}},10000);
 const onSignal=()=>{lostLease=true;stop();};process.on('SIGTERM',onSignal);
 try{
- const code=await new Promise((resolve,reject)=>{child.once('error',e=>reject(Error(e.code==='ENOENT'?'Codex is not installed. Install and sign into Codex on this Mac.':'Could not start the agent.')));child.once('close',resolve);});
+ const code=await new Promise((resolve,reject)=>{child.once('error',e=>reject(Error((e as NodeJS.ErrnoException).code==='ENOENT'?'Codex is not installed. Install and sign into Codex on this Mac.':'Could not start the agent.')));child.once('close',resolve);});
  if(lostLease)throw Error('This review was cancelled or interrupted.');
  if(code!==0)throw Error(timedOut?'The review timed out. Try a narrower question.':'The agent could not finish. Check Codex sign-in and retry.');
  if(!await one("SELECT id FROM job_events WHERE job_id=? AND (label LIKE 'Reading:%' OR label LIKE 'Checking your commitments%')",id))throw Error('The agent could not read the stored context. Check the work log and retry.');
  await saveResult(id,JSON.parse(readFileSync(output,'utf8')),token);
  await addProgress(id,'Review ready — proposals await your decision');
-}catch(e){await run("UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND lease_until>now()",databaseErrorCode(e)?'The review could not be saved. Check the database connection and retry.':e.message.slice(0,2000),stamp(),id,token);}
+}catch(caught){const e=caught as Error;await run("UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND lease_until>now()",databaseErrorCode(e)?'The review could not be saved. Check the database connection and retry.':e.message.slice(0,2000),stamp(),id,token);}
 finally{clearTimeout(timeout);clearInterval(heartbeat);process.off('SIGTERM',onSignal);const pending=await takePendingImportReview();if(pending)await launchJob(pending);await closeDatabase();}

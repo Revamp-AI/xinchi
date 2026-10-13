@@ -99,7 +99,7 @@ export async function startContactProjection({
   if (REMOTE_WORKERS) return { id };
   const child = spawn(
     process.execPath,
-    [resolve(root, 'scripts/contact-worker.mjs'), id],
+    [resolve(root, 'scripts/contact-worker.ts'), id],
     {
       cwd: root,
       env: { ...process.env, XIN_APP_ROOT: root },

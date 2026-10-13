@@ -11,9 +11,9 @@ export async function workerStatus() {
   };
 }
 export const queues = {
-  jobs: { state: 'status', script: 'worker.mjs' },
-  sync_runs: { state: 'state', script: 'sync-worker.mjs' },
-  contact_runs: { state: 'state', script: 'contact-worker.mjs' },
+  jobs: { state: 'status', script: 'worker.ts' },
+  sync_runs: { state: 'state', script: 'sync-worker.ts' },
+  contact_runs: { state: 'state', script: 'contact-worker.ts' },
 };
 // Each queue's table and the column queues[table].state names.
 const queueTables = {

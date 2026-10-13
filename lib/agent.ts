@@ -451,7 +451,7 @@ export function launchJob(id: string) {
   if (REMOTE_WORKERS) return id;
   const child = spawn(
     process.execPath,
-    [resolve(root, 'scripts/worker.mjs'), id],
+    [resolve(root, 'scripts/worker.ts'), id],
     {
       cwd: root,
       detached: true,

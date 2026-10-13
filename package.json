@@ -12,7 +12,7 @@
     "format": "prettier --write \"app/**/*.jsx\" \"components/focus/**/*.{jsx,css}\" \"hooks/**/*.ts\" \"lib/**/*.ts\" drizzle.config.ts",
     "format:check": "prettier --check \"app/**/*.jsx\" \"components/focus/**/*.{jsx,css}\" \"hooks/**/*.ts\" \"lib/**/*.ts\" drizzle.config.ts",
     "test:e2e": "node scripts/test-postgres.mjs --e2e",
-    "agent-worker": "node scripts/worker.mjs",
+    "agent-worker": "node scripts/worker.ts",
     "import": "node --env-file-if-exists=.env.local scripts/import.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs",

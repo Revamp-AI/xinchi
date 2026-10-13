@@ -559,7 +559,7 @@ export async function startSync(
   if (REMOTE_WORKERS) return { id };
   const child = spawn(
     process.execPath,
-    [resolve(root, 'scripts/sync-worker.mjs'), id],
+    [resolve(root, 'scripts/sync-worker.ts'), id],
     {
       cwd: root,
       detached: true,
