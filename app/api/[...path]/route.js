@@ -1,6 +1,6 @@
 import {dismissProposal,restoreProposal} from '../../../lib/proposals.mjs';
 import {databaseErrorCode} from '../../../lib/postgres.ts';
-import {prioritiesState,priorityDetail,savePriority,reorderPriorities,addPriorityUpdate,decidePrioritySuggestion,queuePriorityContext} from '../../../lib/priorities.mjs';
+import {prioritiesState,priorityDetail,savePriority,reorderPriorities,addPriorityUpdate,decidePrioritySuggestion,queuePriorityContext} from '../../../lib/priorities.ts';
 import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntelligence,dismissContactInsight,runContactIntelligence} from '../../../lib/contact-intelligence.mjs';
 import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.mjs';
 import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.mjs';

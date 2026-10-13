@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {MockLanguageModelV4} from 'ai/test';
 process.env.XIN_AGENT_MODE='cloud';
 const {all,one,run,upsertSource,stamp}=await import('../lib/db.mjs');
-const {prioritiesState,savePriority,priorityDetail,reorderPriorities,addPriorityUpdate,queuePriorityContext,decidePrioritySuggestion,readPriorities}=await import('../lib/priorities.mjs');
+const {prioritiesState,savePriority,priorityDetail,reorderPriorities,addPriorityUpdate,queuePriorityContext,decidePrioritySuggestion,readPriorities}=await import('../lib/priorities.ts');
 const {takePendingImportReview,saveResult,validateResult}=await import('../lib/agent.mjs');
 const {readReviewBatch}=await import('../lib/review-batches.mjs');
 const {runCloudAgent}=await import('../lib/cloud-agent.mjs');
