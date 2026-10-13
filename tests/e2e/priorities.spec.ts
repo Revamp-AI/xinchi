@@ -112,8 +112,8 @@ test('priorities keep manual order, enrich from meetings, and connect the overvi
   await expect
     .poll(async () =>
       (await prioritiesState()).items
-        .filter((p) => p.stack_id === 'deal-flow')
-        .map((p) => p.id),
+        .filter((p: { stack_id: string }) => p.stack_id === 'deal-flow')
+        .map((p: { id: string }) => p.id),
     )
     .toEqual([atlas.id, birch.id]);
   await page.reload();

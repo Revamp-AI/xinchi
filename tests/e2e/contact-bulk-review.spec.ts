@@ -185,20 +185,20 @@ test('recording bulk actions report partial failures and keep later rows untouch
   const toolbar = page.getByRole('group', { name: 'Bulk recording review' });
   await page
     .getByRole('checkbox', {
-      name: 'Select recording: ' + records[0].title,
+      name: 'Select recording: ' + records[0]!.title,
       exact: true,
     })
     .check();
   await page
     .getByRole('checkbox', {
-      name: 'Select recording: ' + records[1].title,
+      name: 'Select recording: ' + records[1]!.title,
       exact: true,
     })
     .check();
   // A concurrent edit makes one selected row stale. The other can still finish.
   await run(
     'UPDATE interactions SET version=version+1 WHERE id=?',
-    records[1].id,
+    records[1]!.id,
   );
   await toolbar
     .getByRole('button', { name: 'Mark selected as same meeting' })
@@ -215,7 +215,7 @@ test('recording bulk actions report partial failures and keep later rows untouch
     (
       await one(
         'SELECT duplicate_status FROM interactions WHERE id=?',
-        records[0].id,
+        records[0]!.id,
       )
     ).duplicate_status,
   ).toBe('confirmed');
@@ -223,7 +223,7 @@ test('recording bulk actions report partial failures and keep later rows untouch
     (
       await one(
         'SELECT duplicate_status FROM interactions WHERE id=?',
-        records[1].id,
+        records[1]!.id,
       )
     ).duplicate_status,
   ).toBe('review');
@@ -231,7 +231,7 @@ test('recording bulk actions report partial failures and keep later rows untouch
     (
       await one(
         'SELECT duplicate_status FROM interactions WHERE id=?',
-        records[2].id,
+        records[2]!.id,
       )
     ).duplicate_status,
   ).toBe('review');
@@ -240,7 +240,7 @@ test('recording bulk actions report partial failures and keep later rows untouch
     .click();
   await expect(
     page.getByRole('checkbox', {
-      name: 'Select recording: ' + records[1].title,
+      name: 'Select recording: ' + records[1]!.title,
       exact: true,
     }),
   ).toHaveCount(0);
@@ -248,7 +248,7 @@ test('recording bulk actions report partial failures and keep later rows untouch
     (
       await one(
         'SELECT duplicate_status FROM interactions WHERE id=?',
-        records[1].id,
+        records[1]!.id,
       )
     ).duplicate_status,
   ).toBe('separate');

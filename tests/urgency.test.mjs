@@ -88,4 +88,4 @@ test('dashboard carryovers count checkpoint moves on active work only',async()=>
  (await m.saveItem({...l,checkpoint:'2026-10-08',reason:'Still no capacity'}));
  assert.deepEqual((await m.dashboard()).carryovers.map(r=>({...r})),[{item_id:a.id,n:2}]);
 });
-test.after(async ()=>{(await m.db.close());rmSync(temp,{recursive:true,force:true});});
+test.after(async ()=>{(await m.closeDatabase());rmSync(temp,{recursive:true,force:true});});

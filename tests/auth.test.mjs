@@ -137,4 +137,4 @@ test('expired sessions and forged cookies cannot access existing data',async()=>
  assert.equal((await auth.sessionFor(result.token)),null);assert.equal((await auth.sessionFor('A'.repeat(43))),null);
  const callback=await route.GET(req('auth/google/callback?code=forged&state=forged'));assert.equal(callback.status,303);assert.match(callback.headers.get('location'),/login\?error=flow$/);
 });
-test.after(async ()=>{(await auth.authDb.close());(await db.db.close());rmSync(temp,{recursive:true,force:true});});
+test.after(async ()=>{(await auth.authDb.close());(await db.closeDatabase());rmSync(temp,{recursive:true,force:true});});

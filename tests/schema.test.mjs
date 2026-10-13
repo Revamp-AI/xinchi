@@ -1,12 +1,12 @@
-import {migrateDatabase} from '../lib/migrations.mjs';
+import {migrateDatabase} from '../lib/migrations.ts';
 import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {all,transaction,run,one} from '../lib/postgres.mjs';
+import {all,transaction,run,one} from '../lib/postgres.ts';
 test('versioned migrations serialize concurrent deploys and are idempotent',async()=>{
  await Promise.all(Array.from({length:6},()=>migrateDatabase()));
- assert.ok((await all('SELECT * FROM focus_schema_migrations')).length>=1);
+ assert.ok((await all('SELECT * FROM drizzle.__drizzle_migrations')).length>=1);
  assert.ok((await all("SELECT column_name FROM information_schema.columns WHERE table_name='jobs'")).some(r=>r.column_name==='lease_until'));
 });
 test('async transaction rolls back after awaited work fails',async()=>{

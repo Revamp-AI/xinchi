@@ -41,4 +41,4 @@ test('Gmail resumes a rate-limited message without losing pagination or duplicat
  assert.equal(result.complete,true);assert.equal(result.total,2);assert.equal(secondAttempts,2);assert.match(notices[0],/rate limit.*15 seconds/);
  assert.equal((await db.one("SELECT COUNT(*) AS n FROM sources WHERE provider='gmail'")).n,2);assert.equal((await db.getSetting('gmail_page')),null);assert.equal((await db.getSetting('gmail_history')),'h-start');
 });
-test.after(async ()=>{(await db.db.close());rmSync(temp,{recursive:true,force:true});});
+test.after(async ()=>{(await db.closeDatabase());rmSync(temp,{recursive:true,force:true});});

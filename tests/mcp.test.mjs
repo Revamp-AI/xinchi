@@ -140,7 +140,7 @@ test('contact and source pagination preserve access to the full history',async()
  const timeline=await executeMcpTool('focus_list_interactions',{id:contact.id,limit:2},f.access);assert.equal(timeline.records.length,2);assert.equal(timeline.next_offset,2);
  const next=await executeMcpTool('focus_list_interactions',{id:contact.id,limit:2,offset:2},f.access);assert.equal(next.records.length,1);assert.equal(next.next_offset,null);
 });
-test.after(async()=>{await db.db.close();rmSync(temp,{recursive:true,force:true});});
+test.after(async()=>{await db.closeDatabase();rmSync(temp,{recursive:true,force:true});});
 test('Codex can manage priority stacks and source-backed updates with scope checks and safe retries',async()=>{
  const f=await grant();let dispatched=0;const options={schedule(){dispatched++;}};
  const args={idempotency_key:key(),priority:{title:'MCP priority fixture',stack_id:'product',owner:'Alex'}};

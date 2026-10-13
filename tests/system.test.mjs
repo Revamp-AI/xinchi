@@ -100,4 +100,4 @@ test('Fireflies uses the configured participant and refuses an unscoped import',
   process.env.XIN_FIREFLIES_PARTICIPANT_EMAIL='participant@example.com';await conn.syncProvider('fireflies');assert.deepEqual(variables.participants,['participant@example.com']);
  }finally{global.fetch=originalFetch;if(owner===undefined)delete process.env.XIN_ALLOWED_EMAIL;else process.env.XIN_ALLOWED_EMAIL=owner;if(participant===undefined)delete process.env.XIN_FIREFLIES_PARTICIPANT_EMAIL;else process.env.XIN_FIREFLIES_PARTICIPANT_EMAIL=participant;}
 });
-test.after(async ()=>{(await m.db.close());rmSync(temp,{recursive:true,force:true});});
+test.after(async ()=>{(await m.closeDatabase());rmSync(temp,{recursive:true,force:true});});

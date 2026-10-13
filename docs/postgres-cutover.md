@@ -15,7 +15,15 @@ npm run build
 npm start
 ```
 
-Migrations are explicit and checksum-verified. App imports and builds never alter schemas. Each migration batch holds a transaction advisory lock, so concurrent deploys serialize. Never edit a migration after applying it; add a new numbered SQL file.
+Migrations are explicit and checksum-verified. App imports and builds never alter schemas. `npm run db:migrate` holds an advisory lock for the whole run, so concurrent deploys serialize. Never edit a migration after applying it; schema changes start in `lib/schema/` and `npm run db:generate` (see [Database access and schema changes](database.md)).
+
+### Adopting the Drizzle baseline
+
+Databases created before October 2026 were built by the numbered files in `migrations/`. Run `npm run db:migrate` once against each of them (local, and Neon with `DATABASE_URL_UNPOOLED`) after updating. It applies any legacy files the database is missing, then records the Drizzle baseline in `drizzle.__drizzle_migrations` without running it; the baseline describes the same schema. Later runs apply only new Drizzle migrations. Check the result with:
+
+```sh
+psql "$DATABASE_URL_UNPOOLED" -c 'SELECT name FROM drizzle.__drizzle_migrations ORDER BY id'
+```
 
 ## Moving an existing SQLite archive
 

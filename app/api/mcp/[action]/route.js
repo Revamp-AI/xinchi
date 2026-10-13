@@ -1,10 +1,11 @@
 import {checkLocalRequest,requireSession} from '../../../../lib/auth.mjs';
+import {databaseErrorCode} from '../../../../lib/postgres.ts';
 import {checkMcpOrigin,readMcpBody,registerMcpClient,exchangeMcpToken,authorizeMcp,revokeMcpToken,mcpAccessSettings,revokeMcpGrant,rateLimit} from '../../../../lib/mcp-auth.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 export const maxDuration=30;
 const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store','Pragma':'no-cache','X-Content-Type-Options':'nosniff'}});
-function failure(error){return json({error:error.oauthCode||'invalid_request',error_description:error.code?'The database is unavailable. Try again.':error.message},error.status||400);}
+function failure(error){return json({error:error.oauthCode||'invalid_request',error_description:databaseErrorCode(error)?'The database is unavailable. Try again.':error.message},error.status||400);}
 export async function GET(req){try{checkLocalRequest(req);await requireSession(req);if(new URL(req.url).pathname.endsWith('/access'))return json(await mcpAccessSettings());return json({error:'not_found'},404);}catch(e){return failure(e);}}
 export async function POST(req){try{
  checkMcpOrigin(req);

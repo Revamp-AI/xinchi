@@ -20,7 +20,9 @@ test('relationship context explains purpose, estimated cooling, evidence and del
     body: quote,
   });
   const packet = await contactEvidence(contact);
-  const source = packet.sources.find((s) => s.body.includes(quote))!;
+  const source = packet.sources.find((s: { body: string }) =>
+    s.body.includes(quote),
+  )!;
   await run(
     'INSERT INTO contact_insights(contact_id,input_hash,result,run_id) VALUES(?,?,?::jsonb,?)',
     contact.id,

@@ -69,20 +69,20 @@ for (const theme of ['light', 'dark']) {
       }),
     );
     for (let i = 0; i < geometry.length; i++) {
-      const row = geometry[i];
+      const row = geometry[i]!;
       expect(row.height).toBeGreaterThan(70);
       for (const child of row.children) {
         expect(child.top).toBeGreaterThanOrEqual(row.top);
         expect(child.bottom).toBeLessThanOrEqual(row.bottom + 1);
       }
-      if (i) expect(row.top).toBeGreaterThanOrEqual(geometry[i - 1].bottom);
+      if (i) expect(row.top).toBeGreaterThanOrEqual(geometry[i - 1]!.bottom);
     }
     await rows.nth(3).click();
     await expect(rows.nth(3)).toHaveAttribute('aria-current', 'true');
     await expect(
       page.getByRole('heading', { name: 'Earlier review', exact: true }),
     ).toBeVisible();
-    await expect(page.locator('.review-brief')).toHaveText(briefs[3]);
+    await expect(page.locator('.review-brief')).toHaveText(briefs[3]!);
     await rows.nth(0).focus();
     await page.keyboard.press('Enter');
     await expect(rows.nth(0)).toHaveAttribute('aria-current', 'true');
