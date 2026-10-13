@@ -9,7 +9,7 @@ import {tmpdir} from 'node:os';
 process.env.XIN_DATA_DIR=mkdtempSync(join(tmpdir(),'focus-contact-agent-'));
 import {upsertSource,one,run,saveItem} from '../lib/db.mjs';
 import {saveContact,contactDetail,saveDraft} from '../lib/contacts.ts';
-import {createJob,saveResult,validateResult,schema,cancelJob} from '../lib/agent.mjs';
+import {createJob,saveResult,validateResult,schema,cancelJob} from '../lib/agent.ts';
 const c=await saveContact({name:'Agent Fixture',tracked:true}),source=await upsertSource({provider:'manual',external_id:'agent-contact',title:'Fictional follow-up',body:'We agreed to review the draft together next week.',coverage:'document'});
 const citation={source_id:source.id,quote:'We agreed to review the draft together next week.'};
 const result={brief:'There is a recorded next step.',findings:[],proposals:[{title:'Review the fictional draft',kind:'action',rationale:'A recorded agreement',done_when:'Draft reviewed',next_action:'Prepare the draft',existing_item_id:'',uncertainty:'Date is not confirmed.',confidence:'high',contact_ids:[c.id],citations:[citation]}],drafts:[{contact_id:c.id,subject:'Draft review',body:'Shall we compare notes on the draft?',citations:[citation]}],questions:[],coverage_note:'One fictional source.'};

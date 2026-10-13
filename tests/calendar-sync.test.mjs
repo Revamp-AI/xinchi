@@ -8,7 +8,7 @@ process.env.XIN_AGENT_MODE='cloud';
 const {upsertSource,all,one,run,setSetting}=await import('../lib/db.mjs');
 const {secrets,saveSecrets}=await import('../lib/secret-store.ts');
 const {initialProviderCursor,advanceProvider}=await import('../lib/ingestion-providers.ts');
-const {callContextTool}=await import('../lib/context-tools.mjs');
+const {callContextTool}=await import('../lib/context-tools.ts');
 const day=new Date(Date.now()+86400000).toISOString().slice(0,10);
 const event={id:'fixture-event',summary:'Project delivery review',status:'confirmed',start:{dateTime:day+'T10:00:00+08:00',timeZone:'Asia/Singapore'},end:{dateTime:day+'T11:00:00+08:00',timeZone:'Asia/Singapore'},attendees:[{email:'owner@example.com',self:true,responseStatus:'accepted'}],description:'Review the promised implementation plan.'};
 test.beforeEach(async()=>{await run('TRUNCATE sources,jobs,items CASCADE');await run("DELETE FROM settings WHERE key LIKE 'calendar_%'");await saveSecrets({calendar_tokens:{access_token:'fixture-access',refresh_token:'fixture-refresh',expires_at:Date.now()+3600000,scope:'https://www.googleapis.com/auth/calendar.events.readonly'}});});
@@ -47,7 +47,7 @@ test('rescheduled events outside the rolling window remain current, and minimal 
  await sync(t,[{items:[{id:event.id,status:'cancelled'}]}]);const row=await one("SELECT body FROM sources WHERE id='calendar:primary:fixture-event'");assert.match(row.body,/Status: cancelled/);assert.match(row.body,/Recurring event: series-1/);assert.match(row.body,/Original instance start:/);
 });
 test('calendar deadlines reject hard deadlines, obsolete snapshots, tentative attendance and stale coverage',async t=>{
- const {validateResult}=await import('../lib/agent.mjs');
+ const {validateResult}=await import('../lib/agent.ts');
  await sync(t,[{items:[event]}]);const c=await one("SELECT v.id FROM sources s JOIN source_versions v ON v.source_id=s.id AND v.content_hash=s.content_hash WHERE s.id='calendar:primary:fixture-event'");
  const quote='Avery: I will prepare the implementation plan for the project review.';
  await upsertSource({provider:'granola',external_id:'promise',title:'Promise',coverage:'transcript',body:'Transcript\n'+quote});

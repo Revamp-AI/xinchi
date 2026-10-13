@@ -8,7 +8,7 @@ import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'xin-evidence-test-'));process.env.XIN_DATA_DIR=temp;
 const m=await import('../lib/db.mjs');
 const marks=await import('../lib/marks.mjs');
-const agent=await import('../lib/agent.mjs');
+const agent=await import('../lib/agent.ts');
 const sparseBody='Alex opened with the roadmap and the hiring plan. Later Morgan mentioned the pricing checklist once, then the conversation moved on to onboarding, the support rotation, and the office move.';
 const sparse=(await m.upsertSource({provider:'manual',external_id:'sparse',title:'Weekly sync',occurred_at:'2026-09-12',coverage:'transcript',body:sparseBody})).id;
 const dense=(await m.upsertSource({provider:'fireflies',external_id:'dense',title:'Pricing review',occurred_at:'2026-09-10',coverage:'transcript',body:'Morgan: The checklist is not done. Alex: Which checklist? Morgan: The pricing checklist for the launch.'})).id;

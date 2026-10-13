@@ -3,9 +3,9 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {upsertSource,one,all,run} from '../lib/db.mjs';
-import {createJob} from '../lib/agent.mjs';
+import {createJob} from '../lib/agent.ts';
 import {claimLease,cancelLease} from '../lib/leases.ts';
-import {callContextTool} from '../lib/context-tools.mjs';
+import {callContextTool} from '../lib/context-tools.ts';
 
 test('parallel source reads record progress without upgrading conflicting shared locks',async()=>{
  const source=await upsertSource({provider:'manual',external_id:'parallel-progress-fixture',title:'Parallel evidence fixture',body:'A fictional buyer needs a verified pilot success criterion.'});

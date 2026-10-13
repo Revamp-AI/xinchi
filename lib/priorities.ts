@@ -25,7 +25,7 @@ import {
   source_versions,
   sources,
 } from './schema/index.ts';
-import type { AgentResult } from './agent.mjs';
+import type { AgentResult } from './agent.ts';
 
 type AgentOutput = z.output<typeof AgentResult>;
 type PriorityUpdate = Pick<

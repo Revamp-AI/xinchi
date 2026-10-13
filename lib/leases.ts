@@ -33,7 +33,10 @@ const queues = {
     kind: 'contacts',
   },
 } as const;
-type Queue = (typeof queues)[keyof typeof queues];
+type QueueName = keyof typeof queues;
+type Queue = (typeof queues)[QueueName];
+type QueueRow<Q extends QueueName> =
+  (typeof queues)[Q]['table']['$inferSelect'];
 function queueFor(table: string) {
   const queue = (queues as Record<string, Queue | undefined>)[table];
   if (!queue) throw Error('Unknown worker queue.');
@@ -41,7 +44,12 @@ function queueFor(table: string) {
 }
 const leaseUntil = sql`now() + interval '45 seconds'`;
 
-export async function claimLease(table: string, id: string) {
+// Typed by queue so callers get that table's row; JavaScript callers may
+// still pass any name, which queueFor rejects at run time.
+export async function claimLease<Q extends QueueName>(
+  table: Q,
+  id: string,
+): Promise<{ row: QueueRow<Q>; token: string } | null> {
   const { table: t, state, key } = queueFor(table),
     token = uid();
   const [row] = await db
@@ -61,7 +69,7 @@ export async function claimLease(table: string, id: string) {
       ),
     )
     .returning();
-  return row ? { row, token } : null;
+  return row ? { row: row as QueueRow<Q>, token } : null;
 }
 export async function heartbeatLease(table: string, id: string, token: string) {
   const { table: t, state } = queueFor(table);

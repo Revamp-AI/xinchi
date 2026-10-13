@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const temp=mkdtempSync(join(tmpdir(),'xin-system-test-'));process.env.XIN_DATA_DIR=temp;
 const m=await import('../lib/db.mjs');
-const agent=await import('../lib/agent.mjs');
+const agent=await import('../lib/agent.ts');
 const conn=await import('../lib/connectors.ts');
 const source={provider:'manual',external_id:'meeting',title:'Release decision',body:'Alex: The release needs one more review. Morgan: Prepare the release checklist.',coverage:'transcript',occurred_at:'2026-09-12'};
 const sourceId=(await m.upsertSource(source)).id;

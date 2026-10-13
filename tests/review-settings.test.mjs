@@ -7,8 +7,8 @@ process.env.XIN_SECRET_STORAGE='postgres';process.env.XIN_SECRETS_KEY=randomByte
 const store=await import('../lib/secret-store.ts');
 const settings=await import('../lib/review-settings.mjs');
 const {one,exportData,upsertSource}=await import('../lib/db.mjs');
-const {createJob}=await import('../lib/agent.mjs');
-const {runCloudAgent}=await import('../lib/cloud-agent.mjs');
+const {createJob}=await import('../lib/agent.ts');
+const {runCloudAgent}=await import('../lib/cloud-agent.ts');
 const jwt=(extra={})=>'fixture.'+Buffer.from(JSON.stringify({exp:Math.floor(Date.now()/1000)+3600,email:'fixture@example.com','https://api.openai.com/auth':{chatgpt_account_id:'fictional-account',chatgpt_plan_type:'pro'},...extra})).toString('base64url')+'.signature';
 const tokens=(extra={})=>({access_token:jwt(extra),refresh_token:'fictional-refresh-secret'});
 const json=(data,status=200)=>Response.json(data,{status});

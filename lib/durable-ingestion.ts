@@ -16,7 +16,7 @@ import {
 } from './schema/index.ts';
 import { projectSource } from './contact-extraction.ts';
 import { startContactProjection } from './contact-jobs.ts';
-import { queueImportReview } from './agent.mjs';
+import { queueImportReview } from './agent.ts';
 
 // What durable_runs.outcome stores: the result of the latest step.
 type Outcome = {

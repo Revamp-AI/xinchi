@@ -3,9 +3,9 @@ import {spawn} from 'node:child_process';
 import {resolve} from 'node:path';
 import {writeFileSync,readFileSync,mkdirSync} from 'node:fs';
 import {one,run,stamp,dataDir,root} from '../lib/db.mjs';
-import {schema,saveResult,addProgress,takePendingImportReview,launchJob} from '../lib/agent.mjs';
+import {schema,saveResult,addProgress,takePendingImportReview,launchJob} from '../lib/agent.ts';
 import {claimLease,heartbeatLease} from '../lib/leases.ts';
-import {closeDatabase} from '../lib/postgres.ts';
+import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';
 const id=process.argv[2],claim=await claimLease('jobs',id||'');
 if(!claim)process.exit(0);
 const {row:job,token}=claim;
@@ -32,5 +32,5 @@ try{
  if(!await one("SELECT id FROM job_events WHERE job_id=? AND (label LIKE 'Reading:%' OR label LIKE 'Checking your commitments%')",id))throw Error('The agent could not read the stored context. Check the work log and retry.');
  await saveResult(id,JSON.parse(readFileSync(output,'utf8')),token);
  await addProgress(id,'Review ready — proposals await your decision');
-}catch(e){await run("UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND lease_until>now()",e.message.slice(0,2000),stamp(),id,token);}
+}catch(e){await run("UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='running' AND lease_owner=? AND lease_until>now()",databaseErrorCode(e)?'The review could not be saved. Check the database connection and retry.':e.message.slice(0,2000),stamp(),id,token);}
 finally{clearTimeout(timeout);clearInterval(heartbeat);process.off('SIGTERM',onSignal);const pending=await takePendingImportReview();if(pending)await launchJob(pending);await closeDatabase();}
