@@ -61,6 +61,7 @@ import {
   source_versions,
   sources,
   sync_runs,
+  priorities,
 } from './schema/index.ts';
 
 // Request bodies, MCP tools and importers pass these fields unchecked; each
@@ -1191,4 +1192,44 @@ export async function linkContactItem(input: {
         .onConflictDoNothing();
     return { saved: true };
   });
+}
+
+// Names offered when assigning an owner: active contacts, plus owners
+// already used on commitments and priorities.
+export async function ownerSuggestions(q: string) {
+  const pattern = '%' + q.trim().slice(0, 200) + '%';
+  // A union only orders by output columns, so sort the combined names outside it.
+  const owners = db
+    .select({ name: contacts.name })
+    .from(contacts)
+    .where(
+      and(
+        isNull(contacts.merged_into),
+        eq(contacts.archived, false),
+        ne(contacts.name, ''),
+        or(ilike(contacts.name, pattern), ilike(contacts.email, pattern)),
+      ),
+    )
+    .union(
+      db
+        .select({ name: items.owner })
+        .from(items)
+        .where(and(ne(items.owner, ''), ilike(items.owner, pattern))),
+    )
+    .union(
+      db
+        .select({ name: priorities.owner })
+        .from(priorities)
+        .where(and(ne(priorities.owner, ''), ilike(priorities.owner, pattern))),
+    )
+    .as('owners');
+  const rows = await db
+    .select({ name: owners.name })
+    .from(owners)
+    .orderBy(sql`lower(${owners.name})`, owners.name)
+    .limit(51);
+  return {
+    owners: rows.slice(0, 50).map((row) => row.name),
+    hasMore: rows.length > 50,
+  };
 }

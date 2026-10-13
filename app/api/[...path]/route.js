@@ -2,7 +2,7 @@ import {dismissProposal,restoreProposal} from '../../../lib/proposals.ts';
 import {databaseErrorCode} from '../../../lib/postgres.ts';
 import {prioritiesState,priorityDetail,savePriority,reorderPriorities,addPriorityUpdate,decidePrioritySuggestion,queuePriorityContext} from '../../../lib/priorities.ts';
 import {contactIntelligenceStatus,configureContactIntelligence,queueContactIntelligence,dismissContactInsight,runContactIntelligence} from '../../../lib/contact-intelligence.ts';
-import {listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.ts';
+import {ownerSuggestions,listContacts,contactDetail,saveContact,saveAffiliation,importContactsCsv,contactStatus,confirmCoverage,saveDraft,linkContactItem} from '../../../lib/contacts.ts';
 import {logInteraction,reviewInteraction} from '../../../lib/contact-extraction.ts';
 import {mergePreview,mergeContacts,undoMerge,keepSeparate,bulkMergePreview,mergeReviewGroup,bulkKeepSeparate} from '../../../lib/contact-identity.ts';
 import {startContactProjection,recoverContactRuns} from '../../../lib/contact-jobs.ts';
@@ -44,9 +44,7 @@ export async function GET(req){try{checkLocalRequest(req);const u=new URL(req.ur
  }
  const user=(await requireSession(req));
  if(path==='owners'){
-  const query='%'+(u.searchParams.get('q')||'').trim().slice(0,200)+'%';
-  const rows=await all("SELECT name FROM (SELECT name FROM contacts WHERE merged_into IS NULL AND archived=false AND name<>'' AND (name ILIKE ? OR email ILIKE ?) UNION SELECT owner AS name FROM items WHERE owner<>'' AND owner ILIKE ? UNION SELECT owner AS name FROM priorities WHERE owner<>'' AND owner ILIKE ?) AS owners ORDER BY lower(name),name LIMIT 51",query,query,query,query);
-  return json({owners:rows.slice(0,50).map(row=>row.name),hasMore:rows.length>50});
+  return json(await ownerSuggestions(u.searchParams.get('q')||''));
  }
  if(path==='priorities')return json(await prioritiesState());
  if(path.startsWith('priorities/'))return json(await priorityDetail(path.slice(11)));
