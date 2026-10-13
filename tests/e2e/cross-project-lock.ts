@@ -1,4 +1,5 @@
 import { test } from '@playwright/test';
+import type { Client } from 'pg';
 
 // The desktop and mobile projects run against one shared test database
 // (scripts/test-postgres.mjs --e2e). A spec that resets or fills
@@ -7,7 +8,7 @@ import { test } from '@playwright/test';
 // so every other spec keeps running in parallel. Postgres releases the lock
 // when the connection closes, including when a worker process dies.
 export function serializeAcrossProjects(name: string) {
-  let client;
+  let client: Client | undefined;
   test.beforeAll(async () => {
     // The wait can span the other project's whole run of the file.
     test.setTimeout(180_000);
