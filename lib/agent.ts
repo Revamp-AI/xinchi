@@ -551,3 +551,15 @@ export async function queueImportReview() {
   if (id) await launchJob(id);
   return id;
 }
+
+export async function jobDetail(id: string) {
+  const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
+  return {
+    job,
+    events: await db
+      .select()
+      .from(job_events)
+      .where(eq(job_events.job_id, id))
+      .orderBy(job_events.id),
+  };
+}

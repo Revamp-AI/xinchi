@@ -13,6 +13,7 @@ import {
   sql,
   type AnyColumn,
   type SQL,
+  gte,
 } from 'drizzle-orm';
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core';
 import { CONTACT_TABLES } from './contact-tables.mjs';
@@ -766,4 +767,24 @@ export async function exportData() {
       data[t] = await db.select().from(publicTables.get(t)!);
     return data;
   });
+}
+
+export async function itemEvents(itemId: string) {
+  return db
+    .select()
+    .from(events)
+    .where(eq(events.item_id, itemId))
+    .orderBy(desc(events.created_at));
+}
+// Commitments and their history since a date, for the update draft.
+export async function updateDraftActivity(since: string) {
+  return {
+    items: await db.select().from(items),
+    events: await db
+      .select({ ...getColumns(events), shared: items.shared })
+      .from(events)
+      .innerJoin(items, eq(items.id, events.item_id))
+      .where(gte(events.created_at, since))
+      .orderBy(events.created_at),
+  };
 }
