@@ -1,6 +1,6 @@
 import {readFileSync} from 'node:fs';
 import {configureGoogleClient} from '../lib/connectors.ts';
-import {authDb} from '../lib/auth.mjs';
+import {authDb} from '../lib/auth.ts';
 const path=process.argv[2];
 if(!path){console.error('Usage: node scripts/configure-google.mjs /path/to/google-client.json');process.exit(1);}
 try{

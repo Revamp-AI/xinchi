@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { sessionFor, SESSION_COOKIE } from '../lib/auth.mjs';
+import { sessionFor, SESSION_COOKIE } from '../lib/auth.ts';
 import Workspace from './workspace';
 export const dynamic = 'force-dynamic';
 export default async function Home() {

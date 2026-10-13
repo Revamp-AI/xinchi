@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { FullConfig } from '@playwright/test';
 
-// A fixed 43-character base64url token: the only shape lib/auth.mjs accepts.
+// A fixed 43-character base64url token: the only shape lib/auth.ts accepts.
 export const sessionToken = 'focusE2Esession_0123456789abcdefghijklmnopq';
 export const ownerName = 'Alex';
 
@@ -90,7 +90,7 @@ export default async function globalSetup(config: FullConfig) {
     if (state!=='Unclassified') await logInteraction({contact_id:c.id,kind:state==='New'?'email':'meeting',direction:state==='New'?'inbound':'mutual',meaningful:true,occurred_at:new Date(Date.now()-days*86400000).toISOString(),body:'Discussed the fictional release plan and agreed to compare notes.'});
     if (state==='Cooling'||state==='Dormant') await confirmCoverage(c.id);
   }
-  const auth = await import('../../lib/auth.mjs');
+  const auth = await import('../../lib/auth.ts');
   for (const source of sources) await db.upsertSource(source);
   await db.saveItem(candidate);
   await auth.authDb

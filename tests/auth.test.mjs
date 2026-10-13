@@ -11,7 +11,7 @@ const temp=mkdtempSync(join(tmpdir(),'xin-auth-test-'));
 process.env.XIN_DATA_DIR=temp;process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 const db=await import('../lib/db.mjs');
 const conn=await import('../lib/connectors.ts');
-const auth=await import('../lib/auth.mjs');
+const auth=await import('../lib/auth.ts');
 const route=await import('../app/api/[...path]/route.js');
 const pair=await generateKeyPair('RS256');
 const client={web:{client_id:'fixture.apps.googleusercontent.com',client_secret:'fixture-secret',redirect_uris:[auth.CALLBACK]}};

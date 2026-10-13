@@ -10,10 +10,10 @@ import {Client,StreamableHTTPClientTransport} from '@modelcontextprotocol/client
 const temp=mkdtempSync(join(tmpdir(),'focus-mcp-'));
 process.env.XIN_DATA_DIR=temp;process.env.XIN_ALLOWED_EMAIL='owner@example.com';process.env.XIN_AGENT_MODE='cloud';
 const db=await import('../lib/db.mjs');
-const auth=await import('../lib/auth.mjs');
-const oauth=await import('../lib/mcp-auth.mjs');
+const auth=await import('../lib/auth.ts');
+const oauth=await import('../lib/mcp-auth.ts');
 const {handleMcpRequest}=await import('../lib/mcp-server.mjs');
-const {mcpTools,executeMcpTool}=await import('../lib/mcp-tools.mjs');
+const {mcpTools,executeMcpTool}=await import('../lib/mcp-tools.ts');
 const route=await import('../app/api/mcp/[action]/route.js');
 const owner={sub:'mcp-fixture-owner',email:'owner@example.com',name:'Alex'};
 await auth.authDb.prepare('INSERT INTO owner VALUES(1,?,?,?)').run(owner.sub,owner.email,owner.name);

@@ -1,6 +1,6 @@
-import {checkLocalRequest,requireSession} from '../../../../lib/auth.mjs';
+import {checkLocalRequest,requireSession} from '../../../../lib/auth.ts';
 import {databaseErrorCode} from '../../../../lib/postgres.ts';
-import {checkMcpOrigin,readMcpBody,registerMcpClient,exchangeMcpToken,authorizeMcp,revokeMcpToken,mcpAccessSettings,revokeMcpGrant,rateLimit} from '../../../../lib/mcp-auth.mjs';
+import {checkMcpOrigin,readMcpBody,registerMcpClient,exchangeMcpToken,authorizeMcp,revokeMcpToken,mcpAccessSettings,revokeMcpGrant,rateLimit} from '../../../../lib/mcp-auth.ts';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 export const maxDuration=30;

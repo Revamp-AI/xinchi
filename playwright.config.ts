@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 
-// Focus only answers requests whose Host is 127.0.0.1:3210 (lib/auth.mjs), so
+// Focus only answers requests whose Host is 127.0.0.1:3210 (lib/auth.ts), so
 // the smoke test has to run its own server on that exact origin.
 const port = 3210;
 export const baseURL = `http://127.0.0.1:${port}`;

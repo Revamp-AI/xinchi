@@ -9,7 +9,7 @@ import {createHash} from 'node:crypto';
 const temp=mkdtempSync(join(tmpdir(),'xin-update-draft-test-'));process.env.XIN_DATA_DIR=temp;process.env.XIN_ALLOWED_EMAIL='owner@example.com';
 const {buildUpdateDraft,renderUpdateDraft}=await import('../lib/update-draft.mjs');
 const db=await import('../lib/db.mjs');
-const auth=await import('../lib/auth.mjs');
+const auth=await import('../lib/auth.ts');
 const route=await import('../app/api/[...path]/route.js');
 const {localToday}=await import('../lib/urgency.mjs');
 const since='2026-09-07',today='2026-09-14';
