@@ -90,7 +90,7 @@ test('the callback route verifies Google keys, creates the cookie, redirects, an
  try{
   const request=new Request(auth.CALLBACK+'?code=fixture&state='+f.state,{headers:{host:'127.0.0.1:3210',cookie:auth.FLOW_COOKIE+'='+f.browser}});
   const r=await route.GET(request);assert.equal(r.status,303);assert.equal(r.headers.get('location'),origin+'/?gmail=connected&import=manual');
-  const cookies=r.headers.getSetCookie();assert.equal(cookies.length,2);assert.match(cookies[0],/xin_session=.*HttpOnly; SameSite=Lax; Max-Age=43200/);assert.match(cookies[1],/xin_google_flow=;.*Max-Age=0/);
+  const cookies=r.headers.getSetCookie();assert.equal(cookies.length,2);assert.match(cookies[0],/xin_session=.*HttpOnly; SameSite=Lax; Max-Age=7776000/);assert.match(cookies[1],/xin_google_flow=;.*Max-Age=0/);
   const token=cookies[0].split(';')[0].split('=')[1];assert.ok((await auth.sessionFor(token)));(await auth.endSession(token));
  }finally{global.fetch=old;(await db.run('DELETE FROM sync_runs WHERE id=?','busy-fixture'));}
 });
@@ -136,5 +136,17 @@ test('expired sessions and forged cookies cannot access existing data',async()=>
  const result=await complete((await newFlow()));(await auth.authDb.prepare('UPDATE sessions SET expires_at=0').run());
  assert.equal((await auth.sessionFor(result.token)),null);assert.equal((await auth.sessionFor('A'.repeat(43))),null);
  const callback=await route.GET(req('auth/google/callback?code=forged&state=forged'));assert.equal(callback.status,303);assert.match(callback.headers.get('location'),/login\?error=flow$/);
+});
+test('sessions stay signed in while used, slide at most hourly, and end 90 days after sign-in',async()=>{
+ const hour=3600000,day=24*hour,{token}=await complete((await newFlow()));
+ const row=async()=>(await auth.authDb.prepare('SELECT created_at,expires_at FROM sessions WHERE token_hash=?').get(digest(token)));
+ const set=async(created,expires)=>(await auth.authDb.prepare('UPDATE sessions SET created_at=?,expires_at=? WHERE token_hash=?').run(created,expires,digest(token)));
+ // Regression: sessions used to end 12 hours after sign-in however much they were used.
+ assert.ok((await row()).expires_at-Date.now()>29*day);
+ await set(Date.now()-13*hour,Date.now()+hour);assert.ok((await auth.sessionFor(token)));assert.ok((await row()).expires_at-Date.now()>29*day);
+ const renewed=(await row()).expires_at;assert.ok((await auth.sessionFor(token)));assert.equal((await row()).expires_at,renewed);
+ await set(Date.now()-89*day,Date.now()+day);assert.ok((await auth.sessionFor(token)));assert.ok((await row()).expires_at<=Date.now()+day+hour);
+ await set(Date.now()-91*day,Date.now()+day);assert.equal((await auth.sessionFor(token)),null);
+ await set(Date.now()-day,Date.now()-1);assert.equal((await auth.sessionFor(token)),null);
 });
 test.after(async ()=>{(await auth.authDb.close());(await db.closeDatabase());rmSync(temp,{recursive:true,force:true});});
