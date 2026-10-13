@@ -3,7 +3,7 @@ await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {all,one,run,upsertSource,saveItem,uid,setSetting,stamp} from '../lib/db.mjs';
-import {saveContact,contactDetail,listContacts,importContactsCsv,linkContactItem} from '../lib/contacts.mjs';
+import {saveContact,contactDetail,listContacts,importContactsCsv,linkContactItem} from '../lib/contacts.ts';
 import {projectSource,extractInteraction,logInteraction,reviewInteraction,mailboxes} from '../lib/contact-extraction.ts';
 import {mergePreview,mergeContacts,undoMerge} from '../lib/contact-identity.mjs';
 import {relationshipState,RULE_VERSION} from '../lib/relationship-rules.mjs';

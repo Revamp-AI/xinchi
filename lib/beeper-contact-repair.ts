@@ -2,7 +2,7 @@ import { and, eq, exists, getColumns, isNull, not, or, sql } from 'drizzle-orm';
 import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import { extractInteraction } from './contact-extraction.ts';
-import { suggestIdentityMatches } from './contacts.mjs';
+import { suggestIdentityMatches } from './contacts.ts';
 import {
   affiliations,
   contact_identities,
@@ -178,7 +178,8 @@ export async function repairBeeperContactNames({ apply = false } = {}) {
         id: c.id,
         identity_id: c.identity_id,
         before: c.name,
-        after: isSelf ? c.name : name,
+        // The check above skips non-self contacts without a usable name.
+        after: isSelf ? c.name : name!,
         archive: isSelf,
         email: c.email,
       });

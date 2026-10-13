@@ -15,7 +15,7 @@ import {
   sync_runs,
 } from './schema/index.ts';
 import { projectSource } from './contact-extraction.ts';
-import { startContactProjection } from './contact-jobs.mjs';
+import { startContactProjection } from './contact-jobs.ts';
 import { queueImportReview } from './agent.mjs';
 
 // What durable_runs.outcome stores: the result of the latest step.

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { one, run, uid, upsertSource } from '../../lib/db.mjs';
-import { saveContact } from '../../lib/contacts.mjs';
+import { saveContact } from '../../lib/contacts.ts';
 
 async function match(a: any, b: any) {
   const id = uid(),

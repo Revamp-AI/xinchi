@@ -10,7 +10,7 @@ const {handleBeeperRequest}=await import('../lib/beeper-route.mjs');
 const {prepareDispatches,advanceDurableUnit}=await import('../lib/durable-ingestion.ts');
 const {extractInteraction,projectSource}=await import('../lib/contact-extraction.ts');
 const {repairBeeperContactNames}=await import('../lib/beeper-contact-repair.ts');
-const {suggestIdentityMatches}=await import('../lib/contacts.mjs');
+const {suggestIdentityMatches}=await import('../lib/contacts.ts');
 const {syncTick,chooseChats,pageProgress,splitRecords,focusOrigin}=await import('../public/beeper-companion.mjs');
 const chat={id:'chat-1',accountID:'account-1',network:'Example',title:'Fictional colleague',type:'single',participants:{hasMore:false,items:[{id:'self',fullName:'Owner',isSelf:true},{id:'peer',fullName:'Fictional colleague',email:'peer@example.test',isSelf:false}]}};
 const message=(id='message-1')=>({id,accountID:chat.accountID,chatID:chat.id,senderID:'peer',senderName:'Fictional colleague',isSender:false,text:'Fictional project update.',type:'TEXT',timestamp:new Date().toISOString()});

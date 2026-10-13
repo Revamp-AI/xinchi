@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 process.env.XIN_DATA_DIR=mkdtempSync(join(tmpdir(),'focus-contact-agent-'));
 import {upsertSource,one,run,saveItem} from '../lib/db.mjs';
-import {saveContact,contactDetail,saveDraft} from '../lib/contacts.mjs';
+import {saveContact,contactDetail,saveDraft} from '../lib/contacts.ts';
 import {createJob,saveResult,validateResult,schema,cancelJob} from '../lib/agent.mjs';
 const c=await saveContact({name:'Agent Fixture',tracked:true}),source=await upsertSource({provider:'manual',external_id:'agent-contact',title:'Fictional follow-up',body:'We agreed to review the draft together next week.',coverage:'document'});
 const citation={source_id:source.id,quote:'We agreed to review the draft together next week.'};

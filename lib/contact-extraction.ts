@@ -12,7 +12,7 @@ import {
   suggestIdentityMatches,
   evaluateContacts as evaluate,
   existingContact,
-} from './contacts.mjs';
+} from './contacts.ts';
 import { resolveExactEmailContact } from './contact-identity.mjs';
 import { db, transaction, lockWorkspace } from './postgres.ts';
 import {

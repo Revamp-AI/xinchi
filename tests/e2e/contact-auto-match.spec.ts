@@ -1,11 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { one, setSetting } from '../../lib/db.mjs';
-import { saveContact } from '../../lib/contacts.mjs';
+import { saveContact } from '../../lib/contacts.ts';
 import {
   parseLinkedinConnections,
   importLinkedinBatch,
 } from '../../lib/linkedin-import.ts';
-import { employerDomainCacheKey } from '../../lib/contact-auto-match.mjs';
+import { employerDomainCacheKey } from '../../lib/contact-auto-match.ts';
 import { websiteCompanyEvidence } from '../../lib/company-domain.mjs';
 import { importAppleContacts } from '../../lib/apple-contacts.ts';
 
