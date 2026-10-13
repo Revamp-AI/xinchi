@@ -5,8 +5,9 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {sql} from 'drizzle-orm';
 const privateDir=mkdtempSync(join(tmpdir(),'focus-durable-'));process.env.XIN_DATA_DIR=privateDir;process.env.XIN_AGENT_MODE='cloud';
-const {one,run,uid,stamp,upsertSource,getSetting,setSetting}=await import('../lib/db.mjs');
+const {one,run,db,uid,stamp,upsertSource,getSetting,setSetting}=await import('../lib/db.mjs');
 const {prepareDispatches,acknowledgeDispatch,advanceDurableUnit,resumeDurable,failDurableRun}=await import('../lib/durable-ingestion.ts');
 const {expireLeases,claimLease,heartbeatLease}=await import('../lib/leases.ts');
 const {reconcileWorkflows}=await import('../lib/workflow-recovery.ts');
@@ -103,6 +104,18 @@ test('a database error inside the real projection retries the step and keeps the
  assert.equal(result.done,false);assert.equal(result.revision,1);assert.ok(result.waitMs>=1000);assert.equal((await one('SELECT attempts FROM durable_runs WHERE run_id=?',row.id)).attempts,1);
  assert.deepEqual(await one('SELECT state,attempts,error FROM contact_queue WHERE source_id=?',source.id),{state:'pending',attempts:0,error:''});
  const retried=await advanceDurableUnit('contacts',row.id,row.token,row.wf,1);assert.equal(retried.done,false);assert.equal((await one('SELECT state FROM contact_queue WHERE source_id=?',source.id)).state,'complete');assert.ok(await one('SELECT id FROM interactions WHERE source_id=?',source.id));
+});
+test('a database error during projection retries the unit instead of failing the source',async()=>{
+ const row=await contactRun(),insertedId=uid();
+ const source=await upsertSource({provider:'fireflies',external_id:'projection-db-error-'+row.id,title:'Fictional projection database error',occurred_at:stamp(),body:'Fictional source to test database retries',coverage:'transcript'},{sentences:[]});
+ const result=await advanceDurableUnit('contacts',row.id,row.token,row.wf,0,{project:async(sourceId,guard)=>{
+  assert.equal(sourceId,source.id);await guard();await run('INSERT INTO contacts(id,name) VALUES(?,?)',insertedId,'Tentative contact that must be rolled back');
+  // Drizzle wraps the Postgres error in DrizzleQueryError, which carries the code only on its cause.
+  await db.execute(sql`SELECT missing_column FROM settings`);
+ }});
+ assert.equal(result.done,false);assert.equal(result.revision,1);assert.ok(result.waitMs>0);assert.equal(await one('SELECT id FROM contacts WHERE id=?',insertedId),undefined);
+ const queued=await one('SELECT state,attempts,error FROM contact_queue WHERE source_id=?',source.id);assert.equal(queued.state,'pending');assert.equal(queued.attempts,0);assert.equal(queued.error,'');
+ assert.equal((await one('SELECT attempts FROM durable_runs WHERE kind=? AND run_id=?','contacts',row.id)).attempts,1);assert.equal((await one('SELECT state FROM contact_runs WHERE id=?',row.id)).state,'running');
 });
 test('resuming failed contact work keeps its review request and cursor while fencing the old workflow',async()=>{
  const row=await contactRun();await run('UPDATE contact_runs SET review_requested=true WHERE id=?',row.id);
