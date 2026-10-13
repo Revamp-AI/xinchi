@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {all,one,run,uid,upsertSource,saveItem} from '../lib/db.mjs';
 import {saveContact,contactDetail,listContacts,importContactsCsv,saveDraft,linkContactItem} from '../lib/contacts.mjs';
-import {projectSource,logInteraction} from '../lib/contact-extraction.mjs';
+import {projectSource,logInteraction} from '../lib/contact-extraction.ts';
 import {reconcileEmailContacts,resolveExactEmailContact,undoMerge} from '../lib/contact-identity.mjs';
 import {emailAddress,personalEmail} from '../lib/contact-email.mjs';
 process.env.XIN_ALLOWED_EMAIL='owner@example.com';

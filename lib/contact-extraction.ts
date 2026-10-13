@@ -1,0 +1,735 @@
+import addresses from 'email-addresses';
+import { and, eq, isNull, ne, sql } from 'drizzle-orm';
+import {
+  uid,
+  stamp,
+  hash,
+  getSetting as readSetting,
+  upsertSource,
+} from './db.mjs';
+import {
+  emailAddress,
+  suggestIdentityMatches,
+  evaluateContacts as evaluate,
+  existingContact,
+} from './contacts.mjs';
+import { resolveExactEmailContact } from './contact-identity.mjs';
+import { db, transaction, lockWorkspace } from './postgres.ts';
+import {
+  contact_identities,
+  contact_queue,
+  contacts,
+  interaction_decisions,
+  interaction_participants,
+  interaction_sources,
+  interactions,
+  settings,
+  source_versions,
+  sources,
+} from './schema/index.ts';
+
+// db.mjs and contacts.mjs are untyped JavaScript; TypeScript reads their
+// `= null` defaults as the type `null`.
+const getSetting = readSetting as unknown as <T>(
+  key: string,
+  fallback?: T,
+) => Promise<T>;
+const evaluateContacts = evaluate as unknown as (
+  ids: string[],
+) => Promise<void>;
+// The source fields extraction reads; projection passes the whole row.
+type SourceFields = {
+  provider: string;
+  coverage: string;
+  body?: string;
+  occurred_at?: string;
+};
+type MeetingMetadata = {
+  participants?: unknown;
+  attendees?: unknown;
+  calendar_event?: { attendees?: unknown; start_time?: string };
+  // Transcripts may be any JSON; only arrays of speaker objects are read.
+  sentences?: any;
+  dateString?: string;
+  start_time?: string;
+};
+type BeeperParticipant = {
+  id?: string;
+  fullName?: string;
+  email?: string;
+  isSelf?: boolean;
+  isNetworkBot?: boolean;
+};
+// The fields extraction reads from a source snapshot's raw JSON.
+export type Snapshot = MeetingMetadata & {
+  contact_profile?: unknown;
+  contact_event?: {
+    contact_id: string;
+    kind?: string;
+    direction?: string;
+    occurred_at?: string;
+    meaningful?: boolean;
+  };
+  deleted?: boolean;
+  payload?: { headers?: { name: string; value: string }[] };
+  internalDate?: string | number;
+  threadId?: string;
+  chat?: {
+    id?: string;
+    accountID?: string;
+    type?: string;
+    title?: string;
+    participants?: { hasMore?: boolean; items?: BeeperParticipant[] };
+  };
+  message?: {
+    isSender?: boolean;
+    senderID?: string;
+    senderName?: string;
+    isDeleted?: boolean;
+    isHidden?: boolean;
+    timestamp?: string;
+    text?: string;
+    type?: string;
+  };
+  metadata?: MeetingMetadata;
+  transcript?: any;
+};
+export type Participant = {
+  contact_id?: string;
+  name?: string;
+  address?: string;
+  external_id?: string;
+  role: string;
+};
+export type Interaction = {
+  kind: string;
+  account?: string;
+  occurred_at: string | null;
+  direction: string;
+  qualified: boolean;
+  exclusion: string;
+  thread_key: string;
+  participants: Participant[];
+};
+type InteractionReview = { action?: string; content_hash?: string } | null;
+
+const shared =
+  /^(no-?reply|do-?not-?reply|notifications?|support|info|hello|team|billing|newsletter|sales|admin|contact|help|office|accounts?|calendar)([.+_-]|@)/i;
+export function mailboxes(value: unknown) {
+  const parsed = addresses.parseAddressList(String(value || '')) || [];
+  return parsed
+    .flatMap((p) => (p.type === 'group' ? p.addresses : [p]))
+    .filter((p) => p.type === 'mailbox')
+    .map((p) => ({
+      name: p.name || p.address,
+      address: p.address.toLowerCase(),
+    }));
+}
+const validTime = (value: string | null | undefined) =>
+  value && !isNaN(Date.parse(value)) ? new Date(value).toISOString() : null;
+export function extractInteraction(
+  source: SourceFields,
+  raw: Snapshot,
+  ownerAddresses: (string | null | undefined)[],
+): Interaction | null {
+  const owners = new Set(
+    ownerAddresses.filter(Boolean).map((e) => e!.toLowerCase()),
+  );
+  if (raw.contact_profile) return null;
+  if (source.provider === 'manual') {
+    const e = raw.contact_event;
+    if (!e) return null;
+    return {
+      kind: e.kind || 'note',
+      occurred_at: validTime(e.occurred_at),
+      direction: e.direction || 'mutual',
+      qualified: e.meaningful === true,
+      exclusion: '',
+      thread_key: '',
+      participants: [{ contact_id: e.contact_id, role: 'participant' }],
+    };
+  }
+  if (source.provider === 'gmail') {
+    const headers = Object.fromEntries(
+      (raw.payload?.headers || []).map((h) => [h.name.toLowerCase(), h.value]),
+    );
+    const from = mailboxes(headers.from),
+      to = mailboxes(headers.to),
+      cc = mailboxes(headers.cc),
+      sender = from[0],
+      outbound = sender && owners.has(sender.address),
+      incoming = to.some((p) => owners.has(p.address));
+    const automated =
+      !!headers['list-id'] ||
+      !!headers['list-unsubscribe'] ||
+      /bulk|list|junk/i.test(headers.precedence || '') ||
+      (!!headers['auto-submitted'] &&
+        headers['auto-submitted'].toLowerCase() !== 'no') ||
+      shared.test(sender?.address || '');
+    const occurred_at =
+      Number(raw.internalDate) > 0
+        ? validTime(new Date(Number(raw.internalDate)).toISOString())
+        : validTime(headers.date);
+    const exclusion =
+      raw.deleted || source.coverage === 'deleted upstream'
+        ? 'Deleted upstream'
+        : automated
+          ? 'Automated or shared mailbox'
+          : from.length !== 1
+            ? 'Sender could not be verified'
+            : !outbound && !incoming
+              ? 'Owner was copied or absent'
+              : !occurred_at
+                ? 'Event date unavailable'
+                : !source.body || source.coverage !== 'email body'
+                  ? 'Email body unavailable'
+                  : '';
+    const participants = [
+      ...from.map((p) => ({ ...p, role: 'sender' })),
+      ...to.map((p) => ({ ...p, role: outbound ? 'recipient' : 'cc' })),
+      ...cc.map((p) => ({ ...p, role: 'cc' })),
+    ].filter((p) => !owners.has(p.address) && !shared.test(p.address));
+    return {
+      kind: 'email',
+      occurred_at,
+      direction: outbound ? 'outbound' : incoming ? 'inbound' : 'unknown',
+      qualified: !exclusion,
+      exclusion,
+      thread_key: raw.threadId || '',
+      participants: automated ? [] : participants,
+    };
+  }
+  if (source.provider === 'beeper') {
+    const c: NonNullable<Snapshot['chat']> = raw.chat || {},
+      m: NonNullable<Snapshot['message']> = raw.message || {},
+      people = c.participants?.items || [],
+      peers = people.filter(
+        (p) => !p.isSelf && !(m.isSender === true && p.id === m.senderID),
+      ),
+      occurred_at = validTime(m.timestamp);
+    const verified =
+      c.type === 'single' &&
+      !c.participants?.hasMore &&
+      peers.length === 1 &&
+      people.some((p) => p.isSelf) &&
+      people.some((p) => p.id === m.senderID && p.isSelf === m.isSender);
+    const exclusion =
+      m.isDeleted || m.isHidden
+        ? 'Deleted upstream'
+        : !verified
+          ? 'Direct conversation participants need confirmation'
+          : peers.some((p) => p.isNetworkBot)
+            ? 'Automated account'
+            : !occurred_at
+              ? 'Event date unavailable'
+              : source.coverage !== 'message body' ||
+                  !m.text?.trim() ||
+                  ['NOTICE', 'REACTION', 'STICKER'].includes(m.type!)
+                ? 'Message content unavailable or not a conversation'
+                : '';
+    const title = String(c.title || '').trim(),
+      peerTitle = /^(Direct conversation|Beeper contact)$/i.test(title)
+        ? ''
+        : title;
+    // An outgoing sender is the owner. A verified direct-chat title identifies its sole peer.
+    // Unresolved participant lists stay in source evidence instead of creating owner/group profiles.
+    return {
+      kind: 'message',
+      account: c.accountID || '',
+      occurred_at,
+      direction:
+        m.isSender === true
+          ? 'outbound'
+          : m.isSender === false
+            ? 'inbound'
+            : 'unknown',
+      qualified: !exclusion,
+      exclusion,
+      thread_key: c.id || '',
+      participants: verified
+        ? peers
+            .filter((p) => !p.isNetworkBot)
+            .map((p) => ({
+              name:
+                String(p.fullName || '').trim() ||
+                peerTitle ||
+                (m.isSender === false && m.senderID === p.id
+                  ? String(m.senderName || '').trim()
+                  : '') ||
+                emailAddress(p.email) ||
+                'Beeper contact',
+              address: emailAddress(p.email),
+              external_id: p.id,
+              role: 'participant',
+            }))
+        : [],
+    };
+  }
+  const meta = raw.metadata || raw;
+  const entries: any[] = Array.isArray(meta.participants)
+    ? meta.participants
+    : Array.isArray(meta.attendees)
+      ? meta.attendees
+      : Array.isArray(meta.calendar_event?.attendees)
+        ? meta.calendar_event.attendees
+        : [];
+  const people: Omit<Participant, 'role'>[] = entries.flatMap((p) =>
+    typeof p === 'string'
+      ? mailboxes(p)
+      : p.email
+        ? [
+            {
+              name: p.name || p.displayName || p.email,
+              address: emailAddress(p.email),
+            },
+          ]
+        : p.name
+          ? [{ name: p.name, address: '', external_id: p.id || '' }]
+          : [],
+  );
+  const ownerPresent = people.some((p) => owners.has(p.address!));
+  const participants: Participant[] = people
+    .filter((p) => !owners.has(p.address!) && !shared.test(p.address!))
+    .map((p) => ({
+      ...p,
+      role: p.address && ownerPresent ? 'participant' : 'uncertain',
+    }));
+  // A speaker name alone is an observation scoped to this recording, never a global identity.
+  if (!participants.length) {
+    const names = [
+      ...new Set(
+        (meta.sentences || raw.transcript || [])
+          .filter?.((p: unknown) => typeof p === 'object')
+          .map((p: any) => p.speaker_name || p.speaker?.name)
+          .filter(Boolean) || [],
+      ),
+    ];
+    for (const name of names)
+      participants.push({
+        name: name as string,
+        address: '',
+        role: 'uncertain',
+      });
+  }
+  const occurred_at = validTime(
+    meta.dateString ||
+      meta.calendar_event?.start_time ||
+      meta.start_time ||
+      source.occurred_at,
+  );
+  const exclusion = !ownerPresent
+    ? 'Attendance needs confirmation'
+    : !occurred_at
+      ? 'Event date unavailable'
+      : !['transcript', 'summary'].includes(source.coverage)
+        ? 'Meeting content unavailable'
+        : '';
+  return {
+    kind: 'meeting',
+    occurred_at,
+    direction: 'mutual',
+    qualified: !exclusion,
+    exclusion,
+    thread_key: '',
+    participants,
+  };
+}
+async function bindIdentity(
+  source: { id: string; provider: string },
+  person: Omit<Participant, 'role'>,
+  account: string,
+): Promise<string> {
+  if (person.contact_id) {
+    let id = person.contact_id;
+    for (let n = 0; n < 50; n++) {
+      const [c] = await db
+        .select({ id: contacts.id, merged_into: contacts.merged_into })
+        .from(contacts)
+        .where(eq(contacts.id, id));
+      if (!c) throw Error('Contact not found.');
+      if (!c.merged_into) return c.id;
+      id = c.merged_into;
+    }
+    throw Error('Identity merge chain is invalid.');
+  }
+  const address = emailAddress(person.address),
+    external =
+      (source.provider === 'beeper' ? person.external_id : '') ||
+      address ||
+      person.external_id ||
+      source.id + ':speaker:' + hash(person.name || 'unknown').slice(0, 20);
+  const binding = and(
+    eq(contact_identities.provider, source.provider),
+    eq(contact_identities.account, account),
+    eq(contact_identities.external_key, external),
+  );
+  const [old] = await db
+    .select({
+      contact_id: contact_identities.contact_id,
+      address: contact_identities.address,
+    })
+    .from(contact_identities)
+    .where(binding);
+  if (old) {
+    const contact = (
+      await db.select().from(contacts).where(eq(contacts.id, old.contact_id))
+    )[0]!;
+    if (address && !old.address && !contact.email) {
+      await db.update(contact_identities).set({ address }).where(binding);
+      await db
+        .update(contacts)
+        .set({ email: address })
+        .where(eq(contacts.id, contact.id));
+      contact.email = address;
+    }
+    await resolveExactEmailContact(contact.email);
+    return bindIdentity(source, { contact_id: old.contact_id }, account);
+  }
+  const match = await resolveExactEmailContact(address),
+    id = match?.id || uid(),
+    name = String(person.name || address || 'Unknown participant').slice(
+      0,
+      200,
+    );
+  if (!match)
+    await db
+      .insert(contacts)
+      .values({ id, name, email: address, confirmed: false });
+  else if (
+    !match.confirmed &&
+    match.version === 1 &&
+    [match.email, match.email.split('@')[0], 'unknown participant'].includes(
+      match.name.toLowerCase(),
+    ) &&
+    !emailAddress(name) &&
+    name.toLowerCase() !== address.split('@')[0]
+  )
+    await db
+      .update(contacts)
+      .set({
+        name,
+        version: sql`${contacts.version} + 1`,
+        updated_at: sql`now()`,
+      })
+      .where(eq(contacts.id, id));
+  await db.insert(contact_identities).values({
+    id: uid(),
+    contact_id: id,
+    provider: source.provider,
+    account,
+    external_key: external,
+    display_name: name,
+    address,
+    source_id: source.id,
+  });
+  if (!match) await suggestIdentityMatches(id, name, address);
+  return id;
+}
+export async function projectSource(
+  sourceId: string,
+  guard: () => Promise<unknown> = async () => {},
+) {
+  const result = await transaction(async () => {
+    await lockWorkspace();
+    await guard();
+    const [source] = await db
+      .select()
+      .from(sources)
+      .where(eq(sources.id, sourceId));
+    if (!source) return { contacts: [] };
+    const [snapshot] = await db
+      .select()
+      .from(source_versions)
+      .where(
+        and(
+          eq(source_versions.source_id, sourceId),
+          eq(source_versions.content_hash, source.content_hash),
+        ),
+      );
+    if (!snapshot) throw Error('Matching source snapshot is unavailable.');
+    const raw: Snapshot = JSON.parse(snapshot.raw_json),
+      owner = await getSetting<string>(
+        'gmail_email',
+        process.env.XIN_ALLOWED_EMAIL || '',
+      ),
+      aliases = await getSetting<string[]>('contact_owner_aliases', []);
+    const event = extractInteraction(source, raw, [
+      owner,
+      process.env.XIN_ALLOWED_EMAIL,
+      ...aliases,
+    ]);
+    const [old] = await db
+        .select()
+        .from(interactions)
+        .where(eq(interactions.source_id, sourceId)),
+      previous = old
+        ? await db
+            .select({
+              contact_id: interaction_participants.contact_id,
+              role: interaction_participants.role,
+            })
+            .from(interaction_participants)
+            .where(eq(interaction_participants.interaction_id, old.id))
+        : [];
+    const contacts: string[] = previous.map((p) => p.contact_id);
+    if (event) {
+      if (raw.deleted && old) {
+        event.participants = previous;
+        event.occurred_at = old.occurred_at;
+        event.direction = old.direction;
+      }
+      const id = old?.id || uid();
+      let duplicate = old?.duplicate_of || null,
+        status = old?.duplicate_status || '';
+      if (!old && event.kind === 'meeting' && event.occurred_at) {
+        const [match] = await db
+          .select({ id: interactions.id })
+          .from(interactions)
+          .innerJoin(sources, eq(sources.id, interactions.source_id))
+          .where(
+            and(
+              eq(interactions.kind, 'meeting'),
+              ne(sources.provider, source.provider),
+              isNull(interactions.duplicate_of),
+              sql`lower(regexp_replace(${interactions.title},'[^[:alnum:]]','','g'))=lower(regexp_replace(${source.title},'[^[:alnum:]]','','g'))`,
+              sql`abs(extract(epoch FROM(${interactions.occurred_at}-${event.occurred_at}::timestamptz)))<=600`,
+            ),
+          )
+          .orderBy(interactions.id)
+          .limit(1);
+        if (match) {
+          duplicate = match.id;
+          status = 'review';
+        }
+      }
+      const correction = await getSetting<InteractionReview>(
+        'interaction_review:' + id,
+      );
+      if (correction?.action === 'exclude') {
+        event.qualified = false;
+        event.exclusion = 'Excluded by you';
+      }
+      if (
+        correction?.action === 'include' &&
+        correction.content_hash === source.content_hash
+      ) {
+        event.qualified = true;
+        event.exclusion = '';
+        for (const p of event.participants)
+          if (p.role === 'uncertain') p.role = 'participant';
+      }
+      await db
+        .insert(interactions)
+        .values({
+          id,
+          source_id: sourceId,
+          kind: event.kind,
+          title: source.title,
+          occurred_at: event.occurred_at,
+          direction: event.direction,
+          qualified: event.qualified,
+          exclusion: event.exclusion,
+          thread_key: event.thread_key,
+          duplicate_of: duplicate,
+          duplicate_status: status,
+        })
+        .onConflictDoUpdate({
+          target: interactions.source_id,
+          set: {
+            title: sql`excluded.title`,
+            occurred_at: sql`excluded.occurred_at`,
+            direction: sql`excluded.direction`,
+            qualified: sql`excluded.qualified`,
+            exclusion: sql`excluded.exclusion`,
+            thread_key: sql`excluded.thread_key`,
+            version: sql`${interactions.version} + 1`,
+          },
+        });
+      await db
+        .delete(interaction_participants)
+        .where(eq(interaction_participants.interaction_id, id));
+      for (const person of event.participants) {
+        const contact = await bindIdentity(
+          source,
+          person,
+          event.account || owner || 'workspace',
+        );
+        contacts.push(contact);
+        await db
+          .insert(interaction_participants)
+          .values({
+            interaction_id: id,
+            contact_id: contact,
+            role: person.role,
+          })
+          .onConflictDoNothing();
+      }
+      await db
+        .insert(interaction_sources)
+        .values({
+          interaction_id: id,
+          source_version_id: snapshot.id,
+          source_id: sourceId,
+          quote: source.body.slice(0, 700),
+        })
+        .onConflictDoNothing();
+    } else if (old) {
+      await db
+        .update(interactions)
+        .set({
+          qualified: false,
+          exclusion: 'No current interaction evidence',
+          version: sql`${interactions.version} + 1`,
+        })
+        .where(eq(interactions.id, old.id));
+    }
+    await db
+      .update(contact_queue)
+      .set({ state: 'complete', error: '', updated_at: sql`now()` })
+      .where(
+        and(
+          eq(contact_queue.source_id, sourceId),
+          eq(contact_queue.content_hash, source.content_hash),
+        ),
+      );
+    return { contacts: [...new Set(contacts)] };
+  });
+  if (result.contacts.length) await evaluateContacts(result.contacts);
+  return result;
+}
+export async function logInteraction(input: {
+  contact_id: string;
+  occurred_at: string;
+  kind: string;
+  direction: string;
+  body?: string;
+  title?: string;
+  meaningful?: boolean;
+}) {
+  const c = await existingContact(input.contact_id),
+    time = validTime(input.occurred_at);
+  if (!time || Date.parse(time) > Date.now() + 300000)
+    throw Error('Choose the actual past interaction date.');
+  if (
+    !['meeting', 'note', 'email'].includes(input.kind) ||
+    !['mutual', 'inbound', 'outbound'].includes(input.direction)
+  )
+    throw Error('Choose a valid interaction type and direction.');
+  const body = String(input.body || '')
+    .trim()
+    .slice(0, 12000);
+  if (!body) throw Error('Describe the interaction.');
+  const doc = await upsertSource(
+    {
+      provider: 'manual',
+      external_id: 'contact-event-' + uid(),
+      title: input.title || 'Interaction with ' + c.name,
+      occurred_at: time,
+      body,
+      coverage: 'document',
+    },
+    {
+      contact_event: {
+        contact_id: c.id,
+        kind: input.kind,
+        direction: input.direction,
+        occurred_at: time,
+        meaningful: input.meaningful === true,
+      },
+    },
+  );
+  await projectSource(doc.id);
+  return { saved: true };
+}
+export async function reviewInteraction(input: {
+  id: string;
+  version: number;
+  action: string;
+}) {
+  await transaction(async () => {
+    await lockWorkspace();
+    const [i] = await db
+      .select()
+      .from(interactions)
+      .where(eq(interactions.id, input.id))
+      .for('update');
+    if (!i) throw Error('Interaction not found.');
+    if (input.version !== i.version)
+      throw Error('This interaction changed. Reopen it.');
+    if (input.action === 'duplicate' || input.action === 'separate') {
+      if (!i.duplicate_of)
+        throw Error('This interaction has no duplicate candidate.');
+      await db
+        .update(interactions)
+        .set({
+          duplicate_of: input.action === 'duplicate' ? i.duplicate_of : null,
+          duplicate_status:
+            input.action === 'duplicate' ? 'confirmed' : 'separate',
+          version: sql`${interactions.version} + 1`,
+        })
+        .where(eq(interactions.id, i.id));
+    } else if (input.action === 'include' || input.action === 'exclude') {
+      if (!i.occurred_at)
+        throw Error(
+          'An interaction needs an actual date before it can affect the map.',
+        );
+      await db
+        .update(interactions)
+        .set({
+          qualified: input.action === 'include',
+          exclusion: input.action === 'include' ? '' : 'Excluded by you',
+          version: sql`${interactions.version} + 1`,
+        })
+        .where(eq(interactions.id, i.id));
+      if (input.action === 'include')
+        await db
+          .update(interaction_participants)
+          .set({ role: 'participant' })
+          .where(
+            and(
+              eq(interaction_participants.interaction_id, i.id),
+              eq(interaction_participants.role, 'uncertain'),
+            ),
+          );
+    } else throw Error('Choose a valid review action.');
+    const decisionId = uid(),
+      [after] = await db
+        .select()
+        .from(interactions)
+        .where(eq(interactions.id, i.id));
+    await db.insert(interaction_decisions).values({
+      id: decisionId,
+      interaction_id: i.id,
+      action: input.action,
+      before_snapshot: i,
+      after_snapshot: after,
+    });
+    const value = JSON.stringify({
+      action: input.action,
+      at: stamp(),
+      content_hash: (
+        await db
+          .select({ content_hash: sources.content_hash })
+          .from(sources)
+          // A null source_id binds NULL and matches nothing.
+          .where(sql`${sources.id} = ${i.source_id}`)
+      )[0]?.content_hash,
+    });
+    await db
+      .insert(settings)
+      .values({ key: 'interaction_review:' + i.id, value })
+      .onConflictDoUpdate({
+        target: settings.key,
+        set: { value: sql`excluded.value` },
+      });
+  });
+  await evaluateContacts(
+    (
+      await db
+        .select({ contact_id: interaction_participants.contact_id })
+        .from(interaction_participants)
+        .where(eq(interaction_participants.interaction_id, input.id))
+    ).map((p) => p.contact_id),
+  );
+  return { saved: true };
+}

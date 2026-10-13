@@ -2,11 +2,11 @@ import {setupTestDatabase} from './helpers/postgres.mjs';
 await setupTestDatabase();
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseLinkedinConnections,linkedinProfileUrl,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.mjs';
+import {parseLinkedinConnections,linkedinProfileUrl,previewLinkedinConnections,importLinkedinBatch} from '../lib/linkedin-import.ts';
 import {one,run} from '../lib/db.mjs';
 import {saveContact,contactDetail,listContacts} from '../lib/contacts.mjs';
 import {mergeContacts,mergePreview,undoMerge} from '../lib/contact-identity.mjs';
-import {projectSource} from '../lib/contact-extraction.mjs';
+import {projectSource} from '../lib/contact-extraction.ts';
 
 const header='First Name,Last Name,URL,Email Address,Company,Position,Connected On';
 const csv=(...rows)=>'\ufeffNotes:\n"Some connections do not share their email."\n\n'+header+'\n'+rows.join('\n');
@@ -103,7 +103,7 @@ test('a failed batch rolls back source data, contacts and evidence; retry succee
  const r=record('atomic-linkedin');
  await run("CREATE FUNCTION reject_linkedin_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.external_key LIKE '%atomic-linkedin' THEN RAISE EXCEPTION 'fixture rejection'; END IF; RETURN NEW; END $$");
  await run('CREATE TRIGGER reject_linkedin_fixture BEFORE INSERT ON contact_identities FOR EACH ROW EXECUTE FUNCTION reject_linkedin_fixture()');
- try{await assert.rejects(importLinkedinBatch([r]),/fixture rejection/);}finally{await run('DROP TRIGGER reject_linkedin_fixture ON contact_identities');await run('DROP FUNCTION reject_linkedin_fixture()');}
+ try{await assert.rejects(importLinkedinBatch([r]),e=>/fixture rejection/.test(e.cause?.message));}finally{await run('DROP TRIGGER reject_linkedin_fixture ON contact_identities');await run('DROP FUNCTION reject_linkedin_fixture()');}
  assert.equal((await one('SELECT count(*) n FROM contacts WHERE name=?',r.name)).n,0);
  assert.equal((await one('SELECT count(*) n FROM sources WHERE url=?',r.profile_url)).n,0);
  assert.equal((await importLinkedinBatch([r])).added,1);

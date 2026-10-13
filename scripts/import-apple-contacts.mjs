@@ -1,6 +1,6 @@
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {importAppleContacts,normalizeAppleContacts} from '../lib/apple-contacts.mjs';
+import {importAppleContacts,normalizeAppleContacts} from '../lib/apple-contacts.ts';
 import {closeDatabase,databaseErrorCode} from '../lib/postgres.ts';
 
 try{

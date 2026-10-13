@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { run, uid } from '../../lib/db.mjs';
 import { saveContact } from '../../lib/contacts.mjs';
-import { logInteraction } from '../../lib/contact-extraction.mjs';
+import { logInteraction } from '../../lib/contact-extraction.ts';
 import { contactEvidence } from '../../lib/contact-intelligence.mjs';
 
 test('relationship context explains purpose, estimated cooling, evidence and deliberate pause', async ({

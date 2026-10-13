@@ -76,7 +76,7 @@ export default async function globalSetup(config: FullConfig) {
     await db.setSetting('contact_intelligence', { enabled: false });
   }
   const {saveContact, confirmCoverage} = await import('../../lib/contacts.mjs');
-  const {logInteraction} = await import('../../lib/contact-extraction.mjs');
+  const {logInteraction} = await import('../../lib/contact-extraction.ts');
   const groups = [
     ['New', ['Nora James','Theo Park','Maya West'], 3],
     ['Active', ['Avery Chen','Priya Shah','Jamie Lee','Owen Reed'], 9],
